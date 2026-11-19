@@ -103,6 +103,11 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         markers.insert(Marker(title:"\(kind) \(markers.count+1)",kind:kind,coordinate:coordinate),at:0)
         persist()
     }
+    /// Save a manually selected location even when GPS and cellular service are unavailable.
+    func addMarker(kind: String, at point: GeoPoint) {
+        markers.insert(Marker(title: "\(kind) \(markers.count + 1)", kind: kind, coordinate: point), at: 0)
+        persist()
+    }
     func removeMarkers(at offsets:IndexSet) {markers.remove(atOffsets:offsets);persist()}
     func setImportedZones(_ imported:[GeoZone]) { zones=imported; lastWarning="Импортированные границы юридически не проверены"; persist() }
     func loadDemoZones() {

@@ -115,7 +115,7 @@ struct MainView: View {
                     tileRevision: tileStore.revision, online: onlineBasemap,
                     selectedZone: $selectedZone, onMapTap: { point in
                         tappedMapPoint = point
-                        if tileStore.installed.isEmpty { showMapDownload = true }
+                        showMapDownload = true
                     }
                 )
                 .ignoresSafeArea(.container, edges: .all)
@@ -205,10 +205,36 @@ struct MainView: View {
                             Text(String(format: "%.5f, %.5f", point.latitude, point.longitude))
                         } else { Text("Текущая область карты") }
                     }
+                    Section("Метка без GPS") {
+                        if let point = tappedMapPoint {
+                            Button("Сохранить здесь машину") {
+                                model.addMarker(kind: "Машина", at: point)
+                                showMapDownload = false
+                            }
+                            Button("Сохранить здесь метку") {
+                                model.addMarker(kind: "Точка", at: point)
+                                showMapDownload = false
+                            }
+                        }
+                    }
                     Section("Офлайн-карта") {
                         Text("Для загрузки нужен опубликованный MBTiles-пакет. Выберите пакет в разделе загрузок или импортируйте MBTiles с устройства.")
+                        if let point = tappedMapPoint {
+                            Text(tileStore.coveringDescription(latitude: point.latitude, longitude: point.longitude))
+                                .foregroundStyle(tileStore.covering(latitude: point.latitude, longitude: point.longitude).isEmpty ? .orange : .green)
+                        }
+                        if tileStore.installed.isEmpty {
+                            Text("На устройстве нет офлайн-карт").foregroundStyle(.orange)
+                        } else {
+                            Text("Установлено пакетов: \(tileStore.installed.count)")
+                        }
                         if tileStore.serviceURL.isEmpty {
                             Text("Сервер карт не настроен").foregroundStyle(.orange)
+                        }
+                        Button("Импортировать MBTiles для этого участка") {
+                            showMapDownload = false
+                            selectedTab = .downloads
+                            tileImportShown = true
                         }
                         Button("Открыть загрузки и импорт") {
                             showMapDownload = false
@@ -303,6 +329,7 @@ struct MainView: View {
                             trackRow(track)
                             Button("Показать на карте / идти обратно") {
                                 selectedRoute = track
+                                centerRequest += 1
                                 showTrack = true
                                 selectedTab = .map
                             }

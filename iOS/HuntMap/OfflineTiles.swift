@@ -42,6 +42,15 @@ struct PublishedPack: Codable, Identifiable {
     private func persist() throws { try JSONEncoder().encode(installed).write(to: registryURL, options: [.atomic]) }
     func path(for pack: PublishedPack) -> URL { folder.appendingPathComponent(pack.pack_id + ".mbtiles") }
     var paths: [URL] { installed.map { path(for: $0) } }
+    /// Coverage comes from the MBTiles metadata, not from a guessed radius around the user.
+    func covering(latitude: Double, longitude: Double) -> [PublishedPack] {
+        installed.filter { RasterMBTiles.covers(path(for: $0), latitude: latitude, longitude: longitude) }
+    }
+    func coveringDescription(latitude: Double, longitude: Double) -> String {
+        let matches = covering(latitude: latitude, longitude: longitude)
+        if !matches.isEmpty { return "Покрытие найдено: \(matches.count) пакет(ов)" }
+        return "Покрытие выбранной точки не подтверждено. Проверьте границы MBTiles или загрузите пакет."
+    }
     private func endpoint() throws -> URL {
         guard let url = URL(string: serviceURL), url.scheme == "https", url.host != nil else { throw StoreError.invalidEndpoint }
         return url
@@ -196,6 +205,24 @@ struct PublishedPack: Codable, Identifiable {
 
 // One readonly SQLite connection per tile read. SQLite handles parallel readers safely.
 enum RasterMBTiles {
+    /// MBTiles bounds are west,south,east,north in WGS84. Missing/invalid metadata is unknown coverage.
+    static func covers(_ url: URL, latitude: Double, longitude: Double) -> Bool {
+        guard latitude.isFinite, longitude.isFinite, (-90...90).contains(latitude), (-180...180).contains(longitude) else { return false }
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else { sqlite3_close(db); return false }
+        defer { sqlite3_close(db) }
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT value FROM metadata WHERE name='bounds' LIMIT 1", -1, &statement, nil) == SQLITE_OK else { return false }
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW, let raw = sqlite3_column_text(statement, 0) else { return false }
+        let values = String(cString: raw).split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+        guard values.count == 4 else { return false }
+        let (west, south, east, north) = (values[0], values[1], values[2], values[3])
+        guard values.allSatisfy(\.isFinite), (-180...180).contains(west), (-180...180).contains(east),
+              (-90...90).contains(south), (-90...90).contains(north), south <= north else { return false }
+        let inLongitude = west <= east ? longitude >= west && longitude <= east : longitude >= west || longitude <= east
+        return inLongitude && latitude >= south && latitude <= north
+    }
     static func isSupported(_ url: URL) -> Bool {
         var db: OpaquePointer?
         guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else { sqlite3_close(db); return false }

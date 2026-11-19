@@ -43,7 +43,7 @@ struct OfflineMapView: UIViewRepresentable {
         if view.styleURL != wantedStyle { view.styleURL = wantedStyle }
         if context.coordinator.lastCenterRequest != centerRequest {
             context.coordinator.lastCenterRequest = centerRequest
-            if let target = position ?? markers.first(where: { $0.kind == "Машина" })?.coordinate ?? markers.first?.coordinate {
+            if let target = track?.fixes.first?.point ?? position ?? markers.first(where: { $0.kind == "Машина" })?.coordinate ?? markers.first?.coordinate {
                 view.setCenter(CLLocationCoordinate2D(latitude: target.latitude, longitude: target.longitude), animated: true)
             }
         }
