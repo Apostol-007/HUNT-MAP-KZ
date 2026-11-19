@@ -16,6 +16,8 @@ struct OfflineMapView: UIViewRepresentable {
     let tileRevision: Int
     let offlineOSMLines: [OSMOfflineLine]
     let offlineOSMRevision: Int
+    let downloadGridVisible: Bool
+    let downloadedRegions: [OSMDownloadedRegion]
     let online: Bool
     @Binding var selectedZone: GeoZone?
     var onMapTap: (GeoPoint) -> Void
@@ -54,6 +56,7 @@ struct OfflineMapView: UIViewRepresentable {
         context.coordinator.onMapTap = onMapTap
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
         context.coordinator.updateOSMLines(view: view, lines: offlineOSMLines, revision: offlineOSMRevision)
+        context.coordinator.updateDownloadGrid(view: view, visible: downloadGridVisible, regions: downloadedRegions, revision: offlineOSMRevision)
         context.coordinator.updateAnnotations(view: view, zones: zones, markers: markers, position: position, heading: travelHeading, track: track)
     }
 
@@ -75,6 +78,79 @@ struct OfflineMapView: UIViewRepresentable {
             let matching = zones.filter { $0.contains(position) }
             if let zone = matching.first { selectedZone.wrappedValue = zone }
             else { onMapTap(position) }
+        }
+
+        // A fixed Web Mercator tile grid (z=13). Coverage is computed from the
+        // actual saved OSM extraction circles, never inferred from the basemap.
+        private var gridShapes: [MLNAnnotation] = []
+        private var gridVisible = false
+        private var gridRegions: [OSMDownloadedRegion] = []
+        private var gridRevision = -1
+        private var lastGridBounds: String = ""
+        private let gridZoom = 13
+
+        func updateDownloadGrid(view: MLNMapView, visible: Bool, regions: [OSMDownloadedRegion], revision: Int) {
+            let changed = gridVisible != visible || gridRevision != revision
+            gridVisible = visible
+            gridRegions = regions
+            gridRevision = revision
+            if changed { lastGridBounds = "" }
+            rebuildDownloadGrid(view: view)
+        }
+
+        func mapView(_ mapView: MLNMapView, regionDidChangeAnimated animated: Bool) {
+            rebuildDownloadGrid(view: mapView)
+        }
+
+        private func rebuildDownloadGrid(view: MLNMapView) {
+            guard gridVisible else {
+                if !gridShapes.isEmpty { view.removeAnnotations(gridShapes); gridShapes = [] }
+                lastGridBounds = ""
+                return
+            }
+            let bounds = view.visibleCoordinateBounds
+            let n = Double(1 << gridZoom)
+            func tileX(_ lon: Double) -> Int {
+                Int(floor((min(179.999999, max(-180, lon)) + 180) / 360 * n))
+            }
+            func tileY(_ lat: Double) -> Int {
+                let rad = min(85.0511, max(-85.0511, lat)) * .pi / 180
+                return Int(floor((1 - log(tan(rad) + 1 / cos(rad)) / .pi) / 2 * n))
+            }
+            let west = max(0, min(Int(n)-1, tileX(bounds.sw.longitude)))
+            let east = max(0, min(Int(n)-1, tileX(bounds.ne.longitude)))
+            let north = max(0, min(Int(n)-1, tileY(bounds.ne.latitude)))
+            let south = max(0, min(Int(n)-1, tileY(bounds.sw.latitude)))
+            let signature = "\(west):\(east):\(north):\(south):\(gridRevision)"
+            guard signature != lastGridBounds else { return }
+            lastGridBounds = signature
+            if !gridShapes.isEmpty { view.removeAnnotations(gridShapes); gridShapes = [] }
+            guard east >= west, south >= north, (east-west+1)*(south-north+1) <= 350 else { return }
+            func longitude(_ x: Int) -> Double { Double(x) / n * 360 - 180 }
+            func latitude(_ y: Int) -> Double { atan(sinh(.pi * (1 - 2 * Double(y) / n))) * 180 / .pi }
+            var shapes: [MLNAnnotation] = []
+            for y in north...south {
+                for x in west...east {
+                    let top = latitude(y), bottom = latitude(y+1)
+                    let left = longitude(x), right = longitude(x+1)
+                    let midLat = (top + bottom) / 2, midLon = (left + right) / 2
+                    let covered = gridRegions.contains { region in
+                        let latMeters = (midLat-region.latitude) * 111_195
+                        let lonMeters = (midLon-region.longitude) * 111_195 * cos(midLat * .pi / 180)
+                        return latMeters*latMeters + lonMeters*lonMeters <= Double(region.radiusMeters*region.radiusMeters)
+                    }
+                    var coords = [CLLocationCoordinate2D(latitude: top, longitude: left),
+                                  CLLocationCoordinate2D(latitude: top, longitude: right),
+                                  CLLocationCoordinate2D(latitude: bottom, longitude: right),
+                                  CLLocationCoordinate2D(latitude: bottom, longitude: left),
+                                  CLLocationCoordinate2D(latitude: top, longitude: left)]
+                    let line = MLNPolyline(coordinates: &coords, count: UInt(coords.count))
+                    line.title = covered ? "GRID_DOWNLOADED" : "GRID_MISSING"
+                    shapes.append(line)
+                }
+            }
+            gridShapes = shapes
+            if !shapes.isEmpty { view.addAnnotations(shapes) }
         }
 
         private var osmRevision = -1
@@ -269,11 +345,13 @@ struct OfflineMapView: UIViewRepresentable {
 
         func mapView(_ mapView: MLNMapView, alphaForShapeAnnotation annotation: MLNShape) -> CGFloat { 0.95 }
         func mapView(_ mapView: MLNMapView, strokeColorForShapeAnnotation annotation: MLNShape) -> UIColor {
+            if annotation.title == "GRID_DOWNLOADED" { return UIColor.systemGreen.withAlphaComponent(0.85) }
+            if annotation.title == "GRID_MISSING" { return UIColor.lightGray.withAlphaComponent(0.55) }
             if annotation.title == "Записанный маршрут" { return .systemGreen }
             return annotation.title?.hasPrefix("НЕ ПРОВЕРЕНО") == true ? .systemYellow : .systemOrange
         }
         func mapView(_ mapView: MLNMapView, lineWidthForPolylineAnnotation annotation: MLNPolyline) -> CGFloat {
-            annotation.title == "Записанный маршрут" ? 4 : 3
+            annotation.title?.hasPrefix("GRID_") == true ? 1.2 : (annotation.title == "Записанный маршрут" ? 4 : 3)
         }
     }
 }

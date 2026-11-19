@@ -12,6 +12,9 @@ struct MainView: View {
     @EnvironmentObject var model:FieldModel
     @StateObject private var tileStore = OfflineTileStore()
     @StateObject private var nativeOSM = NativeOfflineOSM()
+    @AppStorage("hunt.showDownloadGrid") private var showDownloadGrid = true
+    @State private var osmRegionName = ""
+    @State private var osmRadius = 1500
     @StateObject private var wildlifeStore = WildlifeStore()
     @StateObject private var wildlifeUpdater = WildlifeUpdater()
     @StateObject private var boundaryDownloader = BoundaryDownloader()
@@ -129,7 +132,8 @@ struct MainView: View {
                     track: showTrack ? (selectedRoute ?? model.currentTrack) : nil,
                     centerRequest: centerRequest, mapStyle: mapStyle, tileFiles: tileStore.paths,
                     tileRevision: tileStore.revision, offlineOSMLines: nativeOSM.lines,
-                    offlineOSMRevision: nativeOSM.revision, online: onlineBasemap,
+                    offlineOSMRevision: nativeOSM.revision, downloadGridVisible: showDownloadGrid,
+                    downloadedRegions: nativeOSM.regions, online: onlineBasemap,
                     selectedZone: $selectedZone, onMapTap: { point in
                         tappedMapPoint = point
                         showMapDownload = true
@@ -144,6 +148,7 @@ struct MainView: View {
                             sideControl("magnifyingglass", "Поиск") { selectedTab = .downloads }
                             sideControl("figure.hiking", "Маршруты") { selectedTab = .tracks }
                             sideControl("square.3.layers.3d", "Слои") { showLayers = true }
+                            sideControl(showDownloadGrid ? "square.grid.3x3.fill" : "square.grid.3x3", "Сетка") { showDownloadGrid.toggle() }
                             sideControl("pawprint.fill", "Животные") { selectedTab = .wildlife }
                             sideControl("map", "Карты") { showMapSources = true }
                         }
@@ -241,6 +246,7 @@ struct MainView: View {
             Button(showMarkers ? "✓ Маркеры / машина / егери" : "Маркеры / машина / егери") { showMarkers.toggle() }
             Button(showTrack ? "✓ Записанный маршрут" : "Записанный маршрут") { showTrack.toggle() }
             Button(showGPS ? "✓ Позиция GPS" : "Позиция GPS") { showGPS.toggle() }
+            Button(showDownloadGrid ? "✓ Сетка загрузок" : "Сетка загрузок") { showDownloadGrid.toggle() }
             Button("Животные: каталог") { selectedTab = .wildlife }
         } message: { Text("Слои используют только загруженные или созданные вами данные. Местоположения егерей и животных автоматически не определяются.") }
         .confirmationDialog("Источник карты", isPresented: $showMapSources) {
@@ -605,22 +611,47 @@ struct MainView: View {
                     Text("Онлайн-режим показывает дороги, тропы и объекты при наличии интернета. Отключите его для строгого офлайна. Онлайн-тайлы не скачиваются массово для офлайн-использования.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Section("Скачать дороги и тропы прямо на iPhone") {
-                    Text("Загрузить реальные объекты OpenStreetMap вокруг выбранной на карте точки. После загрузки дороги, тропы и водотоки отображаются без интернета.")
+                Section("Офлайн-районы OpenStreetMap") {
+                    Text("Выберите точку на карте или используйте GPS. Скачанные дороги, тропы и водотоки остаются на iPhone без интернета.")
                         .font(.caption).foregroundStyle(.secondary)
-                    Button("Загрузить район (радиус 1,5 км)", systemImage: "arrow.down.circle") {
+                    TextField("Название района (необязательно)", text: $osmRegionName)
+                    Picker("Радиус", selection: $osmRadius) {
+                        Text("500 м").tag(500)
+                        Text("1 км").tag(1000)
+                        Text("1,5 км").tag(1500)
+                        Text("2,5 км").tag(2500)
+                    }
+                    Button("Скачать выбранный район", systemImage: "arrow.down.circle") {
                         if let point = tappedMapPoint ?? model.coordinate {
-                            Task { await nativeOSM.download(around: point) }
+                            let name = osmRegionName
+                            let radius = osmRadius
+                            Task { await nativeOSM.download(around: point, radiusMeters: radius, title: name) }
                         }
                     }
                     .disabled(nativeOSM.busy || (tappedMapPoint == nil && model.coordinate == nil))
                     if nativeOSM.busy { ProgressView("Получение объектов OSM…") }
                     Text(nativeOSM.status).font(.caption).foregroundStyle(.secondary)
-                    LabeledContent("Сохранено объектов", value: String(nativeOSM.lines.count))
-                    if !nativeOSM.lines.isEmpty {
-                        Button("Удалить локальные дороги и тропы", role: .destructive) { nativeOSM.clear() }
+                    LabeledContent("Объектов на устройстве", value: String(nativeOSM.lines.count))
+                    if !nativeOSM.regions.isEmpty {
+                        ForEach(nativeOSM.regions) { region in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(region.title).font(.subheadline)
+                                    Text("\(region.radiusMeters) м · \(region.featureCount) объектов · \(region.downloadedAt.formatted(date: .abbreviated, time: .omitted))")
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button(role: .destructive) { nativeOSM.remove(region) } label: {
+                                    Image(systemName: "trash")
+                                }.buttonStyle(.borderless).disabled(nativeOSM.busy)
+                            }
+                        }
                     }
-                    Text("Источник: Overpass API / © OpenStreetMap contributors, ODbL. Это офлайн-слой дорог и троп, не спутниковые снимки и не детальная растровая карта. Для первоначальной загрузки нужен интернет; публичный API может ограничивать запросы.")
+                    if !nativeOSM.lines.isEmpty {
+                        Button("Удалить все локальные дороги и тропы", role: .destructive) { nativeOSM.clear() }
+                            .disabled(nativeOSM.busy)
+                    }
+                    Text("Источник: Overpass API / © OpenStreetMap contributors, ODbL. Это локальный слой объектов, не спутниковая или полноценная растровая карта. Для скачивания нужен интернет. Публичный API ограничивает объём запросов.")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 Section("Дополнительные источники геоданных") {

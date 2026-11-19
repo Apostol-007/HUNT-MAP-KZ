@@ -1,16 +1,26 @@
 import Foundation
 import HuntCore
 
-/// Downloads OSM *features* (not public tile-server tiles), and stores them locally.
-/// Small-area downloads are deliberately capped to protect Overpass public infrastructure.
+/// A bounded, locally stored OpenStreetMap feature extract. This is not a raster basemap.
 struct OSMOfflineLine: Codable, Identifiable {
     let id: Int64
     let kind: String
     let points: [GeoPoint]
 }
 
+struct OSMDownloadedRegion: Codable, Identifiable {
+    let id: UUID
+    let title: String
+    let latitude: Double
+    let longitude: Double
+    let radiusMeters: Int
+    let downloadedAt: Date
+    let featureCount: Int
+}
+
 @MainActor final class NativeOfflineOSM: ObservableObject {
     @Published private(set) var lines: [OSMOfflineLine] = []
+    @Published private(set) var regions: [OSMDownloadedRegion] = []
     @Published private(set) var busy = false
     @Published private(set) var status = "Детальные дороги и тропы не загружены"
     @Published private(set) var revision = 0
@@ -21,28 +31,56 @@ struct OSMOfflineLine: Codable, Identifiable {
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         return url
     }
-    private var index: URL { directory.appendingPathComponent("features.json") }
+    private var legacyIndex: URL { directory.appendingPathComponent("features.json") }
+    private var regionIndex: URL { directory.appendingPathComponent("regions.json") }
+    private func file(for id: UUID) -> URL { directory.appendingPathComponent("region-\(id.uuidString).json") }
 
     init() { restore() }
 
     private func restore() {
-        guard let data = try? Data(contentsOf: index),
-              let decoded = try? JSONDecoder().decode([OSMOfflineLine].self, from: data) else { return }
-        lines = decoded
-        status = "Локальные OSM-объекты: \(decoded.count)"
+        if let data = try? Data(contentsOf: regionIndex),
+           let decoded = try? JSONDecoder().decode([OSMDownloadedRegion].self, from: data) {
+            regions = decoded
+        }
+        rebuildLines()
+        // Old v1.7.7 feature store remains readable, without rewriting or losing user data.
+        if FileManager.default.fileExists(atPath: legacyIndex.path) {
+            status = "Сохранённые районы: \(regions.count). Есть данные старой версии."
+        }
     }
 
-    func download(around point: GeoPoint, radiusMeters: Int = 1500) async {
+    private func rebuildLines() {
+        var combined: [Int64: OSMOfflineLine] = [:]
+        if let data = try? Data(contentsOf: legacyIndex),
+           let old = try? JSONDecoder().decode([OSMOfflineLine].self, from: data) {
+            for line in old { combined[line.id] = line }
+        }
+        for region in regions {
+            guard let data = try? Data(contentsOf: file(for: region.id)),
+                  let features = try? JSONDecoder().decode([OSMOfflineLine].self, from: data) else { continue }
+            for line in features { combined[line.id] = line }
+        }
+        lines = combined.values.sorted { $0.id < $1.id }
+        revision += 1
+        status = "Локально: \(lines.count) объектов, районов: \(regions.count)"
+    }
+
+    func download(around point: GeoPoint, radiusMeters: Int = 1500, title: String = "") async {
         guard !busy else { return }
         busy = true
         defer { busy = false }
         let radius = min(2500, max(500, radiusMeters))
-        // Only highways (including footways/tracks) and waterways; no private user coordinates are persisted remotely.
+        guard point.latitude.isFinite, point.longitude.isFinite,
+              (-90...90).contains(point.latitude), (-180...180).contains(point.longitude) else {
+            status = "Ошибка: неверные координаты"; return
+        }
         let query = "[out:json][timeout:45];(way[\"highway\"](around:\(radius),\(point.latitude),\(point.longitude));way[\"waterway\"](around:\(radius),\(point.latitude),\(point.longitude)););out geom;"
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
-        request.httpBody = "data=\(query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")".data(using: .utf8)
+        var components = URLComponents()
+        components.queryItems = [URLQueryItem(name: "data", value: query)]
+        request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
         request.timeoutInterval = 65
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -51,42 +89,65 @@ struct OSMOfflineLine: Codable, Identifiable {
             }
             guard data.count <= 15_000_000 else { throw NSError(domain: "OSM", code: 2, userInfo: [NSLocalizedDescriptionKey: "Слишком большой ответ сервера"] ) }
             let parsed = try JSONDecoder().decode(OverpassResponse.self, from: data)
-            var merged = Dictionary(uniqueKeysWithValues: lines.map { ($0.id, $0) })
+            var result: [Int64: OSMOfflineLine] = [:]
             for item in parsed.elements {
-                guard item.type == "way", let geometry = item.geometry, geometry.count >= 2,
-                      geometry.count <= 20_000 else { continue }
+                guard item.type == "way", let geometry = item.geometry, (2...20_000).contains(geometry.count) else { continue }
                 let coords = geometry.compactMap { p -> GeoPoint? in
-                    guard (-90...90).contains(p.lat), (-180...180).contains(p.lon), p.lat.isFinite, p.lon.isFinite else { return nil }
+                    guard p.lat.isFinite, p.lon.isFinite, (-90...90).contains(p.lat), (-180...180).contains(p.lon) else { return nil }
                     return GeoPoint(p.lat, p.lon)
                 }
                 guard coords.count >= 2 else { continue }
                 let kind = item.tags?["highway"] ?? item.tags?["waterway"] ?? "other"
-                merged[item.id] = OSMOfflineLine(id: item.id, kind: kind, points: coords)
+                result[item.id] = OSMOfflineLine(id: item.id, kind: kind, points: coords)
             }
-            guard merged.count <= 4_000 else { throw NSError(domain: "OSM", code: 3, userInfo: [NSLocalizedDescriptionKey: "Превышен лимит объектов. Выберите меньшую территорию."] ) }
-            let updated = merged.values.sorted { $0.id < $1.id }
-            let encoded = try JSONEncoder().encode(updated)
-            guard encoded.count <= 80_000_000 else { throw NSError(domain: "OSM", code: 4, userInfo: [NSLocalizedDescriptionKey: "Недостаточно места для набора данных"] ) }
-            try encoded.write(to: index, options: [.atomic, .completeFileProtectionUnlessOpen])
-            lines = updated
-            revision += 1
-            status = "Сохранено \(updated.count) объектов OSM. Доступны без интернета."
+            guard result.count <= 4_000 else { throw NSError(domain: "OSM", code: 3, userInfo: [NSLocalizedDescriptionKey: "Превышен лимит объектов. Выберите меньшую территорию."] ) }
+            let extracted = result.values.sorted { $0.id < $1.id }
+            let encoded = try JSONEncoder().encode(extracted)
+            guard encoded.count <= 80_000_000 else { throw NSError(domain: "OSM", code: 4, userInfo: [NSLocalizedDescriptionKey: "Слишком большой набор данных"] ) }
+            let region = OSMDownloadedRegion(id: UUID(), title: title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Район \(regions.count + 1)" : String(title.prefix(70)), latitude: point.latitude, longitude: point.longitude, radiusMeters: radius, downloadedAt: Date(), featureCount: extracted.count)
+            // Commit region data before the index; if index write fails, no existing region is lost.
+            try encoded.write(to: file(for: region.id), options: [.atomic, .completeFileProtectionUnlessOpen])
+            do {
+                let updated = regions + [region]
+                try JSONEncoder().encode(updated).write(to: regionIndex, options: [.atomic, .completeFileProtectionUnlessOpen])
+                regions = updated
+            } catch {
+                try? FileManager.default.removeItem(at: file(for: region.id))
+                throw error
+            }
+            rebuildLines()
+            status = "Район «\(region.title)»: \(extracted.count) объектов. Доступен без интернета."
         } catch {
             status = "Ошибка загрузки OSM: \(error.localizedDescription)"
         }
     }
 
-    func clear() {
+    func remove(_ region: OSMDownloadedRegion) {
+        guard !busy else { return }
         do {
-            if FileManager.default.fileExists(atPath: index.path) { try FileManager.default.removeItem(at: index) }
-            lines = []
-            revision += 1
+            let updated = regions.filter { $0.id != region.id }
+            try JSONEncoder().encode(updated).write(to: regionIndex, options: [.atomic, .completeFileProtectionUnlessOpen])
+            regions = updated
+            try? FileManager.default.removeItem(at: file(for: region.id))
+            rebuildLines()
+        } catch { status = "Ошибка удаления: \(error.localizedDescription)" }
+    }
+
+    func clear() {
+        guard !busy else { return }
+        do {
+            try JSONEncoder().encode([OSMDownloadedRegion]()).write(to: regionIndex, options: [.atomic, .completeFileProtectionUnlessOpen])
+            for region in regions { try? FileManager.default.removeItem(at: file(for: region.id)) }
+            if FileManager.default.fileExists(atPath: legacyIndex.path) { try FileManager.default.removeItem(at: legacyIndex) }
+            regions = []
+            rebuildLines()
             status = "Локальные дороги и тропы удалены"
         } catch { status = "Ошибка удаления: \(error.localizedDescription)" }
     }
 }
 
-private struct OverpassResponse: Decodable { let elements: [Element]
+private struct OverpassResponse: Decodable {
+    let elements: [Element]
     struct Element: Decodable { let type: String; let id: Int64; let tags: [String: String]?; let geometry: [Point]? }
     struct Point: Decodable { let lat: Double; let lon: Double }
 }
