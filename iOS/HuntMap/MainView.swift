@@ -26,29 +26,85 @@ struct MainView: View {
     @State private var gbifStatus = "Не загружено"
     @State private var loadingGBIF = false
     @AppStorage("hunt.onlineBasemap") private var onlineBasemap = true
-    var body:some View {
-        TabView {
-            mapTab.tabItem {Label("Карта",systemImage:"map")}
-            tracksTab.tabItem {Label("Маршруты",systemImage:"figure.hiking")}
-            markersTab.tabItem {Label("Маркеры",systemImage:"mappin.and.ellipse")}
-            wildlifeTab.tabItem {Label("Животные",systemImage:"pawprint")}
-            downloadsTab.tabItem {Label("Загрузки",systemImage:"arrow.down.circle")}
+    @State private var selectedTab: HuntTab = .map
+    // The map is the background of the entire window, NOT a child of TabView.
+    // TabView's safe-area and intrinsic sizing previously letterboxed the map.
+    private enum HuntTab: String, CaseIterable {
+        case map = "Карта", tracks = "Маршруты", markers = "Маркеры"
+        case wildlife = "Животные", downloads = "Загрузки"
+
+        var symbol: String {
+            switch self {
+            case .map: "map.fill"
+            case .tracks: "figure.hiking"
+            case .markers: "mappin.and.ellipse"
+            case .wildlife: "pawprint.fill"
+            case .downloads: "arrow.down.circle.fill"
+            }
         }
-        .tint(.orange)
+    }
+
+    var body: some View {
+        ZStack {
+            Group {
+                switch selectedTab {
+                case .map: mapTab.ignoresSafeArea(.container, edges: .all)
+                case .tracks: tracksTab
+                case .markers: markersTab
+                case .wildlife: wildlifeTab
+                case .downloads: downloadsTab
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        // Overlay: does not alter the map's available height.
+        .overlay(alignment: .bottom) { floatingNavigation }
+        .background(Color.black.ignoresSafeArea())
         .background(ShakeDetector().frame(width: 1, height: 1))
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
         .sheet(isPresented: $showDiagnostics) { DiagnosticsView(model: model, mapCount: tileStore.installed.count, wildlifeCount: wildlifeStore.packs.count, onlineMap: onlineBasemap) }
         .sheet(isPresented: $showAbout) { AboutHuntView() }
     }
+
+    private var floatingNavigation: some View {
+        HStack(spacing: 0) {
+            ForEach(HuntTab.allCases, id: \.self) { tab in
+                Button {
+                    selectedTab = tab
+                } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: tab.symbol).font(.system(size: 19, weight: .semibold))
+                        Text(tab.rawValue).font(.system(size: 9, weight: .medium))
+                            .lineLimit(1).minimumScaleFactor(0.75)
+                    }
+                    .foregroundStyle(selectedTab == tab ? .orange : .white)
+                    .frame(maxWidth: .infinity).frame(height: 50)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(tab.rawValue)
+            }
+        }
+        .padding(.horizontal, 5)
+        .background(.black.opacity(0.70), in: RoundedRectangle(cornerRadius: 20))
+        .padding(.horizontal, 10)
+        .padding(.bottom, 5)
+    }
+
     private var mapTab: some View {
-        ZStack(alignment: .top) {
-            OfflineMapView(
-                zones: model.zones, position: model.coordinate, markers: model.markers,
-                track: model.currentTrack, tileFiles: tileStore.paths,
-                tileRevision: tileStore.revision, online: onlineBasemap,
-                selectedZone: $selectedZone
-            )
-            .ignoresSafeArea(edges: .top)
+        ZStack {
+            // A true edge-to-edge MapLibre UIView, including behind the status bar,
+            // home indicator, and all floating controls. No VStack controls its height.
+            GeometryReader { geometry in
+                OfflineMapView(
+                    zones: model.zones, position: model.coordinate, markers: model.markers,
+                    track: model.currentTrack, tileFiles: tileStore.paths,
+                    tileRevision: tileStore.revision, online: onlineBasemap,
+                    selectedZone: $selectedZone
+                )
+                .frame(width: geometry.size.width, height: geometry.size.height)
+            }
+            .ignoresSafeArea(.container, edges: .all)
 
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
@@ -63,9 +119,9 @@ struct MainView: View {
                     } label: { Image(systemName: "square.3.layers.3d").font(.title3) }
                 }
                 .font(.footnote.weight(.semibold))
-                .padding(12)
+                .padding(.horizontal, 12).padding(.vertical, 10)
                 .foregroundStyle(.white)
-                .background(.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 14))
+                .background(.black.opacity(0.70), in: Capsule())
                 .padding(.horizontal, 12).padding(.top, 8)
 
                 Spacer(minLength: 0)
@@ -85,12 +141,13 @@ struct MainView: View {
                         if model.recording { model.stopTrack() } else { model.startTrack() }
                     }
                 }
-                .padding(10)
-                .background(.black.opacity(0.82), in: RoundedRectangle(cornerRadius: 18))
-                .padding(.horizontal, 12).padding(.bottom, 10)
+                .padding(.horizontal, 8).padding(.vertical, 6)
+                .background(.black.opacity(0.72), in: Capsule())
+                .padding(.horizontal, 28)
+                .padding(.bottom, 70) // keep actions above floating navigation
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .toolbar(.hidden, for: .navigationBar)
         .sheet(item: $selectedZone) { zone in
             GroundDetailsSheet(zone: zone)
                 .presentationDetents([.medium, .large])
