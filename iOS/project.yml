@@ -1,0 +1,31 @@
+name: HuntMapKZ
+options:
+  bundleIdPrefix: kz.huntmap
+  deploymentTarget:
+    iOS: "17.0"
+packages:
+  HuntCore:
+    path: ../Core
+  MapLibre:
+    url: https://github.com/maplibre/maplibre-gl-native-distribution
+    from: 6.31.0
+targets:
+  HuntMapKZ:
+    type: application
+    platform: iOS
+    sources:
+      - HuntMap
+    dependencies:
+      - package: HuntCore
+      - package: MapLibre
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: kz.huntmap.field
+        SWIFT_VERSION: 5.0
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Показать позицию и предупреждать о границах во время использования карты"
+        INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription: "Записывать маршрут и предупреждать о границах во время активной полевой сессии с заблокированным экраном"
+        INFOPLIST_KEY_UIBackgroundModes: "location"
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_STYLE: Automatic
