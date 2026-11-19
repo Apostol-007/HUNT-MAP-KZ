@@ -194,3 +194,20 @@ py tools\build_from_pbf.py --pbf maps\kazakhstan-latest.osm.pbf --bbox 76.90,43.
 ## v1.7.11 — исправление ошибки компиляции SwiftUI
 
 По журналу Xcode 16.4 устранён сбой `MainView.swift:185:21: generic parameter 'V' could not be inferred`: секция загрузки офлайн-карт вынесена в `offlineMapDownloadSection`, а строка пакета — в `offlinePackRow`; неоднозначные цвета заменены на явные `Color`. Для `CLLocationManagerDelegate` добавлена совместимость `@preconcurrency` с текущим `@MainActor` состоянием модели. Проверены Swift Core tests и синтаксический разбор Swift. Полная iOS-компиляция должна быть проверена в GitHub Actions.
+
+
+## v1.7.12 — SwiftUI compile stability
+
+- Раздел «Загрузки» разделён на 11 независимо проверяемых SwiftUI-секций. Это уменьшает нагрузку на Swift type checker Xcode 16.4 и помогает локализовать следующие ошибки типов.
+- Сохранены действия, настройки, сетка, GPS и загрузка MBTiles; визуальная структура разделов не изменена.
+- `FieldModel` сохраняет `@preconcurrency CLLocationManagerDelegate` из v1.7.11; предупреждения Swift 6 требуют отдельной проверки на iOS.
+- Linux Swift Core tests and Swift syntax parsing **do not** prove an iOS build. Run the existing GitHub Actions unsigned IPA workflow; check the first `error:` in the Xcode build log.
+
+
+## v1.7.13 — загрузка карт непосредственно на iPhone
+
+В разделе «Загрузки» добавлена прямая HTTPS-загрузка **растрового** MBTiles с автоматической проверкой SQLite metadata.format и SHA-256. Есть ссылки на BBBike Extract и Geofabrik. BBBike MBTiles обычно векторный, поэтому прямой растровый загрузчик его отклонит; PBF Geofabrik также не является MBTiles. Для районов до 2,5 км сохраняется существующий встроенный Overpass-импорт дорог и троп. Полноценная векторная карта Казахстана одной кнопкой ещё не реализована.
+
+## v1.7.14 — встроенный каталог бесплатных источников
+
+В разделе «Загрузки» ссылки Geofabrik Kazakhstan, BBBike, Protomaps, OpenMapTiles, OpenStreetMap, OpenTopoMap, Copernicus и USGS EarthExplorer уже добавлены. Пользователь не вводит их вручную. Скачивание дорог и троп небольшого района осуществляется встроенным Overpass-клиентом. Прямая загрузка растрового MBTiles оставлена как дополнительная опция. PBF/PMTiles/векторные MBTiles пока не поддерживаются в качестве непосредственно устанавливаемой карты.

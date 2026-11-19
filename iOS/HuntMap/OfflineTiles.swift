@@ -288,6 +288,58 @@ struct PublishedPack: Codable, Identifiable {
             message = "Карта установлена, SHA-256 проверен. Источник: \(pack.license)"
         } catch { message = "Установка: \(error.localizedDescription). Частичная загрузка сохранена для продолжения." }
     }
+    /// Download a direct HTTPS raster MBTiles file inside the app, then validate and import it.
+    /// Never fetches public OSM tile endpoints or pretends vector MBTiles are raster.
+    func importFromHTTPS(_ rawURL: String) async {
+        guard !busy else { return }
+        guard let url = URL(string: rawURL.trimmingCharacters(in: .whitespacesAndNewlines)),
+              url.scheme?.lowercased() == "https", url.host != nil,
+              url.user == nil, url.password == nil,
+              url.pathExtension.lowercased() == "mbtiles" else {
+            message = "Нужна прямая HTTPS-ссылка на растровый файл .mbtiles"
+            return
+        }
+        busy = true
+        defer { busy = false }
+        progress = 0
+        message = "Скачивание MBTiles…"
+        var temporary: URL?
+        defer { if let temporary { try? FileManager.default.removeItem(at: temporary) } }
+        do {
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 90
+            let (downloaded, response) = try await URLSession.shared.download(for: request)
+            temporary = downloaded
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  http.url?.scheme?.lowercased() == "https" else { throw StoreError.unsupportedFormat }
+            let size = (try FileManager.default.attributesOfItem(atPath: downloaded.path)[.size] as? NSNumber)?.int64Value ?? 0
+            guard size > 0, size <= 2_000_000_000 else { throw StoreError.unsupportedFormat }
+            guard RasterMBTiles.isSupported(downloaded) else {
+                message = "Файл не является растровым MBTiles (PNG/JPEG/WebP). Векторный MBTiles пока не поддерживается."
+                return
+            }
+            let digest = try Self.sha256(file: downloaded)
+            let packID = "web-" + String(digest.prefix(24))
+            let pack = PublishedPack(pack_id: packID, scope: "region", scope_id: "REMOTE",
+                size_bytes: size, sha256: digest, source_version: "direct-https",
+                license: "Лицензия источника не проверена", verified: false,
+                layers: ["raster-mbtiles"])
+            let destination = scopedPath(for: pack)
+            if !FileManager.default.fileExists(atPath: destination.path) {
+                let capacity = try? folder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage
+                if let capacity, Int64(capacity) < size + 100_000_000 { throw StoreError.notEnoughStorage }
+                try FileManager.default.copyItem(at: downloaded, to: destination)
+            }
+            if !installed.contains(where: { $0.id == pack.id }) { installed.append(pack) }
+            try persist()
+            revision += 1
+            progress = 1
+            message = "Карта загружена и установлена. Проверьте лицензию источника."
+        } catch {
+            message = "Не удалось скачать карту: \(error.localizedDescription)"
+        }
+    }
+
     /// Import a user-provided, licensed raster MBTiles archive without connecting to the server.
     /// Original files are not modified. This does not certify legal status or map accuracy.
     func importLocal(_ incoming: URL) async {

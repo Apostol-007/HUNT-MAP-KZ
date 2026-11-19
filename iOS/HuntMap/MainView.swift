@@ -34,6 +34,7 @@ struct MainView: View {
     @State private var showAdvancedDownloads = false
     @State private var selectedScope = "ground"
     @State private var scopeID = ""
+    @State private var directMBTilesURL = ""
     @State private var tileImportShown=false
     @State private var importShown=false
     @State private var importError:String?
@@ -636,15 +637,18 @@ struct MainView: View {
         default: "нет данных"
         }
     }
-    private var downloadsTab:some View {
-        NavigationStack {
-            Form {
+    // Isolate SwiftUI result-builder type checking.
+    private var downloadsBlock1: some View {
                 Section("Картографическая подложка") {
                     Button("Выбрать источник карты") { showMapSources = true }
                     Toggle("Онлайн-карта OpenFreeMap", isOn: $onlineBasemap)
                     Text("Онлайн-режим показывает дороги, тропы и объекты при наличии интернета. Отключите его для строгого офлайна. Онлайн-тайлы не скачиваются массово для офлайн-использования.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+    }
+
+    // Isolate SwiftUI result-builder type checking.
+    private var downloadsBlock2: some View {
                 Section("Офлайн-районы OpenStreetMap") {
                     Text("Выберите точку на карте или используйте GPS. Скачанные дороги, тропы и водотоки остаются на iPhone без интернета.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -688,10 +692,28 @@ struct MainView: View {
                     Text("Источник: Overpass API / © OpenStreetMap contributors, ODbL. Это локальный слой объектов, не спутниковая или полноценная растровая карта. Для скачивания нужен интернет. Публичный API ограничивает объём запросов.")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
-                Section("Дополнительные источники геоданных") {
-                    Link("Geofabrik · Казахстан", destination: URL(string: "https://download.geofabrik.de/asia/kazakhstan.html")!)
-                    Link("BBBike · выгрузка района", destination: URL(string: "https://extract.bbbike.org/")!)
-                }
+    }
+
+    // Isolate SwiftUI result-builder type checking.
+    private var downloadsBlock3: some View {
+        Section("Бесплатные источники карт · ссылки уже встроены") {
+            Text("Выберите источник. Для небольших районов дороги и тропы скачиваются прямо в приложении кнопкой выше. Остальные сайты предоставляют исходные данные или файлы, которые могут потребовать обработки.")
+                .font(.caption).foregroundStyle(.secondary)
+            Link("Geofabrik · Казахстан (OSM PBF)", destination: URL(string: "https://download.geofabrik.de/asia/kazakhstan.html")!)
+            Link("BBBike · выбрать район (OSM / MBTiles)", destination: URL(string: "https://extract.bbbike.org/?lang=ru")!)
+            Link("Protomaps · карты PMTiles", destination: URL(string: "https://protomaps.com/")!)
+            Link("OpenMapTiles · векторные карты", destination: URL(string: "https://openmaptiles.org/")!)
+            Link("OpenStreetMap · исходные данные", destination: URL(string: "https://www.openstreetmap.org/export")!)
+            Link("OpenTopoMap · топографическая карта", destination: URL(string: "https://opentopomap.org/")!)
+            Link("Copernicus · снимки Sentinel", destination: URL(string: "https://dataspace.copernicus.eu/")!)
+            Link("USGS EarthExplorer · рельеф и снимки", destination: URL(string: "https://earthexplorer.usgs.gov/")!)
+            Text("Важно: OpenTopoMap и публичные тайловые серверы OSM не предназначены для массового скачивания тайлов. PMTiles, PBF и векторные MBTiles пока не устанавливаются растровым загрузчиком.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    // Isolate SwiftUI result-builder type checking.
+    private var downloadsBlock4: some View {
                 Section("Карты с вашего сервера") {
                     Text("Найдите готовые MBTiles по координатам на карте. Сервер автоматически отдаёт список, а приложение проверяет SHA-256 перед установкой.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -711,6 +733,10 @@ struct MainView: View {
                     Text("Нужен ваш HTTPS-сервер с опубликованными пакетами. Geofabrik и BBBike предоставляют исходные данные, а не этот API.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+    }
+
+    // Isolate SwiftUI result-builder type checking.
+    private var downloadsBlock5: some View {
                 DisclosureGroup("Дополнительные настройки и источники", isExpanded: $showAdvancedDownloads) {
                 Section("О приложении и диагностика") {
                     Button("О приложении") { showAbout = true }
@@ -798,10 +824,36 @@ struct MainView: View {
                     }
                 }
                 }
+    }
+
+    // Direct download of licensed raster MBTiles; no external map-preparation computer required.
+    private var directMapDownloadBlock: some View {
+        Section("Дополнительно · загрузить свой MBTiles по ссылке") {
+            TextField("Прямая HTTPS-ссылка на .mbtiles", text: $directMBTilesURL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .keyboardType(.URL)
+            Button("Скачать и установить карту", systemImage: "arrow.down.circle") {
+                Task { await tileStore.importFromHTTPS(directMBTilesURL) }
+            }
+            .disabled(tileStore.busy || directMBTilesURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Text("Поддерживаются растровые MBTiles (PNG/JPEG/WebP). Векторные MBTiles и PMTiles не поддерживаются этим загрузчиком. Ссылка должна вести непосредственно на файл, не на страницу сайта.")
+                .font(.caption).foregroundStyle(.secondary)
+            Text("Для загрузки без вставки ссылок используйте «Офлайн-районы OpenStreetMap» выше. Каталог бесплатных источников со всеми ссылками находится в этом же разделе.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    // Isolate SwiftUI result-builder type checking.
+    private var downloadsBlock6: some View {
                 Section("Импорт без сервера") {
                     Button("Импортировать растровый MBTiles", systemImage: "square.and.arrow.down") { tileImportShown = true }
                     Text("Только ваши файлы, которые законно разрешено копировать. Лицензия и границы автоматически не подтверждаются.").font(.caption).foregroundStyle(.secondary)
                 }
+    }
+
+    // Isolate SwiftUI result-builder type checking.
+    private var downloadsBlock7: some View {
                 Section("Установленные карты") {
                     if tileStore.installed.isEmpty { Text("Офлайн-карты пока отсутствуют") }
                     ForEach(tileStore.installed) { pack in
@@ -816,6 +868,10 @@ struct MainView: View {
                         }
                     }
                 }
+    }
+
+    // Isolate SwiftUI result-builder type checking.
+    private var downloadsBlock8: some View {
                 Section("Статус") {
                     if tileStore.busy { ProgressView(value: tileStore.progress) }
                     Text(tileStore.message)
@@ -823,12 +879,41 @@ struct MainView: View {
                     LabeledContent("Границ", value: String(model.zones.count))
                     LabeledContent("Каталогов животных", value: String(wildlifeStore.packs.count))
                 }
+    }
+
+    // Isolate SwiftUI result-builder type checking.
+    private var downloadsBlock9: some View {
                 Section("Локальный GeoJSON") {Button("Импортировать границы GeoJSON",systemImage:"square.and.arrow.down") {importShown=true};if let importError {Text(importError).foregroundStyle(.red)}}
+    }
+
+    // Isolate SwiftUI result-builder type checking.
+    private var downloadsBlock10: some View {
                 Section("Тестирование") {Button("Показать демо-полигон") {model.loadDemoZones()};Text("Демонстрационный полигон создан искусственно. Он не является охотугодьем.").font(.caption).foregroundStyle(.secondary)}
+    }
+
+    // Isolate SwiftUI result-builder type checking.
+    private var downloadsBlock11: some View {
                 Section("Ограничения") {
                     Text("MapLibre использует локальный стиль без интернет-источников и файлы MBTiles. Отсутствие сетевых запросов необходимо подтвердить сетевым тестом на физическом iPhone.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+    }
+
+    private var downloadsTab:some View {
+        NavigationStack {
+            Form {
+                downloadsBlock1
+                downloadsBlock2
+                downloadsBlock3
+                downloadsBlock4
+                downloadsBlock5
+                directMapDownloadBlock
+                downloadsBlock6
+                downloadsBlock7
+                downloadsBlock8
+                downloadsBlock9
+                downloadsBlock10
+                downloadsBlock11
             }.navigationTitle("Загрузки").fileImporter(isPresented: $tileImportShown, allowedContentTypes: [.item]) { result in
                 switch result {
                 case .success(let url): Task { await tileStore.importLocal(url) }
