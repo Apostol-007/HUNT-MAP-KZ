@@ -10,6 +10,8 @@ struct Marker: Identifiable, Codable {
     var kind: String
     var coordinate: GeoPoint
     var createdAt: Date = Date()
+    var symbol: String? = nil
+    var colorHex: String? = nil
 }
 struct TrackFix: Codable {
     var point: GeoPoint
@@ -179,6 +181,20 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         markers.insert(Marker(title: "\(kind) \(markers.count + 1)", kind: kind, coordinate: point), at: 0)
         persist()
     }
+    func saveMarker(_ marker: Marker) {
+        guard marker.coordinate.latitude.isFinite, marker.coordinate.longitude.isFinite,
+              (-90...90).contains(marker.coordinate.latitude), (-180...180).contains(marker.coordinate.longitude) else { return }
+        if let index = markers.firstIndex(where: { $0.id == marker.id }) { markers[index] = marker }
+        else { markers.insert(marker, at: 0) }
+        persist()
+    }
+    func moveMarker(id: UUID, to point: GeoPoint) {
+        guard let index = markers.firstIndex(where: { $0.id == id }),
+              (-90...90).contains(point.latitude), (-180...180).contains(point.longitude) else { return }
+        markers[index].coordinate = point
+        persist()
+    }
+    func deleteMarker(id: UUID) { markers.removeAll { $0.id == id }; persist() }
     func removeMarkers(at offsets:IndexSet) {markers.remove(atOffsets:offsets);persist()}
     func setImportedZones(_ imported:[GeoZone]) { zones=imported; lastWarning="Импортированные границы юридически не проверены"; persist() }
     func loadDemoZones() {

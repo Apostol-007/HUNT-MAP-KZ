@@ -19,6 +19,8 @@ struct OfflineMapView: UIViewRepresentable {
     let downloadGridVisible: Bool
     let downloadedRegions: [OSMDownloadedRegion]
     let online: Bool
+    var onMarkerSelect: (UUID) -> Void
+    var onMarkerMove: (UUID, GeoPoint) -> Void
     @Binding var selectedZone: GeoZone?
     var onMapTap: (GeoPoint) -> Void
 
@@ -26,7 +28,7 @@ struct OfflineMapView: UIViewRepresentable {
         ["liberty", "bright", "positron"].contains(mapStyle) ? mapStyle : "liberty"
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator(selectedZone: $selectedZone, onMapTap: onMapTap) }
+    func makeCoordinator() -> Coordinator { Coordinator(selectedZone: $selectedZone, onMapTap: onMapTap, onMarkerSelect: onMarkerSelect, onMarkerMove: onMarkerMove) }
 
     func makeUIView(context: Context) -> MLNMapView {
         let styleURL = online ? URL(string: "https://tiles.openfreemap.org/styles/liberty".replacingOccurrences(of: "liberty", with: safeOnlineStyle))! : OfflineMapStyle.url
@@ -36,6 +38,9 @@ struct OfflineMapView: UIViewRepresentable {
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
         tap.cancelsTouchesInView = false
         view.addGestureRecognizer(tap)
+        let hold = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleMarkerDrag(_:)))
+        hold.minimumPressDuration = 0.45
+        view.addGestureRecognizer(hold)
         context.coordinator.map = view
         view.setCenter(CLLocationCoordinate2D(latitude: 43.24, longitude: 76.91), zoomLevel: 11, animated: false)
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
@@ -54,6 +59,9 @@ struct OfflineMapView: UIViewRepresentable {
         }
         context.coordinator.zones = zones
         context.coordinator.onMapTap = onMapTap
+        context.coordinator.onMarkerSelect = onMarkerSelect
+        context.coordinator.onMarkerMove = onMarkerMove
+        context.coordinator.markers = markers
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
         context.coordinator.updateOSMLines(view: view, lines: offlineOSMLines, revision: offlineOSMRevision)
         context.coordinator.updateDownloadGrid(view: view, visible: downloadGridVisible, regions: downloadedRegions, revision: offlineOSMRevision)
@@ -63,21 +71,59 @@ struct OfflineMapView: UIViewRepresentable {
     final class Coordinator: NSObject, MLNMapViewDelegate {
         var selectedZone: Binding<GeoZone?>
         var onMapTap: (GeoPoint) -> Void
+        var onMarkerSelect: (UUID) -> Void
+        var onMarkerMove: (UUID, GeoPoint) -> Void
+        var markers: [Marker] = []
+        private var draggedMarkerID: UUID?
         weak var map: MLNMapView?
         var zones: [GeoZone] = []
         var lastCenterRequest = 0
-        init(selectedZone: Binding<GeoZone?>, onMapTap: @escaping (GeoPoint) -> Void) {
+        init(selectedZone: Binding<GeoZone?>, onMapTap: @escaping (GeoPoint) -> Void, onMarkerSelect: @escaping (UUID) -> Void, onMarkerMove: @escaping (UUID, GeoPoint) -> Void) {
             self.selectedZone = selectedZone
             self.onMapTap = onMapTap
+            self.onMarkerSelect = onMarkerSelect
+            self.onMarkerMove = onMarkerMove
         }
         @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
             guard recognizer.state == .ended, let map else { return }
             let coordinate = map.convert(recognizer.location(in: map), toCoordinateFrom: map)
             let position = GeoPoint(coordinate.latitude, coordinate.longitude)
+            if let nearest = nearestMarker(to: recognizer.location(in: map), on: map) {
+                onMarkerSelect(nearest.id)
+                return
+            }
             // Find the smallest enclosing boundary for overlapping territories.
             let matching = zones.filter { $0.contains(position) }
             if let zone = matching.first { selectedZone.wrappedValue = zone }
             else { onMapTap(position) }
+        }
+
+        private func nearestMarker(to location: CGPoint, on map: MLNMapView) -> Marker? {
+            markers.min(by: {
+                let a = map.convert(CLLocationCoordinate2D(latitude: $0.coordinate.latitude, longitude: $0.coordinate.longitude), toPointTo: map)
+                let b = map.convert(CLLocationCoordinate2D(latitude: $1.coordinate.latitude, longitude: $1.coordinate.longitude), toPointTo: map)
+                return hypot(a.x - location.x, a.y - location.y) < hypot(b.x - location.x, b.y - location.y)
+            }).flatMap { marker in
+                let p = map.convert(CLLocationCoordinate2D(latitude: marker.coordinate.latitude, longitude: marker.coordinate.longitude), toPointTo: map)
+                return hypot(p.x - location.x, p.y - location.y) < 36 ? marker : nil
+            }
+        }
+
+        @objc func handleMarkerDrag(_ gesture: UILongPressGestureRecognizer) {
+            guard let map else { return }
+            switch gesture.state {
+            case .began:
+                draggedMarkerID = nearestMarker(to: gesture.location(in: map), on: map)?.id
+            case .ended:
+                if let id = draggedMarkerID {
+                    let c = map.convert(gesture.location(in: map), toCoordinateFrom: map)
+                    onMarkerMove(id, GeoPoint(c.latitude, c.longitude))
+                }
+                draggedMarkerID = nil
+            case .cancelled, .failed:
+                draggedMarkerID = nil
+            default: break
+            }
         }
 
         // A fixed Web Mercator tile grid (z=13). Coverage is computed from the
@@ -248,7 +294,7 @@ struct OfflineMapView: UIViewRepresentable {
             }
             for marker in markers {
                 let point = MLNPointAnnotation()
-                point.title = marker.title
+                point.title = "HUNT_MARKER_\(marker.id.uuidString)"
                 point.coordinate = CLLocationCoordinate2D(latitude: marker.coordinate.latitude, longitude: marker.coordinate.longitude)
                 updated.append(point)
             }
@@ -297,7 +343,10 @@ struct OfflineMapView: UIViewRepresentable {
             }
             hasher.combine(markers.count)
             for marker in markers {
+                hasher.combine(marker.id)
                 hasher.combine(marker.title)
+                hasher.combine(marker.symbol)
+                hasher.combine(marker.colorHex)
                 hasher.combine(marker.coordinate.latitude)
                 hasher.combine(marker.coordinate.longitude)
             }
@@ -321,7 +370,28 @@ struct OfflineMapView: UIViewRepresentable {
         // Directional position symbol. Course is supplied by Core Location when moving;
         // the arrow is not falsely rotated from compass noise while stationary.
         func mapView(_ mapView: MLNMapView, imageFor annotation: MLNAnnotation) -> MLNAnnotationImage? {
-            guard let title = annotation.title ?? nil, title.hasPrefix("HUNT_GPS_ARROW_") else { return nil }
+            guard let title = annotation.title ?? nil else { return nil }
+            if title.hasPrefix("HUNT_MARKER_"), let id = UUID(uuidString: String(title.dropFirst("HUNT_MARKER_".count))),
+               let marker = markers.first(where: { $0.id == id }) {
+                let symbol = marker.symbol ?? MarkerStyle.defaultSymbol(for: marker.kind)
+                let hex = marker.colorHex ?? "#FF9F0A"
+                let key = "marker-\(id.uuidString)-\(symbol)-\(hex)"
+                if let existing = mapView.dequeueReusableAnnotationImage(withIdentifier: key) { return existing }
+                let size = CGSize(width: 48, height: 48)
+                let image = UIGraphicsImageRenderer(size: size).image { _ in
+                    let rect = CGRect(x: 4, y: 4, width: 40, height: 40)
+                    UIColor.white.setFill()
+                    UIBezierPath(ovalIn: rect.insetBy(dx: -2, dy: -2)).fill()
+                    UIColor(hex: hex).setFill()
+                    UIBezierPath(ovalIn: rect).fill()
+                    let config = UIImage.SymbolConfiguration(pointSize: 21, weight: .semibold)
+                    if let glyph = UIImage(systemName: symbol, withConfiguration: config)?.withTintColor(.white, renderingMode: .alwaysOriginal) {
+                        glyph.draw(in: CGRect(x: 13, y: 13, width: 22, height: 22))
+                    }
+                }
+                return MLNAnnotationImage(image: image, reuseIdentifier: key)
+            }
+            guard title.hasPrefix("HUNT_GPS_ARROW_") else { return nil }
             let heading = Double(title.replacingOccurrences(of: "HUNT_GPS_ARROW_", with: "")) ?? 0
             let bucket = Int((heading / 5).rounded()) * 5
             let key = "hunt-position-arrow-\(bucket)"

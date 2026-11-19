@@ -24,7 +24,11 @@ struct OSMDownloadedRegion: Codable, Identifiable {
     @Published private(set) var busy = false
     @Published private(set) var status = "Детальные дороги и тропы не загружены"
     @Published private(set) var revision = 0
-    private let endpoint = URL(string: "https://overpass.kumi.systems/api/interpreter")!
+    private let endpoints = [
+        URL(string: "https://overpass.kumi.systems/api/interpreter")!,
+        URL(string: "https://overpass.nchc.org.tw/api/interpreter")!,
+        URL(string: "https://overpass.private.coffee/api/interpreter")!
+    ]
     private var directory: URL {
         let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("OSMOffline", isDirectory: true)
@@ -75,17 +79,29 @@ struct OSMDownloadedRegion: Codable, Identifiable {
             status = "Ошибка: неверные координаты"; return
         }
         let query = "[out:json][timeout:45];(way[\"highway\"](around:\(radius),\(point.latitude),\(point.longitude));way[\"waterway\"](around:\(radius),\(point.latitude),\(point.longitude)););out geom;"
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
-        var components = URLComponents()
-        components.queryItems = [URLQueryItem(name: "data", value: query)]
-        request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
-        request.timeoutInterval = 65
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                throw NSError(domain: "OSM", code: 1, userInfo: [NSLocalizedDescriptionKey: "Сервер OSM недоступен или ограничил запрос. Попробуйте позже."])
+            var responseData: Data? = nil
+            var lastFailure = "Серверы Overpass недоступны"
+            for (index, endpoint) in endpoints.enumerated() {
+                status = "Загрузка OSM: сервер \(index + 1) из \(endpoints.count)…"
+                var request = URLRequest(url: endpoint)
+                request.httpMethod = "POST"
+                request.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
+                var components = URLComponents()
+                components.queryItems = [URLQueryItem(name: "data", value: query)]
+                request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
+                request.timeoutInterval = 65
+                do {
+                    let (payload, response) = try await URLSession.shared.data(for: request)
+                    guard let http = response as? HTTPURLResponse else { continue }
+                    if http.statusCode == 200 { responseData = payload; break }
+                    lastFailure = "HTTP \(http.statusCode) от \(endpoint.host ?? "Overpass")"
+                } catch {
+                    lastFailure = error.localizedDescription
+                }
+            }
+            guard let data = responseData else {
+                throw NSError(domain: "OSM", code: 1, userInfo: [NSLocalizedDescriptionKey: lastFailure])
             }
             guard data.count <= 15_000_000 else { throw NSError(domain: "OSM", code: 2, userInfo: [NSLocalizedDescriptionKey: "Слишком большой ответ сервера"] ) }
             let parsed = try JSONDecoder().decode(OverpassResponse.self, from: data)

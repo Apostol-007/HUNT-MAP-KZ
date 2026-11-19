@@ -40,6 +40,7 @@ struct MainView: View {
     @State private var importError:String?
     @State private var showDiagnostics = false
     @State private var showAbout = false
+    @State private var editingMarker: Marker?
     @State private var selectedZone: GeoZone?
     @State private var tappedMapPoint: GeoPoint?
     @State private var showMapDownload = false
@@ -163,6 +164,9 @@ struct MainView: View {
             )
             .presentationDetents([.large])
         }
+        .sheet(item: $editingMarker) { marker in
+            MarkerEditor(marker: marker, onSave: { model.saveMarker($0) }, onDelete: { model.deleteMarker(id: $0) })
+        }
         .sheet(item: $selectedZone) { zone in
             GroundDetailsSheet(zone: zone)
                 .presentationDetents([.medium, .large])
@@ -265,6 +269,8 @@ struct MainView: View {
             tileRevision: tileStore.revision, offlineOSMLines: nativeOSM.lines,
             offlineOSMRevision: nativeOSM.revision, downloadGridVisible: showDownloadGrid,
             downloadedRegions: nativeOSM.regions, online: onlineBasemap,
+            onMarkerSelect: { id in editingMarker = model.markers.first { $0.id == id } },
+            onMarkerMove: { id, point in model.moveMarker(id: id, to: point) },
             selectedZone: $selectedZone, onMapTap: { point in
                 tappedMapPoint = point
                 showMapDownload = true
@@ -538,13 +544,41 @@ struct MainView: View {
     private func trackRow(_ track:Track)->some View {
         HStack {VStack(alignment:.leading){Text(track.name);Text("\(track.fixes.count) точек · \(Int(track.distanceMeters)) м").font(.caption).foregroundStyle(.secondary)};Spacer();if let url=model.exportGPX(track) {ShareLink(item:url){Image(systemName:"square.and.arrow.up")}}}
     }
-    private var markersTab:some View {
+    private var markersTab: some View {
         NavigationStack {
-            List {ForEach(model.markers) {m in HStack {Image(systemName:"mappin.circle.fill").foregroundStyle(.orange);VStack(alignment:.leading){Text(m.title);Text("\(m.coordinate.latitude.formatted(.number.precision(.fractionLength(5)))), \(m.coordinate.longitude.formatted(.number.precision(.fractionLength(5))))").font(.caption).foregroundStyle(.secondary)};Spacer();ShareLink(item:"geo:\(m.coordinate.latitude),\(m.coordinate.longitude)"){Image(systemName:"square.and.arrow.up")}}}.onDelete(perform:model.removeMarkers)}
-            .toolbar {Button("Добавить",systemImage:"plus") {model.addMarker()}
-                Button("Машина",systemImage:"car.fill") {model.addMarker(kind: "Машина")}
-                Button("Егерь",systemImage:"person.crop.circle.badge.checkmark") {model.addMarker(kind: "Егерь (вручную)")}}
-            .overlay {if model.markers.isEmpty {ContentUnavailableView("Маркеров пока нет",systemImage:"mappin",description:Text("Добавьте метку по GPS"))}}.navigationTitle("Маркеры")
+            List {
+                ForEach(model.markers) { marker in
+                    Button { editingMarker = marker } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: marker.symbol ?? MarkerStyle.defaultSymbol(for: marker.kind))
+                                .font(.title2).foregroundStyle(Color(hex: marker.colorHex ?? "#FF9F0A"))
+                                .frame(width: 38)
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(marker.title).foregroundStyle(.primary)
+                                Text(String(format: "%.5f, %.5f", marker.coordinate.latitude, marker.coordinate.longitude))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "pencil.circle").foregroundStyle(.secondary)
+                            ShareLink(item: "geo:\(marker.coordinate.latitude),\(marker.coordinate.longitude)") {
+                                Image(systemName: "square.and.arrow.up")
+                            }.buttonStyle(.borderless)
+                        }
+                    }
+                }.onDelete(perform: model.removeMarkers)
+            }
+            .navigationTitle("Мои метки")
+            .toolbar {
+                Button("Добавить", systemImage: "plus") {
+                    let point = tappedMapPoint ?? model.coordinate ?? GeoPoint(43.24, 76.91)
+                    editingMarker = Marker(title: "Новая метка", kind: "Точка", coordinate: point)
+                }
+            }
+            .overlay {
+                if model.markers.isEmpty {
+                    ContentUnavailableView("Нет меток", systemImage: "mappin", description: Text("Нажмите +, чтобы создать метку"))
+                }
+            }
         }
     }
     private var wildlifeTab:some View {
