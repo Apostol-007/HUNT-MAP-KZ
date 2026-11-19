@@ -135,24 +135,34 @@ struct MainView: View {
                     .frame(width: geometry.size.width, height: geometry.size.height)
             }
         }
-        .confirmationDialog("Слои карты", isPresented: $showLayers) {
-            Button(showGrounds ? "✓ Границы угодий" : "Границы угодий") { showGrounds.toggle() }
-            Button(showMarkers ? "✓ Маркеры / машина / егери" : "Маркеры / машина / егери") { showMarkers.toggle() }
-            Button(showTrack ? "✓ Записанный маршрут" : "Записанный маршрут") { showTrack.toggle() }
-            Button(showGPS ? "✓ Позиция GPS" : "Позиция GPS") { showGPS.toggle() }
-            Button(showDownloadGrid ? "✓ Сетка загрузок" : "Сетка загрузок") { showDownloadGrid.toggle() }
-            Button("Животные: каталог") { selectedTab = .wildlife }
-        } message: { Text("Слои используют только загруженные или созданные вами данные. Местоположения егерей и животных автоматически не определяются.") }
-        .confirmationDialog("Источник карты", isPresented: $showMapSources) {
-            Button("OpenFreeMap Liberty · онлайн") { mapStyle = "liberty"; onlineBasemap = true }
-            Button("OpenFreeMap Bright · онлайн") { mapStyle = "bright"; onlineBasemap = true }
-            Button("OpenFreeMap Positron · онлайн") { mapStyle = "positron"; onlineBasemap = true }
-            Button("Локальные MBTiles · без интернета") { onlineBasemap = false }
-            Button("Google Maps · открыть отдельно") { openExternalMap("google") }
-            Button("Яндекс Карты · открыть отдельно") { openExternalMap("yandex") }
-            Button("Импорт / загрузка офлайн-карт") { selectedTab = .downloads }
-        } message: { Text("Google и Яндекс открываются в официальных сервисах. Скачивание их тайлов в MBTiles без разрешения правообладателя не поддерживается.") }
-        .sheet(isPresented: $showMapDownload) { mapDownloadSheet }
+        .sheet(isPresented: $showLayers) {
+            MapLayersSheet(
+                mapStyle: $mapStyle, online: $onlineBasemap,
+                grounds: $showGrounds, markers: $showMarkers,
+                track: $showTrack, gps: $showGPS, grid: $showDownloadGrid,
+                onDownload: { showMapDownload = true },
+                onLibrary: { selectedTab = .downloads }
+            )
+            .presentationDetents([.large])
+        }
+        .sheet(isPresented: $showMapSources) {
+            MapLayersSheet(
+                mapStyle: $mapStyle, online: $onlineBasemap,
+                grounds: $showGrounds, markers: $showMarkers,
+                track: $showTrack, gps: $showGPS, grid: $showDownloadGrid,
+                onDownload: { showMapDownload = true },
+                onLibrary: { selectedTab = .downloads }
+            )
+            .presentationDetents([.large])
+        }
+        .sheet(isPresented: $showMapDownload) {
+            QuickMapDownloadSheet(
+                point: tappedMapPoint ?? model.coordinate,
+                osm: nativeOSM, tiles: tileStore,
+                onOpenLibrary: { selectedTab = .downloads }
+            )
+            .presentationDetents([.large])
+        }
         .sheet(item: $selectedZone) { zone in
             GroundDetailsSheet(zone: zone)
                 .presentationDetents([.medium, .large])
@@ -279,7 +289,7 @@ struct MainView: View {
                     sideControl("square.3.layers.3d", "Слои") { showLayers = true }
                     sideControl(showDownloadGrid ? "square.grid.3x3.fill" : "square.grid.3x3", "Сетка") { showDownloadGrid.toggle() }
                     sideControl("pawprint.fill", "Животные") { selectedTab = .wildlife }
-                    sideControl("map", "Карты") { showMapSources = true }
+                    sideControl("arrow.down.circle.fill", "Скачать") { showMapDownload = true }
                 }
                 Spacer(minLength: 0)
                 VStack(spacing: 9) {
@@ -650,6 +660,9 @@ struct MainView: View {
     // Isolate SwiftUI result-builder type checking.
     private var downloadsBlock2: some View {
                 Section("Офлайн-районы OpenStreetMap") {
+                    Button("Быстрая загрузка района на карте", systemImage: "arrow.down.circle.fill") {
+                        showMapDownload = true
+                    }
                     Text("Выберите точку на карте или используйте GPS. Скачанные дороги, тропы и водотоки остаются на iPhone без интернета.")
                         .font(.caption).foregroundStyle(.secondary)
                     TextField("Название района (необязательно)", text: $osmRegionName)
@@ -696,7 +709,7 @@ struct MainView: View {
 
     // Isolate SwiftUI result-builder type checking.
     private var downloadsBlock3: some View {
-        Section("Бесплатные источники карт · ссылки уже встроены") {
+        Section("Каталог поставщиков исходных данных") {
             Text("Выберите источник. Для небольших районов дороги и тропы скачиваются прямо в приложении кнопкой выше. Остальные сайты предоставляют исходные данные или файлы, которые могут потребовать обработки.")
                 .font(.caption).foregroundStyle(.secondary)
             Link("Geofabrik · Казахстан (OSM PBF)", destination: URL(string: "https://download.geofabrik.de/asia/kazakhstan.html")!)
