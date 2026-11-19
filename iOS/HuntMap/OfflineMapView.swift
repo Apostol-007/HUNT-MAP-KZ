@@ -9,16 +9,23 @@ struct OfflineMapView: UIViewRepresentable {
     let position: GeoPoint?
     let markers: [Marker]
     let track: Track?
+    let centerRequest: Int
+    let mapStyle: String
     let tileFiles: [URL]
     let tileRevision: Int
     let online: Bool
     @Binding var selectedZone: GeoZone?
     var onMapTap: (GeoPoint) -> Void
 
+    private static func onlineStyle(_ name: String) -> URL {
+        let safe = ["liberty", "bright", "positron"].contains(name) ? name : "liberty"
+        return URL(string: "https://tiles.openfreemap.org/styles/\(safe)")!
+    }
+
     func makeCoordinator() -> Coordinator { Coordinator(selectedZone: $selectedZone, onMapTap: onMapTap) }
 
     func makeUIView(context: Context) -> MLNMapView {
-        let styleURL = online ? URL(string: "https://tiles.openfreemap.org/styles/liberty")! : OfflineMapStyle.url
+        let styleURL = online ? Self.onlineStyle(mapStyle) : OfflineMapStyle.url
         let view = MLNMapView(frame: .zero, styleURL: styleURL)
         view.delegate = context.coordinator
         context.coordinator.zones = zones
@@ -33,9 +40,13 @@ struct OfflineMapView: UIViewRepresentable {
 
     func updateUIView(_ view: MLNMapView, context: Context) {
         let requestedOnline = online
-        let currentOnline = view.styleURL?.host == "tiles.openfreemap.org"
-        if requestedOnline != currentOnline {
-            view.styleURL = requestedOnline ? URL(string: "https://tiles.openfreemap.org/styles/liberty") : OfflineMapStyle.url
+        let wantedStyle = requestedOnline ? Self.onlineStyle(mapStyle) : OfflineMapStyle.url
+        if view.styleURL != wantedStyle { view.styleURL = wantedStyle }
+        if context.coordinator.lastCenterRequest != centerRequest {
+            context.coordinator.lastCenterRequest = centerRequest
+            if let target = position ?? markers.first(where: { $0.kind == "Машина" })?.coordinate ?? markers.first?.coordinate {
+                view.setCenter(CLLocationCoordinate2D(latitude: target.latitude, longitude: target.longitude), animated: true)
+            }
         }
         context.coordinator.zones = zones
         context.coordinator.onMapTap = onMapTap
@@ -48,6 +59,7 @@ struct OfflineMapView: UIViewRepresentable {
         var onMapTap: (GeoPoint) -> Void
         weak var map: MLNMapView?
         var zones: [GeoZone] = []
+        var lastCenterRequest = 0
         init(selectedZone: Binding<GeoZone?>, onMapTap: @escaping (GeoPoint) -> Void) {
             self.selectedZone = selectedZone
             self.onMapTap = onMapTap

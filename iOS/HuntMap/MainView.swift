@@ -28,6 +28,15 @@ struct MainView: View {
     @State private var gbifStatus = "Не загружено"
     @State private var loadingGBIF = false
     @AppStorage("hunt.onlineBasemap") private var onlineBasemap = true
+    @AppStorage("hunt.mapStyle") private var mapStyle = "liberty"
+    @State private var showMapSources = false
+    @State private var showLayers = false
+    @State private var showGrounds = true
+    @State private var showMarkers = true
+    @State private var showTrack = true
+    @State private var showGPS = true
+    @State private var selectedRoute: Track?
+    @State private var centerRequest = 0
     @State private var selectedTab: HuntTab = .map
     // The map is the background of the entire window, NOT a child of TabView.
     // TabView's safe-area and intrinsic sizing previously letterboxed the map.
@@ -99,8 +108,10 @@ struct MainView: View {
         GeometryReader { geometry in
             ZStack {
                 OfflineMapView(
-                    zones: model.zones, position: model.coordinate, markers: model.markers,
-                    track: model.currentTrack, tileFiles: tileStore.paths,
+                    zones: showGrounds ? model.zones : [], position: showGPS ? model.coordinate : nil,
+                    markers: showMarkers ? model.markers : [],
+                    track: showTrack ? (selectedRoute ?? model.currentTrack) : nil,
+                    centerRequest: centerRequest, mapStyle: mapStyle, tileFiles: tileStore.paths,
                     tileRevision: tileStore.revision, online: onlineBasemap,
                     selectedZone: $selectedZone, onMapTap: { point in
                         tappedMapPoint = point
@@ -115,14 +126,15 @@ struct MainView: View {
                         VStack(spacing: 9) {
                             sideControl("magnifyingglass", "Поиск") { selectedTab = .downloads }
                             sideControl("figure.hiking", "Маршруты") { selectedTab = .tracks }
-                            sideControl("square.3.layers.3d", "Слои") { onlineBasemap.toggle() }
+                            sideControl("square.3.layers.3d", "Слои") { showLayers = true }
                             sideControl("pawprint.fill", "Животные") { selectedTab = .wildlife }
-                            sideControl("cloud.sun", "Погода") { showAbout = true }
+                            sideControl("map", "Карты") { showMapSources = true }
                         }
                         Spacer(minLength: 0)
                         VStack(spacing: 9) {
                             sideControl("location.north.fill", "GPS") { model.requestGPS() }
-                            sideControl("location.fill", "Позиция") { model.requestGPS() }
+                            sideControl("scope", "Центр") { centerRequest += 1 }
+                            sideControl("car.fill", "Машина") { model.addMarker(kind: "Машина") }
                             sideControl(model.recording ? "stop.circle.fill" : "record.circle", model.recording ? "Стоп" : "Трек") {
                                 if model.recording { model.stopTrack() } else { model.startTrack() }
                             }
@@ -169,6 +181,22 @@ struct MainView: View {
                 .frame(width: geometry.size.width, height: geometry.size.height)
             }
         }
+        .confirmationDialog("Слои карты", isPresented: $showLayers) {
+            Button(showGrounds ? "✓ Границы угодий" : "Границы угодий") { showGrounds.toggle() }
+            Button(showMarkers ? "✓ Маркеры / машина / егери" : "Маркеры / машина / егери") { showMarkers.toggle() }
+            Button(showTrack ? "✓ Записанный маршрут" : "Записанный маршрут") { showTrack.toggle() }
+            Button(showGPS ? "✓ Позиция GPS" : "Позиция GPS") { showGPS.toggle() }
+            Button("Животные: каталог") { selectedTab = .wildlife }
+        } message: { Text("Слои используют только загруженные или созданные вами данные. Местоположения егерей и животных автоматически не определяются.") }
+        .confirmationDialog("Источник карты", isPresented: $showMapSources) {
+            Button("OpenFreeMap Liberty · онлайн") { mapStyle = "liberty"; onlineBasemap = true }
+            Button("OpenFreeMap Bright · онлайн") { mapStyle = "bright"; onlineBasemap = true }
+            Button("OpenFreeMap Positron · онлайн") { mapStyle = "positron"; onlineBasemap = true }
+            Button("Локальные MBTiles · без интернета") { onlineBasemap = false }
+            Button("Google Maps · открыть отдельно") { openExternalMap("google") }
+            Button("Яндекс Карты · открыть отдельно") { openExternalMap("yandex") }
+            Button("Импорт / загрузка офлайн-карт") { selectedTab = .downloads }
+        } message: { Text("Google и Яндекс открываются в официальных сервисах. Скачивание их тайлов в MBTiles без разрешения правообладателя не поддерживается.") }
         .sheet(isPresented: $showMapDownload) {
             NavigationStack {
                 Form {
@@ -199,6 +227,15 @@ struct MainView: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+    }
+
+    private func openExternalMap(_ provider: String) {
+        let latitude = tappedMapPoint?.latitude ?? model.coordinate?.latitude ?? 43.24
+        let longitude = tappedMapPoint?.longitude ?? model.coordinate?.longitude ?? 76.91
+        let urlString = provider == "google"
+            ? "https://www.google.com/maps/search/?api=1&query=\(latitude),\(longitude)"
+            : "https://yandex.kz/maps/?ll=\(longitude)%2C\(latitude)&z=13"
+        if let url = URL(string: urlString) { UIApplication.shared.open(url) }
     }
 
     private var headerControls: some View {
@@ -260,7 +297,19 @@ struct MainView: View {
         NavigationStack {
             List {
                 if let current=model.currentTrack {Section("Активный маршрут") {trackRow(current);Button(model.paused ? "Продолжить":"Пауза") {model.togglePause()}}}
-                Section("История") {ForEach(model.tracks) {trackRow($0)}}
+                Section("История · выбрать маршрут на карте") {
+                    ForEach(model.tracks) { track in
+                        VStack(alignment: .leading, spacing: 6) {
+                            trackRow(track)
+                            Button("Показать на карте / идти обратно") {
+                                selectedRoute = track
+                                showTrack = true
+                                selectedTab = .map
+                            }
+                            .font(.caption.bold())
+                        }
+                    }
+                }
             }.overlay {if model.tracks.isEmpty && model.currentTrack == nil {ContentUnavailableView("Маршрутов пока нет",systemImage:"figure.hiking",description:Text("Начните запись на вкладке Карта"))}}.navigationTitle("Маршруты")
         }
     }
@@ -270,7 +319,9 @@ struct MainView: View {
     private var markersTab:some View {
         NavigationStack {
             List {ForEach(model.markers) {m in HStack {Image(systemName:"mappin.circle.fill").foregroundStyle(.orange);VStack(alignment:.leading){Text(m.title);Text("\(m.coordinate.latitude.formatted(.number.precision(.fractionLength(5)))), \(m.coordinate.longitude.formatted(.number.precision(.fractionLength(5))))").font(.caption).foregroundStyle(.secondary)};Spacer();ShareLink(item:"geo:\(m.coordinate.latitude),\(m.coordinate.longitude)"){Image(systemName:"square.and.arrow.up")}}}.onDelete(perform:model.removeMarkers)}
-            .toolbar {Button("Добавить",systemImage:"plus") {model.addMarker()}}
+            .toolbar {Button("Добавить",systemImage:"plus") {model.addMarker()}
+                Button("Машина",systemImage:"car.fill") {model.addMarker(kind: "Машина")}
+                Button("Егерь",systemImage:"person.crop.circle.badge.checkmark") {model.addMarker(kind: "Егерь (вручную)")}}
             .overlay {if model.markers.isEmpty {ContentUnavailableView("Маркеров пока нет",systemImage:"mappin",description:Text("Добавьте метку по GPS"))}}.navigationTitle("Маркеры")
         }
     }
@@ -378,6 +429,7 @@ struct MainView: View {
         NavigationStack {
             Form {
                 Section("Картографическая подложка") {
+                    Button("Выбрать источник карты") { showMapSources = true }
                     Toggle("Онлайн-карта OpenFreeMap", isOn: $onlineBasemap)
                     Text("Онлайн-режим показывает дороги, тропы и объекты при наличии интернета. Отключите его для строгого офлайна. Онлайн-тайлы не скачиваются массово для офлайн-использования.")
                         .font(.caption).foregroundStyle(.secondary)
