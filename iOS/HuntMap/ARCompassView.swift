@@ -100,7 +100,7 @@ struct RangefinderView: View {
         let lon2 = lon1 + atan2(sin(bearing) * sin(angular) * cos(lat1),
                                 cos(angular) - sin(lat1) * sin(lat2))
         let normalizedLon = (lon2 * 180 / .pi + 540).truncatingRemainder(dividingBy: 360) - 180
-        return GeoPoint(latitude: lat2 * 180 / .pi, longitude: normalizedLon)
+        return GeoPoint(lat2 * 180 / .pi, normalizedLon)
     }
 
     var body: some View {

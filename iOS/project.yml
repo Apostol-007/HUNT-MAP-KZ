@@ -27,8 +27,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: kz.huntmap.field
         CODE_SIGN_ENTITLEMENTS: HuntMap.entitlements
         GENERATE_INFOPLIST_FILE: YES
-        MARKETING_VERSION: 1.7.19
-        CURRENT_PROJECT_VERSION: 1719
+        MARKETING_VERSION: 1.7.20
+        CURRENT_PROJECT_VERSION: 1720
         INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen
         INFOPLIST_KEY_UIRequiresFullScreen: YES
         INFOPLIST_KEY_UIBackgroundModes: location
@@ -53,7 +53,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: HuntMapRouteWidget.entitlements
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: HuntMapRouteWidget/Info.plist
-        MARKETING_VERSION: 1.7.19
-        CURRENT_PROJECT_VERSION: 1719
+        MARKETING_VERSION: 1.7.20
+        CURRENT_PROJECT_VERSION: 1720
         SWIFT_VERSION: 5.0
         TARGETED_DEVICE_FAMILY: "1"

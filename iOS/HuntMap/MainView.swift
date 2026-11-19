@@ -12,6 +12,8 @@ struct MainView: View {
     @EnvironmentObject var model:FieldModel
     @StateObject private var tileStore = OfflineTileStore()
     @StateObject private var nativeOSM = NativeOfflineOSM()
+    @StateObject private var offlineAreas = OfflineAreaPacks()
+    @State private var offlineAreaRadius = 1000
     @AppStorage("hunt.showDownloadGrid") private var showDownloadGrid = true
     @State private var osmRegionName = ""
     @State private var osmRadius = 1500
@@ -270,7 +272,7 @@ struct MainView: View {
             centerRequest: centerRequest, mapStyle: mapStyle, tileFiles: tileStore.paths,
             tileRevision: tileStore.revision, offlineOSMLines: nativeOSM.lines,
             offlineOSMRevision: nativeOSM.revision, downloadGridVisible: showDownloadGrid,
-            downloadedRegions: nativeOSM.regions, online: onlineBasemap,
+            downloadedRegions: nativeOSM.regions, online: onlineBasemap || offlineAreas.hasPacks,
             onMarkerSelect: { id in editingMarker = model.markers.first { $0.id == id } },
             onMarkerMove: { id, point in model.moveMarker(id: id, to: point) },
             selectedZone: $selectedZone, onMapTap: { point in
@@ -688,6 +690,47 @@ struct MainView: View {
         default: "нет данных"
         }
     }
+    private var nativeOfflineDownloadBlock: some View {
+        Section("Офлайн-карта · загрузка на iPhone") {
+            Text("Скачивает настоящую картографическую подложку через MapLibre: дороги, подписи и другие элементы выбранного стиля. После загрузки данные сохраняются на устройстве.")
+                .font(.caption).foregroundStyle(.secondary)
+            Picker("Радиус", selection: $offlineAreaRadius) {
+                Text("500 м").tag(500)
+                Text("1 км").tag(1000)
+                Text("2 км").tag(2000)
+                Text("5 км").tag(5000)
+            }
+            Button("Скачать карту выбранного района", systemImage: "square.and.arrow.down.fill") {
+                if let point = tappedMapPoint ?? model.coordinate {
+                    offlineAreas.download(latitude: point.latitude, longitude: point.longitude,
+                                          radiusMeters: offlineAreaRadius, style: mapStyle)
+                }
+            }
+            .disabled(offlineAreas.busy || (tappedMapPoint == nil && model.coordinate == nil))
+            if offlineAreas.busy { ProgressView(value: offlineAreas.fraction) }
+            Text(offlineAreas.status).font(.caption).foregroundStyle(.secondary)
+            if !offlineAreas.packs.isEmpty {
+                ForEach(Array(offlineAreas.packs.enumerated()), id: \.offset) { _, pack in
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text("Офлайн-район").font(.subheadline)
+                            Text("\(pack.progress.countOfResourcesCompleted) ресурсов")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Продолжить") { offlineAreas.resume(pack) }.buttonStyle(.borderless)
+                        Button("Пауза") { offlineAreas.pause(pack) }.buttonStyle(.borderless)
+                        Button(role: .destructive) { offlineAreas.remove(pack) } label: {
+                            Image(systemName: "trash")
+                        }.buttonStyle(.borderless)
+                    }
+                }
+            }
+            Text("Источник подложки: OpenFreeMap. Перед массовой загрузкой необходимо проверить условия офлайн-использования поставщика. На больших участках возможны ограничения по числу тайлов. Офлайн-работу нужно проверить на устройстве.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
     // Isolate SwiftUI result-builder type checking.
     private var downloadsBlock1: some View {
                 Section("Картографическая подложка") {
@@ -957,6 +1000,7 @@ struct MainView: View {
         NavigationStack {
             Form {
                 downloadsBlock1
+                nativeOfflineDownloadBlock
                 downloadsBlock2
                 downloadsBlock3
                 downloadsBlock4
