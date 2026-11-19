@@ -1,0 +1,58 @@
+name: iOS unsigned IPA
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Environment
+        run: |
+          xcodebuild -version
+          brew install xcodegen
+      - name: Generate Xcode project
+        working-directory: iOS
+        run: xcodegen generate --spec project.yml
+      - name: Verify launch-screen and version settings
+        run: |
+          python3 scripts/verify_iphone_layout.py
+      - name: Resolve dependencies
+        working-directory: iOS
+        run: xcodebuild -resolvePackageDependencies -project HuntMapKZ.xcodeproj -scheme HuntMapKZ
+      - name: Build unsigned iOS app
+        working-directory: iOS
+        run: |
+          set -o pipefail
+          xcodebuild -project HuntMapKZ.xcodeproj -scheme HuntMapKZ -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath "$RUNNER_TEMP/Derived" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' build 2>&1 | tee "$RUNNER_TEMP/build.log"
+      - name: Verify generated Info.plist
+        run: |
+          APP="$RUNNER_TEMP/Derived/Build/Products/Release-iphoneos/HuntMapKZ.app"
+          /usr/libexec/PlistBuddy -c 'Print :UILaunchStoryboardName' "$APP/Info.plist" | grep -Fx LaunchScreen
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Info.plist" | grep -Fx 1.2.0
+          test -f "$APP/LaunchScreen.storyboardc/Info.plist" || test -d "$APP/LaunchScreen.storyboardc"
+      - name: Create unsigned IPA container
+        shell: bash
+        run: |
+          set -eu
+          APP="$RUNNER_TEMP/Derived/Build/Products/Release-iphoneos/HuntMapKZ.app"
+          test -d "$APP"
+          mkdir -p "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$APP" "$RUNNER_TEMP/ipa/Payload/"
+          cd "$RUNNER_TEMP/ipa"
+          /usr/bin/zip -qr "$GITHUB_WORKSPACE/HUNT_MAP_KZ-unsigned.ipa" Payload
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-build-log
+          path: ${{ runner.temp }}/build.log
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HUNT-MAP-KZ-unsigned-IPA
+          path: HUNT_MAP_KZ-unsigned.ipa
+          if-no-files-found: error

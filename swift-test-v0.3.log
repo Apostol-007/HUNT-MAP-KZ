@@ -1,0 +1,65 @@
+[0/1] Planning build
+Building for debugging...
+[0/11] Write sources
+[2/11] Write swift-version--1BA0962812E73E12.txt
+[4/13] Emitting module HuntCore
+[5/13] Compiling HuntCore PackTransfer.swift
+[6/14] Wrapping AST for HuntCore for debugging
+[8/17] Compiling HuntCoreTests PackTransferTests.swift
+[9/17] Compiling HuntCoreTests GeometryTests.swift
+[10/17] Emitting module HuntCoreTests
+[11/18] /mnt/data/HUNT_MAP_KZ_MVP/Core/.build/x86_64-unknown-linux-gnu/debug/HuntCorePackageDiscoveredTests.derived/all-discovered-tests.swift
+[12/19] Write sources
+[13/19] Wrapping AST for HuntCoreTests for debugging
+[15/22] Compiling HuntCorePackageDiscoveredTests HuntCoreTests.swift
+[16/22] Compiling HuntCorePackageDiscoveredTests all-discovered-tests.swift
+[17/22] Emitting module HuntCorePackageDiscoveredTests
+[18/23] /mnt/data/HUNT_MAP_KZ_MVP/Core/.build/x86_64-unknown-linux-gnu/debug/HuntCorePackageTests.derived/runner.swift
+[19/24] Write sources
+[20/24] Wrapping AST for HuntCorePackageDiscoveredTests for debugging
+[22/26] Compiling HuntCorePackageTests runner.swift
+[23/26] Emitting module HuntCorePackageTests
+[24/26] Write Objects.LinkFileList
+[25/26] Linking HuntCorePackageTests.xctest
+Build complete! (2.42s)
+Test Suite 'All tests' started at 2026-11-19 06:38:05.695
+Test Suite 'debug.xctest' started at 2026-11-19 06:38:05.696
+Test Suite 'PackTransferTests' started at 2026-11-19 06:38:05.696
+Test Case 'PackTransferTests.testMissingAndMalformedRangeRejected' started at 2026-11-19 06:38:05.696
+Test Case 'PackTransferTests.testMissingAndMalformedRangeRejected' passed (0.003 seconds)
+Test Case 'PackTransferTests.testValidFirstAndLastChunk' started at 2026-11-19 06:38:05.699
+Test Case 'PackTransferTests.testValidFirstAndLastChunk' passed (0.001 seconds)
+Test Case 'PackTransferTests.testWrongLengthRejected' started at 2026-11-19 06:38:05.700
+Test Case 'PackTransferTests.testWrongLengthRejected' passed (0.0 seconds)
+Test Case 'PackTransferTests.testWrongOffsetRejected' started at 2026-11-19 06:38:05.700
+Test Case 'PackTransferTests.testWrongOffsetRejected' passed (0.0 seconds)
+Test Case 'PackTransferTests.testWrongTotalRejected' started at 2026-11-19 06:38:05.700
+Test Case 'PackTransferTests.testWrongTotalRejected' passed (0.0 seconds)
+Test Case 'PackTransferTests.testZeroAndOversizedChunkRejected' started at 2026-11-19 06:38:05.701
+Test Case 'PackTransferTests.testZeroAndOversizedChunkRejected' passed (0.0 seconds)
+Test Suite 'PackTransferTests' passed at 2026-11-19 06:38:05.701
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.004 (0.004) seconds
+Test Suite 'debug.xctest' passed at 2026-11-19 06:38:05.701
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.004 (0.004) seconds
+Test Suite 'All tests' passed at 2026-11-19 06:38:05.701
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.004 (0.004) seconds
+◇ Test run started.
+↳ Testing Library Version: 6.2.1 (c9d57c83568b06d)
+↳ Target Platform: x86_64-unknown-linux-gnu
+◇ Test polygonInsideOutsideAndEdge() started.
+◇ Test antiMeridian() started.
+◇ Test poorAccuracyNeverConfirmsCrossing() started.
+◇ Test transitionNeedsThreeFixes() started.
+◇ Test distanceAndAccuracy() started.
+◇ Test staleGPSFixRejected() started.
+✔ Test antiMeridian() passed after 0.001 seconds.
+✔ Test polygonInsideOutsideAndEdge() passed after 0.001 seconds.
+✔ Test staleGPSFixRejected() passed after 0.001 seconds.
+✔ Test distanceAndAccuracy() passed after 0.001 seconds.
+✔ Test transitionNeedsThreeFixes() passed after 0.001 seconds.
+✔ Test poorAccuracyNeverConfirmsCrossing() passed after 0.001 seconds.
+◇ Test oneThousandReferenceGridPoints() started.
+◇ Test polygonHole() started.
+✔ Test polygonHole() passed after 0.001 seconds.
+✔ Test oneThousandReferenceGridPoints() passed after 0.005 seconds.
+✔ Test run with 8 tests in 0 suites passed after 0.005 seconds.
