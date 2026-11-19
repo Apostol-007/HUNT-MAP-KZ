@@ -1,0 +1,45 @@
+[0/1] Planning build
+Building for debugging...
+[0/2] Write swift-version--1BA0962812E73E12.txt
+Build complete! (0.12s)
+Test Suite 'All tests' started at 2026-11-19 06:43:48.197
+Test Suite 'debug.xctest' started at 2026-11-19 06:43:48.198
+Test Suite 'PackTransferTests' started at 2026-11-19 06:43:48.198
+Test Case 'PackTransferTests.testMissingAndMalformedRangeRejected' started at 2026-11-19 06:43:48.198
+Test Case 'PackTransferTests.testMissingAndMalformedRangeRejected' passed (0.002 seconds)
+Test Case 'PackTransferTests.testValidFirstAndLastChunk' started at 2026-11-19 06:43:48.200
+Test Case 'PackTransferTests.testValidFirstAndLastChunk' passed (0.101 seconds)
+Test Case 'PackTransferTests.testWrongLengthRejected' started at 2026-11-19 06:43:48.301
+Test Case 'PackTransferTests.testWrongLengthRejected' passed (0.0 seconds)
+Test Case 'PackTransferTests.testWrongOffsetRejected' started at 2026-11-19 06:43:48.301
+Test Case 'PackTransferTests.testWrongOffsetRejected' passed (0.0 seconds)
+Test Case 'PackTransferTests.testWrongTotalRejected' started at 2026-11-19 06:43:48.301
+Test Case 'PackTransferTests.testWrongTotalRejected' passed (0.0 seconds)
+Test Case 'PackTransferTests.testZeroAndOversizedChunkRejected' started at 2026-11-19 06:43:48.301
+Test Case 'PackTransferTests.testZeroAndOversizedChunkRejected' passed (0.0 seconds)
+Test Suite 'PackTransferTests' passed at 2026-11-19 06:43:48.302
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.103 (0.103) seconds
+Test Suite 'debug.xctest' passed at 2026-11-19 06:43:48.302
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.103 (0.103) seconds
+Test Suite 'All tests' passed at 2026-11-19 06:43:48.302
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.103 (0.103) seconds
+◇ Test run started.
+↳ Testing Library Version: 6.2.1 (c9d57c83568b06d)
+↳ Target Platform: x86_64-unknown-linux-gnu
+◇ Test poorAccuracyNeverConfirmsCrossing() started.
+◇ Test staleGPSFixRejected() started.
+◇ Test polygonInsideOutsideAndEdge() started.
+◇ Test distanceAndAccuracy() started.
+◇ Test oneThousandReferenceGridPoints() started.
+◇ Test polygonHole() started.
+◇ Test transitionNeedsThreeFixes() started.
+◇ Test antiMeridian() started.
+✔ Test polygonInsideOutsideAndEdge() passed after 0.001 seconds.
+✔ Test distanceAndAccuracy() passed after 0.001 seconds.
+✔ Test staleGPSFixRejected() passed after 0.001 seconds.
+✔ Test antiMeridian() passed after 0.001 seconds.
+✔ Test poorAccuracyNeverConfirmsCrossing() passed after 0.001 seconds.
+✔ Test transitionNeedsThreeFixes() passed after 0.001 seconds.
+✔ Test polygonHole() passed after 0.001 seconds.
+✔ Test oneThousandReferenceGridPoints() passed after 0.003 seconds.
+✔ Test run with 8 tests in 0 suites passed after 0.004 seconds.

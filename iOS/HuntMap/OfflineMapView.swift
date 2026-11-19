@@ -13,8 +13,9 @@ struct OfflineMapView: UIViewRepresentable {
     let tileRevision: Int
     let online: Bool
     @Binding var selectedZone: GeoZone?
+    var onMapTap: (GeoPoint) -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator(selectedZone: $selectedZone) }
+    func makeCoordinator() -> Coordinator { Coordinator(selectedZone: $selectedZone, onMapTap: onMapTap) }
 
     func makeUIView(context: Context) -> MLNMapView {
         let styleURL = online ? URL(string: "https://tiles.openfreemap.org/styles/liberty")! : OfflineMapStyle.url
@@ -37,15 +38,20 @@ struct OfflineMapView: UIViewRepresentable {
             view.styleURL = requestedOnline ? URL(string: "https://tiles.openfreemap.org/styles/liberty") : OfflineMapStyle.url
         }
         context.coordinator.zones = zones
+        context.coordinator.onMapTap = onMapTap
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
         context.coordinator.updateAnnotations(view: view, zones: zones, markers: markers, position: position, track: track)
     }
 
     final class Coordinator: NSObject, MLNMapViewDelegate {
         var selectedZone: Binding<GeoZone?>
+        var onMapTap: (GeoPoint) -> Void
         weak var map: MLNMapView?
         var zones: [GeoZone] = []
-        init(selectedZone: Binding<GeoZone?>) { self.selectedZone = selectedZone }
+        init(selectedZone: Binding<GeoZone?>, onMapTap: @escaping (GeoPoint) -> Void) {
+            self.selectedZone = selectedZone
+            self.onMapTap = onMapTap
+        }
         @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
             guard recognizer.state == .ended, let map else { return }
             let coordinate = map.convert(recognizer.location(in: map), toCoordinateFrom: map)
@@ -53,6 +59,7 @@ struct OfflineMapView: UIViewRepresentable {
             // Find the smallest enclosing boundary for overlapping territories.
             let matching = zones.filter { $0.contains(position) }
             if let zone = matching.first { selectedZone.wrappedValue = zone }
+            else { onMapTap(position) }
         }
 
         private var lastRevision = -1

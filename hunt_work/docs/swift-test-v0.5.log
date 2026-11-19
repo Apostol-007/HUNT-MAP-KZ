@@ -1,0 +1,80 @@
+Building for debugging...
+[0/10] Write sources
+[1/10] Write swift-version--1BA0962812E73E12.txt
+[3/12] Compiling HuntCore Wildlife.swift
+[4/12] Emitting module HuntCore
+[5/13] Wrapping AST for HuntCore for debugging
+[7/17] Compiling HuntCoreTests WildlifeTests.swift
+[8/17] Compiling HuntCoreTests PackTransferTests.swift
+[9/17] Compiling HuntCoreTests GeometryTests.swift
+[10/17] Emitting module HuntCoreTests
+[11/18] /mnt/data/HUNT_MAP_KZ_MVP/Core/.build/x86_64-unknown-linux-gnu/debug/HuntCorePackageDiscoveredTests.derived/all-discovered-tests.swift
+[12/19] Write sources
+[13/19] Wrapping AST for HuntCoreTests for debugging
+[15/22] Emitting module HuntCorePackageDiscoveredTests
+[16/22] Compiling HuntCorePackageDiscoveredTests HuntCoreTests.swift
+[17/22] Compiling HuntCorePackageDiscoveredTests all-discovered-tests.swift
+[18/23] /mnt/data/HUNT_MAP_KZ_MVP/Core/.build/x86_64-unknown-linux-gnu/debug/HuntCorePackageTests.derived/runner.swift
+[19/24] Write sources
+[20/24] Wrapping AST for HuntCorePackageDiscoveredTests for debugging
+[22/26] Compiling HuntCorePackageTests runner.swift
+[23/26] Emitting module HuntCorePackageTests
+[24/26] Write Objects.LinkFileList
+[25/26] Linking HuntCorePackageTests.xctest
+Build complete! (2.11s)
+Test Suite 'All tests' started at 2026-11-19 06:46:54.929
+Test Suite 'debug.xctest' started at 2026-11-19 06:46:54.931
+Test Suite 'PackTransferTests' started at 2026-11-19 06:46:54.931
+Test Case 'PackTransferTests.testMissingAndMalformedRangeRejected' started at 2026-11-19 06:46:54.931
+Test Case 'PackTransferTests.testMissingAndMalformedRangeRejected' passed (0.002 seconds)
+Test Case 'PackTransferTests.testValidFirstAndLastChunk' started at 2026-11-19 06:46:54.933
+Test Case 'PackTransferTests.testValidFirstAndLastChunk' passed (0.101 seconds)
+Test Case 'PackTransferTests.testWrongLengthRejected' started at 2026-11-19 06:46:55.034
+Test Case 'PackTransferTests.testWrongLengthRejected' passed (0.0 seconds)
+Test Case 'PackTransferTests.testWrongOffsetRejected' started at 2026-11-19 06:46:55.034
+Test Case 'PackTransferTests.testWrongOffsetRejected' passed (0.0 seconds)
+Test Case 'PackTransferTests.testWrongTotalRejected' started at 2026-11-19 06:46:55.035
+Test Case 'PackTransferTests.testWrongTotalRejected' passed (0.0 seconds)
+Test Case 'PackTransferTests.testZeroAndOversizedChunkRejected' started at 2026-11-19 06:46:55.035
+Test Case 'PackTransferTests.testZeroAndOversizedChunkRejected' passed (0.0 seconds)
+Test Suite 'PackTransferTests' passed at 2026-11-19 06:46:55.035
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.104 (0.104) seconds
+Test Suite 'WildlifeTests' started at 2026-11-19 06:46:55.035
+Test Case 'WildlifeTests.testDuplicateRejected' started at 2026-11-19 06:46:55.035
+Test Case 'WildlifeTests.testDuplicateRejected' passed (0.008 seconds)
+Test Case 'WildlifeTests.testPreciseCoordinatesRejected' started at 2026-11-19 06:46:55.043
+Test Case 'WildlifeTests.testPreciseCoordinatesRejected' passed (0.0 seconds)
+Test Case 'WildlifeTests.testUnsubstantiatedConfirmedRejected' started at 2026-11-19 06:46:55.043
+Test Case 'WildlifeTests.testUnsubstantiatedConfirmedRejected' passed (0.001 seconds)
+Test Case 'WildlifeTests.testUnsupportedVersion' started at 2026-11-19 06:46:55.044
+Test Case 'WildlifeTests.testUnsupportedVersion' passed (0.0 seconds)
+Test Case 'WildlifeTests.testUnverifiedURLRejected' started at 2026-11-19 06:46:55.045
+Test Case 'WildlifeTests.testUnverifiedURLRejected' passed (0.0 seconds)
+Test Case 'WildlifeTests.testValidPack' started at 2026-11-19 06:46:55.045
+Test Case 'WildlifeTests.testValidPack' passed (0.002 seconds)
+Test Suite 'WildlifeTests' passed at 2026-11-19 06:46:55.047
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.011 (0.011) seconds
+Test Suite 'debug.xctest' passed at 2026-11-19 06:46:55.047
+	 Executed 12 tests, with 0 failures (0 unexpected) in 0.115 (0.115) seconds
+Test Suite 'All tests' passed at 2026-11-19 06:46:55.047
+	 Executed 12 tests, with 0 failures (0 unexpected) in 0.115 (0.115) seconds
+◇ Test run started.
+↳ Testing Library Version: 6.2.1 (c9d57c83568b06d)
+↳ Target Platform: x86_64-unknown-linux-gnu
+◇ Test transitionNeedsThreeFixes() started.
+◇ Test distanceAndAccuracy() started.
+◇ Test antiMeridian() started.
+◇ Test polygonInsideOutsideAndEdge() started.
+◇ Test staleGPSFixRejected() started.
+◇ Test polygonHole() started.
+◇ Test poorAccuracyNeverConfirmsCrossing() started.
+◇ Test oneThousandReferenceGridPoints() started.
+✔ Test antiMeridian() passed after 0.001 seconds.
+✔ Test polygonInsideOutsideAndEdge() passed after 0.001 seconds.
+✔ Test polygonHole() passed after 0.001 seconds.
+✔ Test transitionNeedsThreeFixes() passed after 0.001 seconds.
+✔ Test poorAccuracyNeverConfirmsCrossing() passed after 0.001 seconds.
+✔ Test staleGPSFixRejected() passed after 0.001 seconds.
+✔ Test distanceAndAccuracy() passed after 0.001 seconds.
+✔ Test oneThousandReferenceGridPoints() passed after 0.003 seconds.
+✔ Test run with 8 tests in 0 suites passed after 0.004 seconds.

@@ -22,6 +22,8 @@ struct MainView: View {
     @State private var showDiagnostics = false
     @State private var showAbout = false
     @State private var selectedZone: GeoZone?
+    @State private var tappedMapPoint: GeoPoint?
+    @State private var showMapDownload = false
     @State private var publicTaxa: [GBIFTaxon] = []
     @State private var gbifStatus = "Не загружено"
     @State private var loadingGBIF = false
@@ -88,7 +90,7 @@ struct MainView: View {
         .padding(.horizontal, 5)
         .background(.black.opacity(0.70), in: RoundedRectangle(cornerRadius: 20))
         .padding(.horizontal, 10)
-        .padding(.bottom, 5)
+        .padding(.bottom, 0)
     }
 
     private var mapTab: some View {
@@ -100,59 +102,104 @@ struct MainView: View {
                     zones: model.zones, position: model.coordinate, markers: model.markers,
                     track: model.currentTrack, tileFiles: tileStore.paths,
                     tileRevision: tileStore.revision, online: onlineBasemap,
-                    selectedZone: $selectedZone
+                    selectedZone: $selectedZone, onMapTap: { point in
+                        tappedMapPoint = point
+                        if tileStore.installed.isEmpty { showMapDownload = true }
+                    }
                 )
                 .frame(width: geometry.size.width, height: geometry.size.height)
             }
             .ignoresSafeArea(.container, edges: .all)
 
-            VStack(spacing: 0) {
-                HStack(spacing: 8) {
-                    Image(systemName: "location.fill").foregroundStyle(.orange)
-                    Text(model.status).lineLimit(1)
-                    Spacer(minLength: 4)
-                    Text(onlineBasemap ? "ONLINE" : "OFFLINE")
+            VStack {
+                HStack {
+                    Text("HUNT MAP KZ").font(.subheadline.bold())
+                        .padding(12).background(.black.opacity(0.78), in: Capsule())
+                    Spacer()
+                    Text(onlineBasemap ? "● ONLINE" : "● OFFLINE")
                         .foregroundStyle(onlineBasemap ? .green : .orange)
-                    Menu {
-                        Toggle("Онлайн-карта", isOn: $onlineBasemap)
-                        Button("Диагностика", systemImage: "ladybug") { showDiagnostics = true }
-                    } label: { Image(systemName: "square.3.layers.3d").font(.title3) }
+                        .font(.caption.bold()).padding(12)
+                        .background(.black.opacity(0.78), in: Capsule())
                 }
-                .font(.footnote.weight(.semibold))
-                .padding(.horizontal, 12).padding(.vertical, 10)
                 .foregroundStyle(.white)
-                .background(.black.opacity(0.70), in: Capsule())
                 .padding(.horizontal, 12).padding(.top, 8)
-
+                HStack(alignment: .top) {
+                    VStack(spacing: 10) {
+                        sideControl("figure.hiking", "Маршруты") { selectedTab = .tracks }
+                        sideControl("square.3.layers.3d", "Слои") { onlineBasemap.toggle() }
+                        sideControl("pawprint.fill", "Животные") { selectedTab = .wildlife }
+                        sideControl("arrow.down.circle", "Карты") { selectedTab = .downloads }
+                    }
+                    Spacer()
+                    VStack(spacing: 10) {
+                        sideControl("location.north.fill", "GPS") { model.requestGPS() }
+                        sideControl("mappin.and.ellipse", "Метка") { model.addMarker() }
+                        sideControl(model.recording ? "stop.fill" : "record.circle.fill", model.recording ? "Стоп" : "Запись") {
+                            if model.recording { model.stopTrack() } else { model.startTrack() }
+                        }
+                        sideControl("ladybug", "Диагн.") { showDiagnostics = true }
+                    }
+                }.padding(.horizontal, 12).padding(.top, 12)
                 Spacer(minLength: 0)
-
                 if !model.lastWarning.isEmpty && model.lastWarning != "Границы не загружены" {
-                    Text(model.lastWarning)
-                        .font(.footnote.bold()).foregroundStyle(.white)
-                        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.orange.opacity(0.92), in: RoundedRectangle(cornerRadius: 12))
-                        .padding(.horizontal, 12).padding(.bottom, 6)
+                    Text(model.lastWarning).font(.caption.bold()).foregroundStyle(.white)
+                        .padding(9).background(.orange.opacity(0.9), in: RoundedRectangle(cornerRadius: 10))
                 }
-                HStack(spacing: 12) {
-                    fieldControl("location.north.fill", "GPS") { model.requestGPS() }
-                    fieldControl("mappin.and.ellipse", "Метка") { model.addMarker() }
-                    fieldControl(model.recording ? "stop.fill" : "record.circle.fill",
-                                 model.recording ? "Стоп" : "Запись") {
-                        if model.recording { model.stopTrack() } else { model.startTrack() }
+                if tileStore.installed.isEmpty {
+                    Button { showMapDownload = true } label: {
+                        Label("Карта не загружена · Скачать", systemImage: "arrow.down.circle")
+                            .font(.footnote.bold()).frame(maxWidth: .infinity).padding(12)
+                            .background(.black.opacity(0.82), in: RoundedRectangle(cornerRadius: 14))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.white)
+                    .padding(.horizontal, 12).padding(.bottom, 6)
+                }
+            }
+            .padding(.bottom, 64)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .sheet(isPresented: $showMapDownload) {
+            NavigationStack {
+                Form {
+                    Section("Выбранная точка") {
+                        if let point = tappedMapPoint {
+                            Text(String(format: "%.5f, %.5f", point.latitude, point.longitude))
+                        } else { Text("Текущая область карты") }
+                    }
+                    Section("Офлайн-карта") {
+                        Text("Для загрузки нужен опубликованный MBTiles-пакет. Сервер должен предоставить каталог для выбранного региона или угодья. Само нажатие на карту не создаёт пакет.")
+                        if tileStore.serviceURL.isEmpty {
+                            Text("Сервер карт не настроен").foregroundStyle(.orange)
+                        }
+                        Button("Открыть загрузки и импорт") {
+                            showMapDownload = false
+                            selectedTab = .downloads
+                        }
                     }
                 }
-                .padding(.horizontal, 8).padding(.vertical, 6)
-                .background(.black.opacity(0.72), in: Capsule())
-                .padding(.horizontal, 28)
-                .padding(.bottom, 70) // keep actions above floating navigation
+                .navigationTitle("Скачать карту")
+                .toolbar { ToolbarItem(placement: .confirmationAction) {
+                    Button("Закрыть") { showMapDownload = false }
+                }}
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .sheet(item: $selectedZone) { zone in
             GroundDetailsSheet(zone: zone)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
+    }
+
+    private func sideControl(_ symbol: String, _ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                Image(systemName: symbol).font(.system(size: 20, weight: .semibold))
+                Text(title).font(.system(size: 9, weight: .medium)).lineLimit(1)
+            }
+            .frame(width: 62, height: 59)
+            .foregroundStyle(.white)
+            .background(.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 17))
+        }.buttonStyle(.plain).accessibilityLabel(title)
     }
 
     private func fieldControl(_ symbol: String, _ title: String, action: @escaping () -> Void) -> some View {

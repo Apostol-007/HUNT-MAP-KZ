@@ -1,0 +1,40 @@
+Test Suite 'All tests' started at 2026-11-19 07:06:53.296
+Test Suite 'debug.xctest' started at 2026-11-19 07:06:53.298
+Test Suite 'PackTransferTests' started at 2026-11-19 07:06:53.298
+Test Case 'PackTransferTests.testMissingAndMalformedRangeRejected' started at 2026-11-19 07:06:53.298
+Test Case 'PackTransferTests.testMissingAndMalformedRangeRejected' passed (0.002 seconds)
+Test Case 'PackTransferTests.testValidFirstAndLastChunk' started at 2026-11-19 07:06:53.300
+Test Case 'PackTransferTests.testValidFirstAndLastChunk' passed (0.0 seconds)
+Test Case 'PackTransferTests.testWrongLengthRejected' started at 2026-11-19 07:06:53.300
+Test Case 'PackTransferTests.testWrongLengthRejected' passed (0.101 seconds)
+Test Case 'PackTransferTests.testWrongOffsetRejected' started at 2026-11-19 07:06:53.401
+Test Case 'PackTransferTests.testWrongOffsetRejected' passed (0.0 seconds)
+Test Case 'PackTransferTests.testWrongTotalRejected' started at 2026-11-19 07:06:53.401
+Test Case 'PackTransferTests.testWrongTotalRejected' passed (0.0 seconds)
+Test Case 'PackTransferTests.testZeroAndOversizedChunkRejected' started at 2026-11-19 07:06:53.401
+Test Case 'PackTransferTests.testZeroAndOversizedChunkRejected' passed (0.0 seconds)
+Test Suite 'PackTransferTests' passed at 2026-11-19 07:06:53.401
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.103 (0.103) seconds
+Test Suite 'WildlifeTests' started at 2026-11-19 07:06:53.401
+Test Case 'WildlifeTests.testDuplicateRejected' started at 2026-11-19 07:06:53.401
+Test Case 'WildlifeTests.testDuplicateRejected' passed (0.005 seconds)
+Test Case 'WildlifeTests.testPreciseCoordinatesRejected' started at 2026-11-19 07:06:53.406
+Test Case 'WildlifeTests.testPreciseCoordinatesRejected' passed (0.0 seconds)
+Test Case 'WildlifeTests.testUnsubstantiatedConfirmedRejected' started at 2026-11-19 07:06:53.407
+Test Case 'WildlifeTests.testUnsubstantiatedConfirmedRejected' passed (0.001 seconds)
+Test Case 'WildlifeTests.testUnsupportedVersion' started at 2026-11-19 07:06:53.407
+Test Case 'WildlifeTests.testUnsupportedVersion' passed (0.0 seconds)
+Test Case 'WildlifeTests.testUnverifiedURLRejected' started at 2026-11-19 07:06:53.407
+Test Case 'WildlifeTests.testUnverifiedURLRejected' passed (0.0 seconds)
+Test Case 'WildlifeTests.testValidPack' started at 2026-11-19 07:06:53.408
+Test Case 'WildlifeTests.testValidPack' passed (0.001 seconds)
+Test Suite 'WildlifeTests' passed at 2026-11-19 07:06:53.409
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.007 (0.007) seconds
+Test Suite 'debug.xctest' passed at 2026-11-19 07:06:53.409
+	 Executed 12 tests, with 0 failures (0 unexpected) in 0.111 (0.111) seconds
+Test Suite 'All tests' passed at 2026-11-19 07:06:53.409
+	 Executed 12 tests, with 0 failures (0 unexpected) in 0.111 (0.111) seconds
+◇ Test run started.
+↳ Testing Library Version: 6.2.1 (c9d57c83568b06d)
+↳ Target Platform: x86_64-unknown-linux-gnu
+✔ Test run with 8 tests in 0 suites passed after 0.005 seconds.

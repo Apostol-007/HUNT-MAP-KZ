@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "source": "SYNTHETIC EXAMPLE — NOT OBSERVATION DATA",
+  "source_url": "https://example.org/dataset",
+  "license": "EXAMPLE ONLY — NOT LICENSED WILDLIFE DATA",
+  "generated_at": "2026-11-19T06:00:00Z",
+  "ground_id": "DEMO-NOT-LEGAL",
+  "taxa": [
+    {
+      "id": "DEMO-TAXON-001",
+      "scientific_name": "Examplea fictitia",
+      "name_ru": "Вымышленный тестовый вид",
+      "name_kk": "Сынақ түрі",
+      "category": "no_data",
+      "evidence_count": 0,
+      "latest_evidence_at": null,
+      "source_record_url": null
+    }
+  ]
+}
