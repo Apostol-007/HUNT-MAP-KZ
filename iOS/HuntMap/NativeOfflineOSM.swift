@@ -24,9 +24,12 @@ struct OSMDownloadedRegion: Codable, Identifiable {
     @Published private(set) var busy = false
     @Published private(set) var status = "Детальные дороги и тропы не загружены"
     @Published private(set) var revision = 0
+    @Published private(set) var lastDownloadError: String? = nil
+    @Published private(set) var lastHTTPStatus: Int? = nil
+    @Published private(set) var lastServer: String? = nil
     private let endpoints = [
+        URL(string: "https://overpass-api.de/api/interpreter")!,
         URL(string: "https://overpass.kumi.systems/api/interpreter")!,
-        URL(string: "https://overpass.nchc.org.tw/api/interpreter")!,
         URL(string: "https://overpass.private.coffee/api/interpreter")!
     ]
     private var directory: URL {
@@ -72,6 +75,9 @@ struct OSMDownloadedRegion: Codable, Identifiable {
     func download(around point: GeoPoint, radiusMeters: Int = 1500, title: String = "") async {
         guard !busy else { return }
         busy = true
+        lastDownloadError = nil
+        lastHTTPStatus = nil
+        lastServer = nil
         defer { busy = false }
         let radius = min(2500, max(500, radiusMeters))
         guard point.latitude.isFinite, point.longitude.isFinite,
@@ -81,25 +87,54 @@ struct OSMDownloadedRegion: Codable, Identifiable {
         let query = "[out:json][timeout:45];(way[\"highway\"](around:\(radius),\(point.latitude),\(point.longitude));way[\"waterway\"](around:\(radius),\(point.latitude),\(point.longitude)););out geom;"
         do {
             var responseData: Data? = nil
-            var lastFailure = "Серверы Overpass недоступны"
+            var failures: [String] = []
             for (index, endpoint) in endpoints.enumerated() {
-                status = "Загрузка OSM: сервер \(index + 1) из \(endpoints.count)…"
+                let serverName = endpoint.host ?? "Overpass"
+                lastServer = serverName
+                status = "Подключение к \(serverName) (\(index + 1)/\(endpoints.count))…"
                 var request = URLRequest(url: endpoint)
                 request.httpMethod = "POST"
                 request.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
+                request.setValue("HuntMapKZ/1.7.17 (offline OSM feature extract)", forHTTPHeaderField: "User-Agent")
                 var components = URLComponents()
                 components.queryItems = [URLQueryItem(name: "data", value: query)]
                 request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
-                request.timeoutInterval = 65
+                request.timeoutInterval = 75
                 do {
                     let (payload, response) = try await URLSession.shared.data(for: request)
-                    guard let http = response as? HTTPURLResponse else { continue }
-                    if http.statusCode == 200 { responseData = payload; break }
-                    lastFailure = "HTTP \(http.statusCode) от \(endpoint.host ?? "Overpass")"
+                    guard let http = response as? HTTPURLResponse else {
+                        failures.append("\(serverName): ответ не HTTP")
+                        continue
+                    }
+                    lastHTTPStatus = http.statusCode
+                    guard http.statusCode == 200 else {
+                        let description = String(data: payload.prefix(300), encoding: .utf8)?
+                            .replacingOccurrences(of: "\n", with: " ") ?? ""
+                        failures.append("\(serverName): HTTP \(http.statusCode) \(description.prefix(80))")
+                        continue
+                    }
+                    guard payload.count <= 15_000_000 else {
+                        failures.append("\(serverName): ответ больше 15 МБ")
+                        continue
+                    }
+                    guard let json = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
+                          json["elements"] is [[String: Any]] else {
+                        let explanation = String(data: payload.prefix(350), encoding: .utf8)?
+                            .replacingOccurrences(of: "\n", with: " ") ?? "Неверный JSON"
+                        failures.append("\(serverName): \(explanation.prefix(130))")
+                        continue
+                    }
+                    if let remark = json["remark"] as? String, !remark.isEmpty {
+                        failures.append("\(serverName): \(remark.prefix(130))")
+                        continue
+                    }
+                    responseData = payload
+                    break
                 } catch {
-                    lastFailure = error.localizedDescription
+                    failures.append("\(serverName): \(error.localizedDescription)")
                 }
             }
+            let lastFailure = failures.isEmpty ? "Серверы Overpass недоступны" : failures.joined(separator: " | ")
             guard let data = responseData else {
                 throw NSError(domain: "OSM", code: 1, userInfo: [NSLocalizedDescriptionKey: lastFailure])
             }
@@ -132,8 +167,11 @@ struct OSMDownloadedRegion: Codable, Identifiable {
                 throw error
             }
             rebuildLines()
-            status = "Район «\(region.title)»: \(extracted.count) объектов. Доступен без интернета."
+            status = extracted.isEmpty
+                ? "Запрос выполнен, но дорог и водотоков в выбранном районе нет. Попробуйте другую точку."
+                : "Район «\(region.title)»: \(extracted.count) объектов. Доступен без интернета."
         } catch {
+            lastDownloadError = error.localizedDescription
             status = "Ошибка загрузки OSM: \(error.localizedDescription)"
         }
     }

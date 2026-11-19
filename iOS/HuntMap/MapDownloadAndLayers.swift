@@ -66,7 +66,23 @@ struct QuickMapDownloadSheet: View {
                         .background(point == nil || osm.busy ? Color.gray : Color.orange,
                                     in: RoundedRectangle(cornerRadius: 13))
                         .disabled(point == nil || osm.busy)
-                        Text(osm.status).font(.footnote).foregroundStyle(.secondary)
+                        Text(osm.status)
+                            .font(.footnote)
+                            .foregroundStyle(osm.lastDownloadError == nil ? Color.secondary : Color.red)
+                            .textSelection(.enabled)
+                        if let error = osm.lastDownloadError {
+                            Label("Загрузка не удалась", systemImage: "exclamationmark.triangle.fill")
+                                .font(.subheadline.bold()).foregroundStyle(.red)
+                            Text(error).font(.caption).textSelection(.enabled)
+                            if let host = osm.lastServer {
+                                Text("Последний сервер: \(host) · HTTP: \(osm.lastHTTPStatus.map(String.init) ?? "нет ответа")")
+                                    .font(.caption2).textSelection(.enabled)
+                            }
+                            ShareLink(item: "HUNT MAP KZ OSM download error: \(error); server: \(osm.lastServer ?? "unknown"); HTTP: \(osm.lastHTTPStatus.map(String.init) ?? "none")") {
+                                Label("Поделиться диагностикой загрузки", systemImage: "square.and.arrow.up")
+                            }
+                            .font(.caption)
+                        }
                     }
                     .padding(16)
                     .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))

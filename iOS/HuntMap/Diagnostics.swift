@@ -24,6 +24,7 @@ struct DiagnosticsView: View {
     let mapCount: Int
     let wildlifeCount: Int
     let onlineMap: Bool
+    @ObservedObject var osm: NativeOfflineOSM
     @State private var includeApproximatePosition = false
 
     private var releaseVersion: String {
@@ -67,6 +68,13 @@ struct DiagnosticsView: View {
         Map packs: \(mapCount)
         Wildlife catalogs: \(wildlifeCount)
         Map mode: \(onlineMap ? "online OpenFreeMap" : "strict offline")
+        OSM downloaded regions: \(osm.regions.count)
+        OSM loaded features: \(osm.lines.count)
+        OSM download busy: \(osm.busy)
+        OSM last status: \(osm.status)
+        OSM last server: \(osm.lastServer ?? "none")
+        OSM last HTTP: \(osm.lastHTTPStatus.map(String.init) ?? "none")
+        OSM last error: \(osm.lastDownloadError ?? "none")
         Last GPS error: \(model.lastError)
         Last warning: \(model.lastWarning)
         NOTE: Diagnostic does NOT include exact coordinates, names, tracks, emails, tokens or personal identifiers.

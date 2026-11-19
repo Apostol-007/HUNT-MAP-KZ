@@ -93,7 +93,7 @@ struct MainView: View {
         .background(Color.black.ignoresSafeArea())
         .background(ShakeDetector().frame(width: 1, height: 1))
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
-        .sheet(isPresented: $showDiagnostics) { DiagnosticsView(model: model, mapCount: tileStore.installed.count, wildlifeCount: wildlifeStore.packs.count, onlineMap: onlineBasemap) }
+        .sheet(isPresented: $showDiagnostics) { DiagnosticsView(model: model, mapCount: tileStore.installed.count, wildlifeCount: wildlifeStore.packs.count, onlineMap: onlineBasemap, osm: nativeOSM) }
         .sheet(isPresented: $showAbout) { AboutHuntView() }
     }
 
