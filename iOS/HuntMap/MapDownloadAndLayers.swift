@@ -41,8 +41,10 @@ struct QuickMapDownloadSheet: View {
                             Text("1 км").tag(1000)
                             Text("1,5 км").tag(1500)
                             Text("2,5 км").tag(2500)
+                            Text("5 км").tag(5000)
+                            Text("10 км").tag(10000)
                         }
-                        .pickerStyle(.segmented)
+                        .pickerStyle(.menu)
                         TextField("Название района (необязательно)", text: $name)
                             .textFieldStyle(.roundedBorder)
                         Button {

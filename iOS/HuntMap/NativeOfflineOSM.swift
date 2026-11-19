@@ -79,101 +79,94 @@ struct OSMDownloadedRegion: Codable, Identifiable {
         lastHTTPStatus = nil
         lastServer = nil
         defer { busy = false }
-        let radius = min(2500, max(500, radiusMeters))
-        guard point.latitude.isFinite, point.longitude.isFinite,
-              (-90...90).contains(point.latitude), (-180...180).contains(point.longitude) else {
-            status = "Ошибка: неверные координаты"; return
+        let radius = min(10_000, max(500, radiusMeters))
+        guard (-85...85).contains(point.latitude), (-180...180).contains(point.longitude) else {
+            lastDownloadError = "Некорректные координаты"
+            status = lastDownloadError!
+            return
         }
-        let query = "[out:json][timeout:45];(way[\"highway\"](around:\(radius),\(point.latitude),\(point.longitude));way[\"waterway\"](around:\(radius),\(point.latitude),\(point.longitude)););out geom;"
-        do {
-            var responseData: Data? = nil
-            var failures: [String] = []
-            for (index, endpoint) in endpoints.enumerated() {
-                let serverName = endpoint.host ?? "Overpass"
-                lastServer = serverName
-                status = "Подключение к \(serverName) (\(index + 1)/\(endpoints.count))…"
-                var request = URLRequest(url: endpoint)
-                request.httpMethod = "POST"
-                request.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
-                request.setValue("HuntMapKZ/1.7.17 (offline OSM feature extract)", forHTTPHeaderField: "User-Agent")
-                var components = URLComponents()
-                components.queryItems = [URLQueryItem(name: "data", value: query)]
-                request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
-                request.timeoutInterval = 75
-                do {
-                    let (payload, response) = try await URLSession.shared.data(for: request)
-                    guard let http = response as? HTTPURLResponse else {
-                        failures.append("\(serverName): ответ не HTTP")
-                        continue
-                    }
-                    lastHTTPStatus = http.statusCode
-                    guard http.statusCode == 200 else {
-                        let description = String(data: payload.prefix(300), encoding: .utf8)?
-                            .replacingOccurrences(of: "\n", with: " ") ?? ""
-                        failures.append("\(serverName): HTTP \(http.statusCode) \(description.prefix(80))")
-                        continue
-                    }
-                    guard payload.count <= 15_000_000 else {
-                        failures.append("\(serverName): ответ больше 15 МБ")
-                        continue
-                    }
-                    guard let json = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
-                          json["elements"] is [[String: Any]] else {
-                        let explanation = String(data: payload.prefix(350), encoding: .utf8)?
-                            .replacingOccurrences(of: "\n", with: " ") ?? "Неверный JSON"
-                        failures.append("\(serverName): \(explanation.prefix(130))")
-                        continue
-                    }
-                    if let remark = json["remark"] as? String, !remark.isEmpty {
-                        failures.append("\(serverName): \(remark.prefix(130))")
-                        continue
-                    }
-                    responseData = payload
-                    break
-                } catch {
-                    failures.append("\(serverName): \(error.localizedDescription)")
+        // Large regions are fetched in bounded cells. Every successful cell is
+        // committed independently, so a later server failure cannot lose progress.
+        let cellRadius = 1200
+        let strideMeters = 1700.0
+        let steps = radius <= 1200 ? 0 : Int(ceil(Double(radius) / strideMeters))
+        var cells: [(GeoPoint, Int)] = []
+        if steps == 0 {
+            cells = [(point, radius)]
+        } else {
+            for y in -steps...steps {
+                for x in -steps...steps {
+                    let east = Double(x) * strideMeters
+                    let north = Double(y) * strideMeters
+                    guard hypot(east, north) <= Double(radius) + 400 else { continue }
+                    let lat = point.latitude + north / 111_195.0
+                    let lon = point.longitude + east / (111_195.0 * max(0.2, cos(point.latitude * .pi / 180)))
+                    cells.append((GeoPoint(lat, lon), cellRadius))
                 }
             }
-            let lastFailure = failures.isEmpty ? "Серверы Overpass недоступны" : failures.joined(separator: " | ")
-            guard let data = responseData else {
-                throw NSError(domain: "OSM", code: 1, userInfo: [NSLocalizedDescriptionKey: lastFailure])
-            }
-            guard data.count <= 15_000_000 else { throw NSError(domain: "OSM", code: 2, userInfo: [NSLocalizedDescriptionKey: "Слишком большой ответ сервера"] ) }
-            let parsed = try JSONDecoder().decode(OverpassResponse.self, from: data)
-            var result: [Int64: OSMOfflineLine] = [:]
-            for item in parsed.elements {
-                guard item.type == "way", let geometry = item.geometry, (2...20_000).contains(geometry.count) else { continue }
-                let coords = geometry.compactMap { p -> GeoPoint? in
-                    guard p.lat.isFinite, p.lon.isFinite, (-90...90).contains(p.lat), (-180...180).contains(p.lon) else { return nil }
-                    return GeoPoint(p.lat, p.lon)
-                }
-                guard coords.count >= 2 else { continue }
-                let kind = item.tags?["highway"] ?? item.tags?["waterway"] ?? "other"
-                result[item.id] = OSMOfflineLine(id: item.id, kind: kind, points: coords)
-            }
-            guard result.count <= 4_000 else { throw NSError(domain: "OSM", code: 3, userInfo: [NSLocalizedDescriptionKey: "Превышен лимит объектов. Выберите меньшую территорию."] ) }
-            let extracted = result.values.sorted { $0.id < $1.id }
-            let encoded = try JSONEncoder().encode(extracted)
-            guard encoded.count <= 80_000_000 else { throw NSError(domain: "OSM", code: 4, userInfo: [NSLocalizedDescriptionKey: "Слишком большой набор данных"] ) }
-            let region = OSMDownloadedRegion(id: UUID(), title: title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Район \(regions.count + 1)" : String(title.prefix(70)), latitude: point.latitude, longitude: point.longitude, radiusMeters: radius, downloadedAt: Date(), featureCount: extracted.count)
-            // Commit region data before the index; if index write fails, no existing region is lost.
-            try encoded.write(to: file(for: region.id), options: [.atomic, .completeFileProtectionUnlessOpen])
+        }
+        var saved = 0
+        var failures: [String] = []
+        for (index, cell) in cells.enumerated() {
+            status = "Загрузка участка \(index + 1)/\(cells.count) · сохранено \(saved)"
             do {
-                let updated = regions + [region]
-                try JSONEncoder().encode(updated).write(to: regionIndex, options: [.atomic, .completeFileProtectionUnlessOpen])
-                regions = updated
+                let features = try await fetchCell(at: cell.0, radius: cell.1)
+                let encoded = try JSONEncoder().encode(features)
+                guard encoded.count < 80_000_000 else { throw NSError(domain: "OSM", code: 4, userInfo: [NSLocalizedDescriptionKey: "Участок слишком большой"]) }
+                let region = OSMDownloadedRegion(id: UUID(), title: "\(title.isEmpty ? "Район" : String(title.prefix(40))) \(index + 1)/\(cells.count)", latitude: cell.0.latitude, longitude: cell.0.longitude, radiusMeters: cell.1, downloadedAt: Date(), featureCount: features.count)
+                try encoded.write(to: file(for: region.id), options: [.atomic, .completeFileProtectionUnlessOpen])
+                do {
+                    let updated = regions + [region]
+                    try JSONEncoder().encode(updated).write(to: regionIndex, options: [.atomic, .completeFileProtectionUnlessOpen])
+                    regions = updated
+                } catch {
+                    try? FileManager.default.removeItem(at: file(for: region.id))
+                    throw error
+                }
+                saved += 1
+                rebuildLines()
             } catch {
-                try? FileManager.default.removeItem(at: file(for: region.id))
-                throw error
+                failures.append("Участок \(index + 1): \(error.localizedDescription)")
             }
-            rebuildLines()
-            status = extracted.isEmpty
-                ? "Запрос выполнен, но дорог и водотоков в выбранном районе нет. Попробуйте другую точку."
-                : "Район «\(region.title)»: \(extracted.count) объектов. Доступен без интернета."
-        } catch {
-            lastDownloadError = error.localizedDescription
-            status = "Ошибка загрузки OSM: \(error.localizedDescription)"
         }
+        if !failures.isEmpty { lastDownloadError = failures.prefix(4).joined(separator: " | ") }
+        status = "Сохранено участков: \(saved)/\(cells.count), объектов: \(lines.count)" + (failures.isEmpty ? " · Доступно офлайн" : " · Ошибки: \(failures.count)")
+    }
+
+    private func fetchCell(at point: GeoPoint, radius: Int) async throws -> [OSMOfflineLine] {
+        let query = "[out:json][timeout:45];(way[\"highway\"](around:\(radius),\(point.latitude),\(point.longitude));way[\"waterway\"](around:\(radius),\(point.latitude),\(point.longitude)););out geom;"
+        var errors: [String] = []
+        for endpoint in endpoints {
+            let server = endpoint.host ?? "Overpass"
+            lastServer = server
+            var request = URLRequest(url: endpoint)
+            request.httpMethod = "POST"
+            request.setValue("application/x-www-form-urlencoded; charset=utf-8", forHTTPHeaderField: "Content-Type")
+            var components = URLComponents()
+            components.queryItems = [URLQueryItem(name: "data", value: query)]
+            request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
+            request.timeoutInterval = 65
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else { throw NSError(domain: "OSM", code: 1, userInfo: [NSLocalizedDescriptionKey: "Не HTTP ответ"]) }
+                lastHTTPStatus = http.statusCode
+                guard http.statusCode == 200 else { throw NSError(domain: "OSM", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: "HTTP \(http.statusCode)"]) }
+                guard data.count <= 20_000_000 else { throw NSError(domain: "OSM", code: 2, userInfo: [NSLocalizedDescriptionKey: "Ответ больше 20 МБ"]) }
+                let parsed = try JSONDecoder().decode(OverpassResponse.self, from: data)
+                var result: [Int64: OSMOfflineLine] = [:]
+                for item in parsed.elements {
+                    guard item.type == "way", let geometry = item.geometry, (2...20_000).contains(geometry.count) else { continue }
+                    let coords = geometry.compactMap { p -> GeoPoint? in
+                        guard p.lat.isFinite, p.lon.isFinite, (-90...90).contains(p.lat), (-180...180).contains(p.lon) else { return nil }
+                        return GeoPoint(p.lat, p.lon)
+                    }
+                    guard coords.count >= 2 else { continue }
+                    result[item.id] = OSMOfflineLine(id: item.id, kind: item.tags?["highway"] ?? item.tags?["waterway"] ?? "other", points: coords)
+                }
+                return result.values.sorted { $0.id < $1.id }
+            } catch { errors.append("\(server): \(error.localizedDescription)") }
+        }
+        throw NSError(domain: "OSM", code: 3, userInfo: [NSLocalizedDescriptionKey: errors.joined(separator: " | ")])
     }
 
     func remove(_ region: OSMDownloadedRegion) {

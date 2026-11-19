@@ -27,13 +27,14 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: kz.huntmap.field
         CODE_SIGN_ENTITLEMENTS: HuntMap.entitlements
         GENERATE_INFOPLIST_FILE: YES
-        MARKETING_VERSION: 1.7.17
-        CURRENT_PROJECT_VERSION: 1717
+        MARKETING_VERSION: 1.7.19
+        CURRENT_PROJECT_VERSION: 1719
         INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen
         INFOPLIST_KEY_UIRequiresFullScreen: YES
         INFOPLIST_KEY_UIBackgroundModes: location
         SWIFT_VERSION: 5.0
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_KEY_NSCameraUsageDescription: "Показывать изображение камеры для дальномера с созданием меток по GPS и азимуту"
         INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Показать позицию и предупреждать о границах во время использования карты"
         INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription: "Записывать маршрут и предупреждать о границах во время активной полевой сессии с заблокированным экраном"
         TARGETED_DEVICE_FAMILY: "1"
@@ -52,7 +53,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: HuntMapRouteWidget.entitlements
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: HuntMapRouteWidget/Info.plist
-        MARKETING_VERSION: 1.7.17
-        CURRENT_PROJECT_VERSION: 1717
+        MARKETING_VERSION: 1.7.19
+        CURRENT_PROJECT_VERSION: 1719
         SWIFT_VERSION: 5.0
         TARGETED_DEVICE_FAMILY: "1"

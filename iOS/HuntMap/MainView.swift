@@ -38,6 +38,7 @@ struct MainView: View {
     @State private var tileImportShown=false
     @State private var importShown=false
     @State private var importError:String?
+    @State private var showRangefinder = false
     @State private var showDiagnostics = false
     @State private var showAbout = false
     @State private var editingMarker: Marker?
@@ -93,6 +94,7 @@ struct MainView: View {
         .background(Color.black.ignoresSafeArea())
         .background(ShakeDetector().frame(width: 1, height: 1))
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
+        .fullScreenCover(isPresented: $showRangefinder) { RangefinderView(position: model.coordinate, accuracy: model.accuracy, onCreateMarker: { model.saveMarker($0) }) }
         .sheet(isPresented: $showDiagnostics) { DiagnosticsView(model: model, mapCount: tileStore.installed.count, wildlifeCount: wildlifeStore.packs.count, onlineMap: onlineBasemap, osm: nativeOSM) }
         .sheet(isPresented: $showAbout) { AboutHuntView() }
     }
@@ -281,6 +283,10 @@ struct MainView: View {
     private var mapControls: some View {
         VStack(spacing: 0) {
             headerControls
+            HStack {
+                Spacer()
+                MapCompassView().padding(.trailing, 8).padding(.top, 6)
+            }
             mapSideControls
             Spacer(minLength: 0)
             mapStatusFooter
@@ -299,6 +305,7 @@ struct MainView: View {
                 }
                 Spacer(minLength: 0)
                 VStack(spacing: 9) {
+                    sideControl("camera.viewfinder", "Дальномер") { showRangefinder = true }
                     sideControl("location.north.fill", "GPS") { model.requestGPS() }
                     sideControl("scope", "Центр") { centerRequest += 1 }
                     sideControl("car.fill", "Машина") { model.addMarker(kind: "Машина") }

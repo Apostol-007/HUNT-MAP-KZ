@@ -41,6 +41,7 @@ struct OfflineMapView: UIViewRepresentable {
         view.addGestureRecognizer(tap)
         let hold = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleMarkerDrag(_:)))
         hold.minimumPressDuration = 0.45
+        hold.cancelsTouchesInView = false
         view.addGestureRecognizer(hold)
         context.coordinator.map = view
         view.setCenter(CLLocationCoordinate2D(latitude: 43.24, longitude: 76.91), zoomLevel: 11, animated: false)
@@ -67,7 +68,7 @@ struct OfflineMapView: UIViewRepresentable {
         context.coordinator.updateOSMLines(view: view, lines: offlineOSMLines, revision: offlineOSMRevision)
         context.coordinator.updateDownloadGrid(view: view, visible: downloadGridVisible, regions: downloadedRegions, revision: offlineOSMRevision)
         context.coordinator.updateAnnotations(view: view, zones: zones, markers: markers, position: position, heading: travelHeading, track: track)
-        context.coordinator.updateMarkerOverlays(on: view)
+
     }
 
     final class Coordinator: NSObject, MLNMapViewDelegate {
@@ -77,9 +78,6 @@ struct OfflineMapView: UIViewRepresentable {
         var onMarkerMove: (UUID, GeoPoint) -> Void
         var markers: [Marker] = []
         private var draggedMarkerID: UUID?
-        // UIKit overlays stay the same size at every zoom level and are independent
-        // of MapLibre style reloads, symbol collision rules and tile availability.
-        private var markerOverlays: [UUID: UIImageView] = [:]
         weak var map: MLNMapView?
         var zones: [GeoZone] = []
         var lastCenterRequest = 0
@@ -151,55 +149,7 @@ struct OfflineMapView: UIViewRepresentable {
 
         func mapView(_ mapView: MLNMapView, regionDidChangeAnimated animated: Bool) {
             rebuildDownloadGrid(view: mapView)
-            updateMarkerOverlays(on: mapView)
-        }
 
-        func mapViewRegionIsChanging(_ mapView: MLNMapView) {
-            updateMarkerOverlays(on: mapView)
-        }
-
-        func updateMarkerOverlays(on map: MLNMapView) {
-            let currentIDs = Set(markers.map(\.id))
-            let removedIDs = markerOverlays.keys.filter { !currentIDs.contains($0) }
-            for id in removedIDs {
-                markerOverlays.removeValue(forKey: id)?.removeFromSuperview()
-            }
-            for marker in markers {
-                let view: UIImageView
-                if let existing = markerOverlays[marker.id] {
-                    view = existing
-                } else {
-                    let created = UIImageView(frame: CGRect(x: 0, y: 0, width: 42, height: 42))
-                    created.isUserInteractionEnabled = false
-                    created.contentMode = .scaleAspectFit
-                    created.layer.zPosition = 1000
-                    map.addSubview(created)
-                    markerOverlays[marker.id] = created
-                    view = created
-                }
-                let symbol = marker.symbol ?? MarkerStyle.defaultSymbol(for: marker.kind)
-                let color = UIColor(hex: marker.colorHex ?? "#FF9F0A")
-                let key = "\(symbol):\(marker.colorHex ?? "#FF9F0A")"
-                if view.accessibilityIdentifier != key {
-                    let image = UIGraphicsImageRenderer(size: CGSize(width: 42, height: 42)).image { _ in
-                        let outer = CGRect(x: 2, y: 2, width: 38, height: 38)
-                        UIColor.white.setFill()
-                        UIBezierPath(ovalIn: outer).fill()
-                        color.setFill()
-                        UIBezierPath(ovalIn: outer.insetBy(dx: 3, dy: 3)).fill()
-                        if let glyph = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .bold))?.withTintColor(.white, renderingMode: .alwaysOriginal) {
-                            glyph.draw(in: CGRect(x: 11, y: 11, width: 20, height: 20))
-                        }
-                    }
-                    view.image = image
-                    view.accessibilityIdentifier = key
-                }
-                let coordinate = CLLocationCoordinate2D(latitude: marker.coordinate.latitude, longitude: marker.coordinate.longitude)
-                let point = map.convert(coordinate, toPointTo: map)
-                view.center = point
-                view.isHidden = !point.x.isFinite || !point.y.isFinite ||
-                    point.x < -21 || point.y < -21 || point.x > map.bounds.width + 21 || point.y > map.bounds.height + 21
-            }
         }
 
         private func rebuildDownloadGrid(view: MLNMapView) {
@@ -303,7 +253,7 @@ struct OfflineMapView: UIViewRepresentable {
                 mapView.removeAnnotation(gpsShape)
                 mapView.addAnnotation(gpsShape)
             }
-            updateMarkerOverlays(on: mapView)
+
         }
 
         private func configure(style: MLNStyle, files: [URL]) {
@@ -358,8 +308,13 @@ struct OfflineMapView: UIViewRepresentable {
                 }
                 appendSegment()
             }
-            // Markers use persistent UIKit overlays; do not create duplicate
-            // MapLibre point symbols that can disappear during style reloads.
+            // Native MapLibre annotations survive zoom changes and stay interactive.
+            for marker in markers {
+                let annotation = MLNPointAnnotation()
+                annotation.coordinate = CLLocationCoordinate2D(latitude: marker.coordinate.latitude, longitude: marker.coordinate.longitude)
+                annotation.title = "HUNT_MARKER_\(marker.id.uuidString)"
+                updated.append(annotation)
+            }
                 staticShapes = updated
                 staticSignature = signature
                 if !updated.isEmpty { view.addAnnotations(updated) }
@@ -427,6 +382,13 @@ struct OfflineMapView: UIViewRepresentable {
                 }
             }
             return String(hasher.finalize())
+        }
+
+        func mapView(_ mapView: MLNMapView, didSelect annotation: MLNAnnotation) {
+            guard let title = annotation.title ?? nil,
+                  title.hasPrefix("HUNT_MARKER_"),
+                  let id = UUID(uuidString: String(title.dropFirst("HUNT_MARKER_".count))) else { return }
+            onMarkerSelect(id)
         }
 
         // Directional position symbol. Course is supplied by Core Location when moving;
