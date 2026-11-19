@@ -7,12 +7,15 @@ import HuntCore
 struct OfflineMapView: UIViewRepresentable {
     let zones: [GeoZone]
     let position: GeoPoint?
+    let travelHeading: Double?
     let markers: [Marker]
     let track: Track?
     let centerRequest: Int
     let mapStyle: String
     let tileFiles: [URL]
     let tileRevision: Int
+    let offlineOSMLines: [OSMOfflineLine]
+    let offlineOSMRevision: Int
     let online: Bool
     @Binding var selectedZone: GeoZone?
     var onMapTap: (GeoPoint) -> Void
@@ -43,14 +46,15 @@ struct OfflineMapView: UIViewRepresentable {
         if view.styleURL != wantedStyle { view.styleURL = wantedStyle }
         if context.coordinator.lastCenterRequest != centerRequest {
             context.coordinator.lastCenterRequest = centerRequest
-            if let target = track?.fixes.first?.point ?? position ?? markers.first(where: { $0.kind == "Машина" })?.coordinate ?? markers.first?.coordinate {
+            if let target = position ?? markers.first(where: { $0.kind == "Машина" })?.coordinate ?? markers.first?.coordinate {
                 view.setCenter(CLLocationCoordinate2D(latitude: target.latitude, longitude: target.longitude), animated: true)
             }
         }
         context.coordinator.zones = zones
         context.coordinator.onMapTap = onMapTap
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
-        context.coordinator.updateAnnotations(view: view, zones: zones, markers: markers, position: position, track: track)
+        context.coordinator.updateOSMLines(view: view, lines: offlineOSMLines, revision: offlineOSMRevision)
+        context.coordinator.updateAnnotations(view: view, zones: zones, markers: markers, position: position, heading: travelHeading, track: track)
     }
 
     final class Coordinator: NSObject, MLNMapViewDelegate {
@@ -73,10 +77,32 @@ struct OfflineMapView: UIViewRepresentable {
             else { onMapTap(position) }
         }
 
+        private var osmRevision = -1
+        private var osmShapes: [MLNAnnotation] = []
+        func updateOSMLines(view: MLNMapView, lines: [OSMOfflineLine], revision: Int) {
+            guard revision != osmRevision else { return }
+            if !osmShapes.isEmpty { view.removeAnnotations(osmShapes) }
+            var updated: [MLNAnnotation] = []
+            for line in lines.prefix(4_000) {
+                guard line.points.count >= 2 else { continue }
+                var coords = TrackRendering.simplified(line.points, toleranceMeters: 2, maxPoints: 1200)
+                    .map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+                guard coords.count >= 2 else { continue }
+                let polyline = MLNPolyline(coordinates: &coords, count: UInt(coords.count))
+                polyline.title = "OSM: \(line.kind)"
+                updated.append(polyline)
+            }
+            osmShapes = updated
+            osmRevision = revision
+            if !updated.isEmpty { view.addAnnotations(updated) }
+        }
+
         private var lastRevision = -1
         private var lastStyle: MLNStyle?
         private var latestFiles: [URL] = []
-        private var shapes: [MLNAnnotation] = []
+        private var staticShapes: [MLNAnnotation] = []
+        private var gpsShape: MLNPointAnnotation?
+        private var staticSignature: String?
         private var centeredOnGPS = false
 
         func apply(view: MLNMapView, files: [URL], revision: Int) {
@@ -111,9 +137,13 @@ struct OfflineMapView: UIViewRepresentable {
             }
         }
 
-        func updateAnnotations(view: MLNMapView, zones: [GeoZone], markers: [Marker], position: GeoPoint?, track: Track?) {
-            if !shapes.isEmpty { view.removeAnnotations(shapes) }
-            var updated: [MLNAnnotation] = []
+        func updateAnnotations(view: MLNMapView, zones: [GeoZone], markers: [Marker], position: GeoPoint?, heading: Double?, track: Track?) {
+            // GPS updates must not rebuild routes, markers and boundaries.
+            // The signature uses stable identifiers and a compact content fingerprint.
+            let signature = staticContentSignature(zones: zones, markers: markers, track: track)
+            if signature != staticSignature {
+                if !staticShapes.isEmpty { view.removeAnnotations(staticShapes) }
+                var updated: [MLNAnnotation] = []
             for zone in zones {
                 for polygon in zone.polygons {
                     for ring in polygon.rings where ring.count >= 3 {
@@ -125,10 +155,20 @@ struct OfflineMapView: UIViewRepresentable {
                 }
             }
             if let track, track.fixes.count > 1 {
-                var coordinates = track.fixes.map { CLLocationCoordinate2D(latitude: $0.point.latitude, longitude: $0.point.longitude) }
-                let line = MLNPolyline(coordinates: &coordinates, count: UInt(coordinates.count))
-                line.title = "Записанный маршрут"
-                updated.append(line)
+                var segment: [CLLocationCoordinate2D] = []
+                func appendSegment() {
+                    guard segment.count > 1 else { return }
+                    var coordinates = TrackRendering.simplified(segment.map { GeoPoint($0.latitude, $0.longitude) }, toleranceMeters: 3, maxPoints: 2500)
+                        .map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+                    let line = MLNPolyline(coordinates: &coordinates, count: UInt(coordinates.count))
+                    line.title = "Записанный маршрут"
+                    updated.append(line)
+                }
+                for fix in track.fixes {
+                    if fix.startsNewSegment == true { appendSegment(); segment.removeAll() }
+                    segment.append(CLLocationCoordinate2D(latitude: fix.point.latitude, longitude: fix.point.longitude))
+                }
+                appendSegment()
             }
             for marker in markers {
                 let point = MLNPointAnnotation()
@@ -136,15 +176,95 @@ struct OfflineMapView: UIViewRepresentable {
                 point.coordinate = CLLocationCoordinate2D(latitude: marker.coordinate.latitude, longitude: marker.coordinate.longitude)
                 updated.append(point)
             }
-            if let position {
-                let gps = MLNPointAnnotation()
-                gps.title = "GPS · текущая позиция"
-                gps.coordinate = CLLocationCoordinate2D(latitude: position.latitude, longitude: position.longitude)
-                updated.append(gps)
-                if !centeredOnGPS { view.setCenter(gps.coordinate, animated: false); centeredOnGPS = true }
+                staticShapes = updated
+                staticSignature = signature
+                if !updated.isEmpty { view.addAnnotations(updated) }
             }
-            shapes = updated
-            view.addAnnotations(updated)
+            let title = "HUNT_GPS_ARROW_\(Int((heading ?? 0).rounded()))"
+            if let position {
+                let coordinate = CLLocationCoordinate2D(latitude: position.latitude, longitude: position.longitude)
+                if let gpsShape {
+                    let old = gpsShape.coordinate
+                    if old.latitude != coordinate.latitude || old.longitude != coordinate.longitude || gpsShape.title != title {
+                        view.removeAnnotation(gpsShape)
+                        gpsShape.coordinate = coordinate
+                        gpsShape.title = title
+                        view.addAnnotation(gpsShape)
+                    }
+                } else {
+                    let gps = MLNPointAnnotation()
+                    gps.title = title
+                    gps.coordinate = coordinate
+                    gpsShape = gps
+                    view.addAnnotation(gps)
+                }
+                if !centeredOnGPS { view.setCenter(coordinate, animated: false); centeredOnGPS = true }
+            } else if let gpsShape {
+                view.removeAnnotation(gpsShape)
+                self.gpsShape = nil
+            }
+        }
+
+        private func staticContentSignature(zones: [GeoZone], markers: [Marker], track: Track?) -> String {
+            // Hash the data relevant to drawing, rather than comparing only array counts.
+            var hasher = Hasher()
+            hasher.combine(zones.count)
+            for zone in zones {
+                hasher.combine(zone.name)
+                hasher.combine(zone.verified)
+                for polygon in zone.polygons {
+                    for ring in polygon.rings {
+                        hasher.combine(ring.count)
+                        for point in ring { hasher.combine(point.latitude); hasher.combine(point.longitude) }
+                    }
+                }
+            }
+            hasher.combine(markers.count)
+            for marker in markers {
+                hasher.combine(marker.title)
+                hasher.combine(marker.coordinate.latitude)
+                hasher.combine(marker.coordinate.longitude)
+            }
+            if let track {
+                hasher.combine(track.fixes.count)
+                // The active track is append-only during recording. Include the last fix
+                // so adding a point invalidates only the route drawing.
+                if let last = track.fixes.last {
+                    hasher.combine(last.point.latitude)
+                    hasher.combine(last.point.longitude)
+                    hasher.combine(last.startsNewSegment)
+                }
+                if let first = track.fixes.first {
+                    hasher.combine(first.point.latitude)
+                    hasher.combine(first.point.longitude)
+                }
+            }
+            return String(hasher.finalize())
+        }
+
+        // Directional position symbol. Course is supplied by Core Location when moving;
+        // the arrow is not falsely rotated from compass noise while stationary.
+        func mapView(_ mapView: MLNMapView, imageFor annotation: MLNAnnotation) -> MLNAnnotationImage? {
+            guard let title = annotation.title ?? nil, title.hasPrefix("HUNT_GPS_ARROW_") else { return nil }
+            let heading = Double(title.replacingOccurrences(of: "HUNT_GPS_ARROW_", with: "")) ?? 0
+            let bucket = Int((heading / 5).rounded()) * 5
+            let key = "hunt-position-arrow-\(bucket)"
+            if let existing = mapView.dequeueReusableAnnotationImage(withIdentifier: key) { return existing }
+            let size = CGSize(width: 44, height: 44)
+            let image = UIGraphicsImageRenderer(size: size).image { ctx in
+                let cg = ctx.cgContext
+                cg.translateBy(x: 22, y: 22)
+                cg.rotate(by: CGFloat(bucket) * .pi / 180)
+                let arrow = UIBezierPath()
+                arrow.move(to: CGPoint(x: 0, y: -19))
+                arrow.addLine(to: CGPoint(x: 13, y: 14))
+                arrow.addLine(to: CGPoint(x: 0, y: 8))
+                arrow.addLine(to: CGPoint(x: -13, y: 14))
+                arrow.close()
+                UIColor.white.setStroke(); arrow.lineWidth = 4; arrow.lineJoinStyle = .round; arrow.stroke()
+                UIColor.systemBlue.setFill(); arrow.fill()
+            }
+            return MLNAnnotationImage(image: image, reuseIdentifier: key)
         }
 
         func mapView(_ mapView: MLNMapView, alphaForShapeAnnotation annotation: MLNShape) -> CGFloat { 0.95 }

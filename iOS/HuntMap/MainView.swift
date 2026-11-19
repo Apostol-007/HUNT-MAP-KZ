@@ -2,9 +2,16 @@ import SwiftUI
 import HuntCore
 import UniformTypeIdentifiers
 
+private func paceText(_ secondsPerKm: Double) -> String {
+    guard secondsPerKm.isFinite, secondsPerKm >= 0 else { return "—" }
+    let total = Int(min(secondsPerKm.rounded(), 359999))
+    return String(format: "%d:%02d мин/км", total / 60, total % 60)
+}
+
 struct MainView: View {
     @EnvironmentObject var model:FieldModel
     @StateObject private var tileStore = OfflineTileStore()
+    @StateObject private var nativeOSM = NativeOfflineOSM()
     @StateObject private var wildlifeStore = WildlifeStore()
     @StateObject private var wildlifeUpdater = WildlifeUpdater()
     @StateObject private var boundaryDownloader = BoundaryDownloader()
@@ -21,6 +28,7 @@ struct MainView: View {
     @AppStorage("hunt.catalog.tertiary") private var tertiaryCatalog = ""
     @AppStorage("hunt.catalog.selected") private var selectedCatalog = 0
     @State private var catalogError: String?
+    @State private var showAdvancedDownloads = false
     @State private var selectedScope = "ground"
     @State private var scopeID = ""
     @State private var tileImportShown=false
@@ -116,10 +124,12 @@ struct MainView: View {
             ZStack {
                 OfflineMapView(
                     zones: showGrounds ? model.zones : [], position: showGPS ? model.coordinate : nil,
+                    travelHeading: model.travelHeading,
                     markers: showMarkers ? model.markers : [],
                     track: showTrack ? (selectedRoute ?? model.currentTrack) : nil,
                     centerRequest: centerRequest, mapStyle: mapStyle, tileFiles: tileStore.paths,
-                    tileRevision: tileStore.revision, online: onlineBasemap,
+                    tileRevision: tileStore.revision, offlineOSMLines: nativeOSM.lines,
+                    offlineOSMRevision: nativeOSM.revision, online: onlineBasemap,
                     selectedZone: $selectedZone, onMapTap: { point in
                         tappedMapPoint = point
                         showMapDownload = true
@@ -152,6 +162,44 @@ struct MainView: View {
                     }
                     .padding(.top, 12)
                     Spacer(minLength: 0)
+                    if model.recording, let active = model.currentTrack {
+                        HStack(spacing: 12) {
+                            Image(systemName: model.paused ? "pause.circle.fill" : "record.circle.fill")
+                                .foregroundStyle(model.paused ? .yellow : .red)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(active.name).font(.caption.bold()).lineLimit(1)
+                                Text(String(format: "%.2f км · %d точек", active.distanceMeters / 1000, active.fixes.count))
+                                    .font(.caption2)
+                                HStack(spacing: 8) {
+                                    Text("Скорость: " + (model.currentSpeedKmh.map { String(format: "%.1f км/ч", $0) } ?? "—"))
+                                    Text("Темп: " + (model.averagePaceSecondsPerKm.map { paceText($0) } ?? "—"))
+                                }.font(.caption2)
+                            }
+                            Spacer(minLength: 0)
+                            Button(model.paused ? "Продолжить" : "Пауза") { model.togglePause() }
+                                .font(.caption.bold())
+                            Button("Стоп") { model.stopTrack() }.font(.caption.bold())
+                        }
+                        .foregroundStyle(.white)
+                        .padding(10)
+                        .background(.black.opacity(0.85), in: RoundedRectangle(cornerRadius: 12))
+                        .padding(.bottom, 6)
+                    }
+                    if let route = selectedRoute {
+                        HStack(spacing: 8) {
+                            Image(systemName: "arrow.uturn.backward.circle.fill")
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Возврат: \(route.name)").font(.caption.bold())
+                                Text(returnGuidance(for: route)).font(.caption2)
+                            }
+                            Spacer(minLength: 4)
+                            Button("Завершить") { selectedRoute = nil }
+                                .font(.caption.bold())
+                        }
+                        .foregroundStyle(.white).padding(10)
+                        .background(.black.opacity(0.86), in: RoundedRectangle(cornerRadius: 12))
+                        .padding(.bottom, 6)
+                    }
                     if !model.lastWarning.isEmpty && model.lastWarning != "Границы не загружены" {
                         Text(model.lastWarning).font(.caption.bold())
                             .foregroundStyle(.white).padding(8)
@@ -236,18 +284,19 @@ struct MainView: View {
                             Text("Установлено пакетов: \(tileStore.installed.count)")
                         }
                         if tileStore.serviceURL.isEmpty {
-                            Text("Сервер карт не настроен").foregroundStyle(.orange)
+                            Text("Активный сервер не выбран. Поиск по точке проверит все настроенные каталоги.").foregroundStyle(.orange)
                         }
                         if let point = tappedMapPoint {
                             Button("Найти офлайн-карты для этой точки") {
-                                Task { await tileStore.fetchAtPoint(latitude: point.latitude, longitude: point.longitude) }
+                                Task { await tileStore.fetchAtPointFromCatalogs(latitude: point.latitude, longitude: point.longitude, catalogs: [primaryCatalog, secondaryCatalog, tertiaryCatalog]) }
                             }
-                            .disabled(tileStore.busy || tileStore.serviceURL.isEmpty)
+                            .disabled(tileStore.busy || [primaryCatalog, secondaryCatalog, tertiaryCatalog].allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
                             if !tileStore.available.isEmpty {
                                 ForEach(tileStore.available) { pack in
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(pack.pack_id).font(.headline)
                                         Text("\(ByteCountFormatter.string(fromByteCount: pack.size_bytes, countStyle: .file)) · \(pack.license)")
+                                        if let source = pack.catalog_url { Text(source).font(.caption2).foregroundStyle(.secondary) }
                                             .font(.caption).foregroundStyle(.secondary)
                                         Button("Скачать / продолжить") { Task { await tileStore.install(pack) } }
                                             .disabled(tileStore.busy)
@@ -344,6 +393,76 @@ struct MainView: View {
         .accessibilityLabel(title)
     }
 
+    // Trackback projects the live position onto recorded SEGMENTS rather than
+    // picking the nearest sampled fix (which can be hundreds of meters apart).
+    // The projection is local/equirectangular; distances remain geodesic.
+    private func returnGuidance(for route: Track) -> String {
+        guard let current = model.coordinate else { return "Нет GPS: записанный маршрут доступен для просмотра" }
+        let fixes = route.fixes
+        guard let start = fixes.first?.point else { return "Маршрут не содержит точек" }
+        if GeoMath.meters(current, start) <= 20 {
+            return "Вы вернулись к началу маршрута (до 20 м)"
+        }
+        guard fixes.count >= 2 else { return "До начала: \(Int(GeoMath.meters(current, start))) м" }
+
+        // Precompute recorded distance along the polyline.
+        var cumulative = Array(repeating: 0.0, count: fixes.count)
+        for i in 1..<fixes.count {
+            cumulative[i] = cumulative[i - 1] + GeoMath.meters(fixes[i - 1].point, fixes[i].point)
+        }
+        var bestDistance = Double.infinity
+        var bestIndex = 1
+        var bestFraction = 0.0
+        for i in 1..<fixes.count {
+            let a = fixes[i - 1].point
+            let b = fixes[i].point
+            let latScale = 111_195.0
+            let lonScale = latScale * cos(current.latitude * .pi / 180)
+            let ax = (a.longitude - current.longitude) * lonScale
+            let ay = (a.latitude - current.latitude) * latScale
+            let bx = (b.longitude - current.longitude) * lonScale
+            let by = (b.latitude - current.latitude) * latScale
+            let dx = bx - ax, dy = by - ay
+            let lengthSquared = dx * dx + dy * dy
+            let fraction = lengthSquared > 0 ? max(0, min(1, -(ax * dx + ay * dy) / lengthSquared)) : 0
+            let distance = hypot(ax + fraction * dx, ay + fraction * dy)
+            if distance < bestDistance {
+                bestDistance = distance
+                bestIndex = i
+                bestFraction = fraction
+            }
+        }
+        let a = fixes[bestIndex - 1].point
+        let b = fixes[bestIndex].point
+        let segmentLength = GeoMath.meters(a, b)
+        let remaining = cumulative[bestIndex - 1] + bestFraction * segmentLength
+        if bestDistance > 100 {
+            return "Вы вне трека на \(Int(bestDistance)) м · до старта по треку \(Int(remaining)) м"
+        }
+        // Follow the polyline BACKWARDS: from the projection to the previous fix.
+        let waypoint = a
+        let bearing = bearingDegrees(from: current, to: waypoint)
+        let direction: String
+        if let heading = model.travelHeading {
+            let delta = (bearing - heading + 540).truncatingRemainder(dividingBy: 360) - 180
+            if abs(delta) < 25 { direction = "Прямо" }
+            else if abs(delta) > 155 { direction = "Развернитесь" }
+            else { direction = delta > 0 ? "Правее" : "Левее" }
+        } else {
+            direction = "Азимут \(Int(bearing.rounded()))°"
+        }
+        return "\(direction) · до точки \(Int(GeoMath.meters(current, waypoint))) м · до старта \(Int(remaining)) м"
+    }
+
+    private func bearingDegrees(from a: GeoPoint, to b: GeoPoint) -> Double {
+        let lat1 = a.latitude * .pi / 180
+        let lat2 = b.latitude * .pi / 180
+        let deltaLon = (b.longitude - a.longitude) * .pi / 180
+        let y = sin(deltaLon) * cos(lat2)
+        let x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(deltaLon)
+        return (atan2(y, x) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360)
+    }
+
     private var tracksTab:some View {
         NavigationStack {
             List {
@@ -352,7 +471,7 @@ struct MainView: View {
                     ForEach(model.tracks) { track in
                         VStack(alignment: .leading, spacing: 6) {
                             trackRow(track)
-                            Button("Показать на карте / идти обратно") {
+                            Button("Вернуться по маршруту") {
                                 selectedRoute = track
                                 centerRequest += 1
                                 showTrack = true
@@ -486,6 +605,48 @@ struct MainView: View {
                     Text("Онлайн-режим показывает дороги, тропы и объекты при наличии интернета. Отключите его для строгого офлайна. Онлайн-тайлы не скачиваются массово для офлайн-использования.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                Section("Скачать дороги и тропы прямо на iPhone") {
+                    Text("Загрузить реальные объекты OpenStreetMap вокруг выбранной на карте точки. После загрузки дороги, тропы и водотоки отображаются без интернета.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Загрузить район (радиус 1,5 км)", systemImage: "arrow.down.circle") {
+                        if let point = tappedMapPoint ?? model.coordinate {
+                            Task { await nativeOSM.download(around: point) }
+                        }
+                    }
+                    .disabled(nativeOSM.busy || (tappedMapPoint == nil && model.coordinate == nil))
+                    if nativeOSM.busy { ProgressView("Получение объектов OSM…") }
+                    Text(nativeOSM.status).font(.caption).foregroundStyle(.secondary)
+                    LabeledContent("Сохранено объектов", value: String(nativeOSM.lines.count))
+                    if !nativeOSM.lines.isEmpty {
+                        Button("Удалить локальные дороги и тропы", role: .destructive) { nativeOSM.clear() }
+                    }
+                    Text("Источник: Overpass API / © OpenStreetMap contributors, ODbL. Это офлайн-слой дорог и троп, не спутниковые снимки и не детальная растровая карта. Для первоначальной загрузки нужен интернет; публичный API может ограничивать запросы.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                Section("Дополнительные источники геоданных") {
+                    Link("Geofabrik · Казахстан", destination: URL(string: "https://download.geofabrik.de/asia/kazakhstan.html")!)
+                    Link("BBBike · выгрузка района", destination: URL(string: "https://extract.bbbike.org/")!)
+                }
+                Section("Карты с вашего сервера") {
+                    Text("Найдите готовые MBTiles по координатам на карте. Сервер автоматически отдаёт список, а приложение проверяет SHA-256 перед установкой.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Найти карты для выбранной точки", systemImage: "location.magnifyingglass") {
+                        if let point = tappedMapPoint {
+                            Task { await tileStore.fetchAtPointFromCatalogs(latitude: point.latitude, longitude: point.longitude, catalogs: [primaryCatalog, secondaryCatalog, tertiaryCatalog]) }
+                        }
+                    }
+                    .disabled(tappedMapPoint == nil || tileStore.busy || [primaryCatalog, secondaryCatalog, tertiaryCatalog].allSatisfy { $0.isEmpty })
+                    ForEach(tileStore.available) { pack in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(pack.pack_id).font(.headline)
+                            Text(ByteCountFormatter.string(fromByteCount: pack.size_bytes, countStyle: .file)).font(.caption)
+                            Button("Установить карту") { Task { await tileStore.install(pack) } }.disabled(tileStore.busy)
+                        }
+                    }
+                    Text("Нужен ваш HTTPS-сервер с опубликованными пакетами. Geofabrik и BBBike предоставляют исходные данные, а не этот API.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                DisclosureGroup("Дополнительные настройки и источники", isExpanded: $showAdvancedDownloads) {
                 Section("О приложении и диагностика") {
                     Button("О приложении") { showAbout = true }
                     Button("Диагностика / сохранить / отправить в ChatGPT") { showDiagnostics = true }
@@ -545,7 +706,7 @@ struct MainView: View {
                         catalogError = nil
                     }
                     if let catalogError { Text(catalogError).foregroundStyle(.red).font(.caption) }
-                    Text("Три независимых каталога MBTiles. Каждый должен поддерживать API /v1/packs/manifest и /v1/packs/{pack_id}, HTTP Range и SHA-256. Адреса сохраняются на устройстве. Переключение источника не удаляет установленные карты.")
+                    Text("Поиск по точке опрашивает все три каталога. Скачивание выполняется именно с того источника, который опубликовал пакет. Каждый должен поддерживать API /v1/packs/manifest и /v1/packs/{pack_id}, HTTP Range и SHA-256. Адреса сохраняются на устройстве. Переключение источника не удаляет установленные карты.")
                         .font(.caption).foregroundStyle(.secondary)
                     Text("Google и Яндекс не являются источниками офлайн-MBTiles без отдельного разрешения. Публичные тайловые серверы OSM нельзя использовать для массовой загрузки.")
                         .font(.caption).foregroundStyle(.secondary)
@@ -570,6 +731,7 @@ struct MainView: View {
                                 .disabled(tileStore.busy)
                         }
                     }
+                }
                 }
                 Section("Импорт без сервера") {
                     Button("Импортировать растровый MBTiles", systemImage: "square.and.arrow.down") { tileImportShown = true }
@@ -636,7 +798,7 @@ struct OfflineCanvas:View {
                         }
                     }
                 }
-                if let track,let first=track.fixes.first {var path=Path();path.move(to:screen(first.point));for fix in track.fixes.dropFirst() {path.addLine(to:screen(fix.point))};context.stroke(path,with:.color(.green),lineWidth:3)}
+                if let track,let first=track.fixes.first {var path=Path();path.move(to:screen(first.point));for fix in track.fixes.dropFirst() {if fix.startsNewSegment == true {path.move(to:screen(fix.point))} else {path.addLine(to:screen(fix.point))}};context.stroke(path,with:.color(.green),lineWidth:3)}
                 for m in markers {let p=screen(m.coordinate);context.fill(Path(ellipseIn:CGRect(x:p.x-5,y:p.y-5,width:10,height:10)),with:.color(.orange))}
                 if let position {let p=screen(position);context.fill(Path(ellipseIn:CGRect(x:p.x-7,y:p.y-7,width:14,height:14)),with:.color(.blue));context.stroke(Path(ellipseIn:CGRect(x:p.x-8,y:p.y-8,width:16,height:16)),with:.color(.white),lineWidth:2)}
             }

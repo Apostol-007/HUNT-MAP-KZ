@@ -15,15 +15,20 @@ targets:
     platform: iOS
     sources:
       - HuntMap
+    entitlements:
+      path: HuntMap.entitlements
     dependencies:
       - package: HuntCore
       - package: MapLibre
+      - target: HuntMapRouteWidget
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: kz.huntmap.field
+        CODE_SIGN_ENTITLEMENTS: HuntMap.entitlements
         GENERATE_INFOPLIST_FILE: YES
-        MARKETING_VERSION: 1.5.5
-        CURRENT_PROJECT_VERSION: 155
+        MARKETING_VERSION: 1.7.7
+        CURRENT_PROJECT_VERSION: 177
         INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen
         INFOPLIST_KEY_UIRequiresFullScreen: YES
         INFOPLIST_KEY_UIBackgroundModes: location
@@ -33,3 +38,21 @@ targets:
         INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription: "Записывать маршрут и предупреждать о границах во время активной полевой сессии с заблокированным экраном"
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
+
+  HuntMapRouteWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - HuntMapRouteWidget
+    entitlements:
+      path: HuntMapRouteWidget.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: kz.huntmap.field.routewidget
+        CODE_SIGN_ENTITLEMENTS: HuntMapRouteWidget.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: HuntMapRouteWidget/Info.plist
+        MARKETING_VERSION: 1.7.7
+        CURRENT_PROJECT_VERSION: 177
+        SWIFT_VERSION: 5.0
+        TARGETED_DEVICE_FAMILY: "1"

@@ -14,7 +14,10 @@ struct PublishedPack: Codable, Identifiable {
     let license: String
     let verified: Bool
     let layers: [String]
-    var id: String { pack_id }
+    // Source provenance: installation must use the catalog that advertised this pack.
+    var catalog_url: String? = nil
+    // Distinguish identically named packages published by different catalogs.
+    var id: String { "\(catalog_url ?? "local")|\(pack_id)|\(sha256)" }
 }
 
 @MainActor final class OfflineTileStore: ObservableObject {
@@ -33,14 +36,63 @@ struct PublishedPack: Codable, Identifiable {
         return base
     }
     private var registryURL: URL { folder.appendingPathComponent("installed.json") }
-    init() { restore() }
+    init() {
+        restore()
+        installBundledOverviewIfNeeded()
+    }
+    /// Low-resolution geographic overview is shipped with the app and requires no network.
+    /// This does NOT contain hunting grounds, detailed paths or high-resolution imagery.
+    private func installBundledOverviewIfNeeded() {
+        guard let seed = Bundle.main.url(forResource: "Kazakhstan_Overview_NaturalEarth", withExtension: "mbtiles"),
+              RasterMBTiles.isSupported(seed) else { return }
+        let packID = "kz-geography-overview-v1"
+        if installed.contains(where: { $0.pack_id == packID }) { return }
+        let destination = folder.appendingPathComponent(packID + ".mbtiles")
+        do {
+            if !FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.copyItem(at: seed, to: destination)
+            }
+            let size = try FileManager.default.attributesOfItem(atPath: destination.path)[.size] as? NSNumber
+            let digest = try Self.sha256(file: destination)
+            let pack = PublishedPack(pack_id: packID, scope: "country", scope_id: "KZ",
+                size_bytes: size?.int64Value ?? 0, sha256: digest, source_version: "bundled-overview-1",
+                license: "Basemap geographic boundary datasets; see README. Low-resolution overview only",
+                verified: false, layers: ["raster-mbtiles"])
+            installed.append(pack)
+            try persist()
+            revision += 1
+            message = "Базовая обзорная карта Казахстана доступна офлайн (масштаб 3–5)"
+        } catch {
+            message = "Не удалось установить обзорную карту: \(error.localizedDescription)"
+        }
+    }
     private func restore() {
         if let data = try? Data(contentsOf: registryURL), let records = try? JSONDecoder().decode([PublishedPack].self, from: data) {
-            installed = records.filter { FileManager.default.fileExists(atPath: path(for: $0).path) }
+            installed = records.filter { pack in
+                let scoped = scopedPath(for: pack)
+                let legacy = folder.appendingPathComponent(pack.pack_id + ".mbtiles")
+                return FileManager.default.fileExists(atPath: scoped.path) ||
+                    FileManager.default.fileExists(atPath: legacy.path)
+            }
         }
     }
     private func persist() throws { try JSONEncoder().encode(installed).write(to: registryURL, options: [.atomic]) }
-    func path(for pack: PublishedPack) -> URL { folder.appendingPathComponent(pack.pack_id + ".mbtiles") }
+    private func scopedPath(for pack: PublishedPack) -> URL {
+        guard let source = pack.catalog_url, !source.isEmpty else {
+            return folder.appendingPathComponent(pack.pack_id + ".mbtiles")
+        }
+        let namespace = String(SHA256.hash(data: Data(source.utf8)).map { String(format: "%02x", $0) }.joined().prefix(16))
+        return folder.appendingPathComponent("\(namespace)-\(pack.pack_id).mbtiles")
+    }
+    func path(for pack: PublishedPack) -> URL {
+        let scoped = scopedPath(for: pack)
+        if FileManager.default.fileExists(atPath: scoped.path) { return scoped }
+        let legacy = folder.appendingPathComponent(pack.pack_id + ".mbtiles")
+        // Legacy fallback only for the same registered package and content digest.
+        if installed.contains(where: { $0.id == pack.id }) &&
+           FileManager.default.fileExists(atPath: legacy.path) { return legacy }
+        return scoped
+    }
     var paths: [URL] { installed.map { path(for: $0) } }
     /// Coverage comes from the MBTiles metadata, not from a guessed radius around the user.
     func covering(latitude: Double, longitude: Double) -> [PublishedPack] {
@@ -51,9 +103,75 @@ struct PublishedPack: Codable, Identifiable {
         if !matches.isEmpty { return "Покрытие найдено: \(matches.count) пакет(ов)" }
         return "Покрытие выбранной точки не подтверждено. Проверьте границы MBTiles или загрузите пакет."
     }
-    private func endpoint() throws -> URL {
-        guard let url = URL(string: serviceURL), url.scheme == "https", url.host != nil else { throw StoreError.invalidEndpoint }
+    private func endpoint(_ raw: String? = nil) throws -> URL {
+        guard let url = URL(string: raw ?? serviceURL), url.scheme == "https", url.host != nil,
+              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil
+        else { throw StoreError.invalidEndpoint }
         return url
+    }
+    /// Search independent catalogs concurrently so a slow server cannot delay others.
+    /// Each request has its own timeout; responses are size-limited before decoding.
+    func fetchAtPointFromCatalogs(latitude: Double, longitude: Double, catalogs: [String]) async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        available = []
+        guard latitude.isFinite, longitude.isFinite,
+              (-90...90).contains(latitude), (-180...180).contains(longitude) else {
+            message = "Некорректные координаты"
+            return
+        }
+        let sources = Array(Set(catalogs.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty })).sorted()
+        guard !sources.isEmpty else {
+            message = "Настройте хотя бы один HTTPS-каталог"
+            return
+        }
+        var found: [PublishedPack] = []
+        var keys = Set<String>()
+        var failures = 0
+        await withTaskGroup(of: Result<[PublishedPack], Error>.self) { group in
+            for source in sources {
+                group.addTask {
+                    do {
+                        guard let base = URL(string: source), base.scheme == "https",
+                              base.host != nil, base.user == nil, base.password == nil,
+                              base.query == nil, base.fragment == nil,
+                              var components = URLComponents(url: base.appendingPathComponent("v1/packs/at-point"), resolvingAgainstBaseURL: false)
+                        else { throw StoreError.invalidEndpoint }
+                        components.queryItems = [URLQueryItem(name: "lat", value: String(latitude)),
+                                                 URLQueryItem(name: "lon", value: String(longitude))]
+                        guard let url = components.url else { throw StoreError.invalidEndpoint }
+                        var request = URLRequest(url: url)
+                        request.timeoutInterval = 12
+                        let (data, response) = try await URLSession.shared.data(for: request)
+                        guard (response as? HTTPURLResponse)?.statusCode == 200,
+                              data.count <= 2_000_000 else { throw StoreError.invalidManifest }
+                        return .success(try JSONDecoder().decode([PublishedPack].self, from: data).compactMap { item in
+                            guard item.layers.contains("raster-mbtiles"),
+                                  item.pack_id.range(of: "^[A-Za-z0-9_-]{1,100}$", options: .regularExpression) != nil,
+                                  item.sha256.range(of: "^[a-fA-F0-9]{64}$", options: .regularExpression) != nil,
+                                  item.size_bytes > 0 else { return nil }
+                            var pack = item
+                            pack.catalog_url = base.absoluteString
+                            return pack
+                        })
+                    } catch { return .failure(error) }
+                }
+            }
+            for await result in group {
+                switch result {
+                case .success(let packs):
+                    for pack in packs {
+                        let key = "\(pack.catalog_url ?? "")|\(pack.pack_id)|\(pack.sha256)"
+                        if keys.insert(key).inserted { found.append(pack) }
+                    }
+                case .failure: failures += 1
+                }
+            }
+        }
+        available = found.sorted { ($0.pack_id, $0.catalog_url ?? "") < ($1.pack_id, $1.catalog_url ?? "") }
+        message = "Найдено пакетов: \(found.count) · ошибок источников: \(failures)"
     }
     enum StoreError: LocalizedError {
         case invalidEndpoint, invalidManifest, badChecksum, unsupportedFormat, notEnoughStorage, badRange
@@ -106,7 +224,7 @@ struct PublishedPack: Codable, Identifiable {
     func install(_ pack: PublishedPack) async {
         guard !busy else { return }; busy = true; progress = 0; defer { busy = false }
         do {
-            let base = try endpoint()
+            let base = try endpoint(pack.catalog_url)
             guard pack.pack_id.range(of: "^[A-Za-z0-9_-]{1,100}$", options: .regularExpression) != nil,
                   pack.size_bytes > 0, pack.size_bytes < Int64.max / 2,
                   pack.sha256.range(of: "^[a-fA-F0-9]{64}$", options: .regularExpression) != nil,
@@ -159,12 +277,12 @@ struct PublishedPack: Codable, Identifiable {
             guard RasterMBTiles.isSupported(partial) else { throw StoreError.unsupportedFormat }
             let staged = folder.appendingPathComponent("staging-\(UUID().uuidString).mbtiles")
             try FileManager.default.copyItem(at: partial, to: staged)
-            let target = path(for: pack)
+            let target = scopedPath(for: pack)
             if FileManager.default.fileExists(atPath: target.path) {
                 _ = try FileManager.default.replaceItemAt(target, withItemAt: staged)
             } else { try FileManager.default.moveItem(at: staged, to: target) }
             try? FileManager.default.removeItem(at: partial)
-            installed.removeAll { $0.pack_id == pack.pack_id }
+            installed.removeAll { $0.id == pack.id }
             installed.append(pack)
             try persist(); revision += 1
             message = "Карта установлена, SHA-256 проверен. Источник: \(pack.license)"
@@ -211,7 +329,7 @@ struct PublishedPack: Codable, Identifiable {
 
     func remove(_ pack: PublishedPack) {
         try? FileManager.default.removeItem(at: path(for: pack))
-        installed.removeAll { $0.pack_id == pack.pack_id }
+        installed.removeAll { $0.id == pack.id }
         do { try persist(); revision += 1; message = "Карта удалена; личные точки и маршруты сохранены" }
         catch { message = "Не удалось обновить реестр: \(error.localizedDescription)" }
     }
