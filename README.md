@@ -1,2 +1,83 @@
-# HUNT-MAP-KZ
-HUNT MAP KZ — offline-first iOS navigation app for hunting areas in Kazakhstan. Offline maps, GPS tracking, hunting ground boundaries, geofencing, waypoints, route recording and wildlife information. Built with SwiftUI and MapLibre.
+# HUNT MAP KZ
+
+**Offline Hunting Maps & GPS Navigation for Kazakhstan**
+
+HUNT MAP KZ — мобильное iOS-приложение для автономной навигации по охотничьим угодьям Казахстана.
+
+Основная задача проекта — обеспечить доступ к картам, границам охотничьих угодий, GPS-навигации и маршрутным данным в условиях отсутствия мобильной связи и интернета.
+
+## Основные возможности
+
+- **Offline Maps** — загрузка и хранение карт для работы без интернета.
+- **GPS Navigation** — определение местоположения средствами GPS.
+- **Hunting Grounds** — отображение границ охотничьих угодий.
+- **Geofencing** — контроль пересечения границ с уведомлениями.
+- **Track Recording** — запись маршрутов и просмотр истории перемещений.
+- **Waypoints & Markers** — создание пользовательских точек и маркеров.
+- **Location Sharing** — обмен координатами, точками и маршрутами.
+- **Wildlife Database** — сведения о животных, обитающих на территории охотничьих угодий.
+- **Offline First** — автономная работа с предварительно загруженными данными.
+
+> Перечисленные возможности отражают целевую функциональность проекта. Не все модули обязательно реализованы или протестированы в текущей MVP-версии.
+
+## Технологический стек
+
+| Компонент | Технология |
+|---|---|
+| iOS Application | Swift / SwiftUI |
+| Maps | MapLibre |
+| Minimum iOS | iOS 17+ |
+| Shared Logic | HuntCore / Swift Package |
+| Backend API | Python / FastAPI |
+| CI/CD | GitHub Actions |
+| Build Environment | macOS / Xcode в GitHub Actions |
+| Development Environment | Windows / macOS |
+
+## Структура проекта
+
+- `HuntCore` — общая логика и модели приложения.
+- `iOS App` — интерфейс, карты и взаимодействие с системными функциями iPhone.
+- `Backend` — серверные API и обработка данных.
+- `GitHub Actions` — автоматизация проверок и сборки iOS.
+
+## Сборка IPA через GitHub Actions
+
+Проект предусматривает сборку iOS-приложения без установки Xcode на локальный Windows-компьютер.
+
+1. Открыть репозиторий GitHub.
+2. Перейти в раздел **Actions**.
+3. Выбрать workflow **HUNT MAP KZ - unsigned iOS IPA**.
+4. Нажать **Run workflow**.
+5. Проверить результаты тестов и компиляции.
+6. При успешной сборке скачать IPA из **Artifacts**.
+
+Для запуска на физическом iPhone требуется подпись приложения. Неподписанная сборка не устанавливается напрямую.
+
+При использовании бесплатного Apple Account можно попробовать установку совместимой сборки через Sideloadly. Такая подпись обычно ограничена семью днями и может не поддерживать отдельные возможности iOS.
+
+## Принципы проекта
+
+1. Приоритет автономной работы.
+2. Сохранение данных на устройстве.
+3. Контроль точности GPS и качества картографических данных.
+4. Отображение источников и актуальности границ угодий.
+5. Защита геолокационных данных пользователя.
+6. Проверка работы без интернета на реальном iPhone.
+
+Детализация карт до 1 м/пиксель допускается только для территорий, где доступны исходные данные соответствующего разрешения и разрешено их офлайн-использование.
+
+## Статус
+
+**Project:** HUNT MAP KZ  
+**Version:** MVP 0.7  
+**Platform:** iOS 17+  
+**Stage:** Development & Testing  
+**Distribution:** GitHub Actions / Unsigned IPA (planned verification)
+
+Проект находится в разработке. Успешная компиляция iOS, установка на физический iPhone, фоновая GPS-запись и геозонные уведомления требуют отдельного тестирования.
+
+## License
+
+Private project. All rights reserved.
+
+Copyright © 2026 HUNT MAP KZ.
