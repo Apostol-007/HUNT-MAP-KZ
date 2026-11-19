@@ -14,7 +14,14 @@ enum GeoJSONImport {
         defer {if access {url.stopAccessingSecurityScopedResource()}}
         let data=try Data(contentsOf:url)
         guard data.count<=20_000_000 else {throw GeoJSONImportError.fileTooLarge}
-        guard let root=try JSONSerialization.jsonObject(with:data) as? [String:Any],root["type"] as? String == "FeatureCollection",let features=root["features"] as? [[String:Any]],features.count<=10_000 else {throw GeoJSONImportError.invalidFile}
+        guard let root=try JSONSerialization.jsonObject(with:data) as? [String:Any] else {throw GeoJSONImportError.invalidFile}
+        let features:[[String:Any]]
+        if root["type"] as? String == "Feature", let _ = root["geometry"] {
+            features=[root]
+        } else if root["type"] as? String == "FeatureCollection", let all=root["features"] as? [[String:Any]] {
+            features=all
+        } else {throw GeoJSONImportError.invalidFile}
+        guard !features.isEmpty && features.count<=10_000 else {throw GeoJSONImportError.invalidFile}
         func point(_ raw:Any)->GeoPoint? {
             guard let a=raw as? [NSNumber],a.count>=2 else {return nil}
             let p=GeoPoint(a[1].doubleValue,a[0].doubleValue)
@@ -41,10 +48,12 @@ enum GeoJSONImport {
             default:throw GeoJSONImportError.invalidGeometry
             }
             let props=feature["properties"] as? [String:Any] ?? [:]
-            let name=String(describing:props["name"] ?? "Полигон \(index+1)")
+            let name=(props["name"] as? String)?.trimmingCharacters(in:.whitespacesAndNewlines) ?? "Полигон \(index+1)"
             let type=(props["kind"] as? String)=="protectedArea" ? ZoneKind.protectedArea : .huntingGround
-            // Verified is never inherited from an unsigned user file.
-            return GeoZone(id:"IMPORTED-\(index)",name:name,kind:type,verified:false,source:"Локальный импорт (юридически не проверено)",polygons:polygons)
+            let identifier=(props["ground_id"] as? String) ?? "LOCAL-\(index)"
+            let origin=(props["source_url"] as? String) ?? "Источник не указан"
+            // Neither server operator approval nor client import is legal proof.
+            return GeoZone(id:"IMPORTED-\(identifier)-\(index)",name:name,kind:type,verified:false,source:"\(origin) · локальный импорт, юридически не проверено",polygons:polygons)
         }
     }
 }

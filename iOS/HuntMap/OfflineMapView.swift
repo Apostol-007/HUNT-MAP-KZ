@@ -11,11 +11,13 @@ struct OfflineMapView: UIViewRepresentable {
     let track: Track?
     let tileFiles: [URL]
     let tileRevision: Int
+    let online: Bool
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> MLNMapView {
-        let view = MLNMapView(frame: .zero, styleURL: OfflineMapStyle.url)
+        let styleURL = online ? URL(string: "https://tiles.openfreemap.org/styles/liberty")! : OfflineMapStyle.url
+        let view = MLNMapView(frame: .zero, styleURL: styleURL)
         view.delegate = context.coordinator
         view.setCenter(CLLocationCoordinate2D(latitude: 43.24, longitude: 76.91), zoomLevel: 11, animated: false)
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
@@ -23,6 +25,11 @@ struct OfflineMapView: UIViewRepresentable {
     }
 
     func updateUIView(_ view: MLNMapView, context: Context) {
+        let requestedOnline = online
+        let currentOnline = view.styleURL?.host == "tiles.openfreemap.org"
+        if requestedOnline != currentOnline {
+            view.styleURL = requestedOnline ? URL(string: "https://tiles.openfreemap.org/styles/liberty") : OfflineMapStyle.url
+        }
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
         context.coordinator.updateAnnotations(view: view, zones: zones, markers: markers, position: position, track: track)
     }

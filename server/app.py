@@ -11,8 +11,9 @@ from pydantic import BaseModel
 
 ROOT = Path(__file__).resolve().parent
 PACKS = ROOT / 'packs'
-app = FastAPI(title='HUNT MAP KZ Pack API (prototype)', version='0.6.0')
+app = FastAPI(title='HUNT MAP KZ Pack API (prototype)', version='0.8.0')
 WILDLIFE_PACKS = ROOT / 'wildlife_packs'
+BOUNDARIES = ROOT / 'boundaries'
 
 class ManifestRecord(BaseModel):
     pack_id: str
@@ -43,7 +44,39 @@ def regions():
 
 @app.get('/v1/catalog/grounds')
 def grounds(region_id: str | None = None):
-    return []
+    # Region filtering requires verified region mappings, not inferred IDs.
+    if region_id is not None:
+        return []
+    index = BOUNDARIES / 'catalog.json'
+    return json.loads(index.read_text('utf-8')) if index.is_file() else []
+
+
+@app.get('/v1/grounds/{ground_id}')
+def ground(ground_id: str):
+    from server.boundary_ingest import ID
+    if not ID.fullmatch(ground_id):
+        raise HTTPException(404, 'Unknown ground')
+    entry = next((item for item in grounds() if item['ground_id'] == ground_id), None)
+    if entry is None:
+        raise HTTPException(404, 'Unknown ground')
+    return entry
+
+
+@app.get('/v1/grounds/{ground_id}/geojson')
+def ground_geojson(ground_id: str, if_none_match: str | None = Header(default=None, alias='If-None-Match')):
+    entry = ground(ground_id)
+    file = BOUNDARIES / f"{entry['sha256']}.geojson"
+    if not file.is_file() or file.stat().st_size > 20_000_000:
+        raise HTTPException(503, 'Boundary unavailable')
+    data = file.read_bytes()
+    if hashlib.sha256(data).hexdigest() != entry['sha256']:
+        raise HTTPException(503, 'Boundary integrity mismatch')
+    etag = '"' + entry['sha256'] + '"'
+    headers = {'ETag': etag, 'Cache-Control': 'public, max-age=3600', 'X-Content-Type-Options': 'nosniff'}
+    if if_none_match == etag:
+        return Response(status_code=304, headers=headers)
+    return Response(data, media_type='application/geo+json', headers=headers)
+
 
 @app.get('/v1/packs/manifest', response_model=list[ManifestRecord])
 def manifest(scope: Literal['region','ground','country'], id: str = Query(...), layers: str = ''):

@@ -7,6 +7,8 @@ struct MainView: View {
     @StateObject private var tileStore = OfflineTileStore()
     @StateObject private var wildlifeStore = WildlifeStore()
     @StateObject private var wildlifeUpdater = WildlifeUpdater()
+    @StateObject private var boundaryDownloader = BoundaryDownloader()
+    @State private var boundaryGroundID = ""
     @State private var wildlifeServer = "https://example.org"
     @State private var wildlifeGround = ""
     @State private var wildlifeImportShown = false
@@ -16,6 +18,12 @@ struct MainView: View {
     @State private var tileImportShown=false
     @State private var importShown=false
     @State private var importError:String?
+    @State private var showDiagnostics = false
+    @State private var showAbout = false
+    @State private var publicTaxa: [GBIFTaxon] = []
+    @State private var gbifStatus = "Не загружено"
+    @State private var loadingGBIF = false
+    @AppStorage("hunt.onlineBasemap") private var onlineBasemap = true
     var body:some View {
         TabView {
             mapTab.tabItem {Label("Карта",systemImage:"map")}
@@ -23,21 +31,22 @@ struct MainView: View {
             markersTab.tabItem {Label("Маркеры",systemImage:"mappin.and.ellipse")}
             wildlifeTab.tabItem {Label("Животные",systemImage:"pawprint")}
             downloadsTab.tabItem {Label("Загрузки",systemImage:"arrow.down.circle")}
-        }.tint(.orange)
+        }
+        .tint(.orange)
+        .background(ShakeDetector().frame(width: 1, height: 1))
+        .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
+        .sheet(isPresented: $showDiagnostics) { DiagnosticsView(model: model, mapCount: tileStore.installed.count, wildlifeCount: wildlifeStore.packs.count, onlineMap: onlineBasemap) }
+        .sheet(isPresented: $showAbout) { AboutHuntView() }
     }
     private var mapTab:some View {
         NavigationStack {
             VStack(spacing:12) {
-                HStack {Image(systemName:"location.fill").foregroundStyle(.orange);Text(model.status);Spacer();Text("OFFLINE").font(.caption.bold()).foregroundStyle(.green)}.font(.subheadline)
+                HStack {Image(systemName:"location.fill").foregroundStyle(.orange);Text(model.status);Spacer();Text(onlineBasemap ? "ONLINE · OpenFreeMap" : "OFFLINE").font(.caption.bold()).foregroundStyle(onlineBasemap ? .orange : .green)}.font(.subheadline)
                 Group {
-                    if tileStore.installed.isEmpty {
-                        OfflineCanvas(zones:model.zones,position:model.coordinate,markers:model.markers,track:model.currentTrack)
-                    } else {
-                        OfflineMapView(zones:model.zones,position:model.coordinate,markers:model.markers,track:model.currentTrack,tileFiles:tileStore.paths,tileRevision:tileStore.revision)
-                    }
+                    OfflineMapView(zones:model.zones,position:model.coordinate,markers:model.markers,track:model.currentTrack,tileFiles:tileStore.paths,tileRevision:tileStore.revision,online:onlineBasemap)
                 }
                     .frame(maxWidth:.infinity,maxHeight:.infinity).background(Color(red:0.08,green:0.13,blue:0.16)).clipShape(RoundedRectangle(cornerRadius:16))
-                Text(tileStore.installed.isEmpty ? "НЕТ ОФЛАЙН-ПОДЛОЖКИ · геометрия без картографической основы" : "ОФЛАЙН-ПАКЕТОВ: \(tileStore.installed.count) · данные требуют проверки лицензий").font(.caption).foregroundStyle(.secondary)
+                Text(onlineBasemap ? "Онлайн-карта: © OpenStreetMap contributors · OpenFreeMap. Для офлайна установите MBTiles" : (tileStore.installed.isEmpty ? "НЕТ ОФЛАЙН-КАРТЫ: скачайте или импортируйте MBTiles" : "ОФЛАЙН-ПАКЕТОВ: \(tileStore.installed.count)")).font(.caption).foregroundStyle(.secondary)
                 Text(model.lastWarning).font(.footnote).foregroundStyle(.orange).frame(maxWidth:.infinity,alignment:.leading)
                 HStack {
                     Button("GPS",systemImage:"location") {model.requestGPS()}.buttonStyle(.borderedProminent)
@@ -72,6 +81,20 @@ struct MainView: View {
                 Section {
                     Text("Данные о животных не означают разрешение на охоту. Источники импортированных пакетов не проверяются приложением автоматически.")
                         .font(.caption).foregroundStyle(.secondary)
+                    Button("Получить виды из GBIF · Казахстан", systemImage: "globe.asia.australia") {
+                        Task {
+                            loadingGBIF = true
+                            defer { loadingGBIF = false }
+                            do {
+                                publicTaxa = try await GBIFDiscovery.fetchKazakhstan()
+                                gbifStatus = "Получено названий: \(publicTaxa.count). Это наблюдения, а не список видов угодья"
+                            } catch { gbifStatus = "Ошибка GBIF: \(error.localizedDescription)" }
+                        }
+                    }.disabled(loadingGBIF)
+                    Text(gbifStatus).font(.caption).foregroundStyle(.secondary)
+                    ForEach(publicTaxa) { taxon in
+                        Text(taxon.name).font(.subheadline)
+                    }
                     Button("Импортировать каталог JSON", systemImage: "square.and.arrow.down") {
                         wildlifeImportShown = true
                     }
@@ -155,6 +178,31 @@ struct MainView: View {
     private var downloadsTab:some View {
         NavigationStack {
             Form {
+                Section("Картографическая подложка") {
+                    Toggle("Онлайн-карта OpenFreeMap", isOn: $onlineBasemap)
+                    Text("Онлайн-режим показывает дороги, тропы и объекты при наличии интернета. Отключите его для строгого офлайна. Онлайн-тайлы не скачиваются массово для офлайн-использования.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("О приложении и диагностика") {
+                    Button("О приложении") { showAbout = true }
+                    Button("Диагностика / сохранить / отправить в ChatGPT") { showDiagnostics = true }
+                    Button("Запросить фоновое разрешение GPS") { model.requestBackgroundGPS() }
+                    Text("Также откройте диагностику, встряхнув iPhone.").font(.caption).foregroundStyle(.secondary)
+                }
+                Section("Загрузка опубликованных границ") {
+                    TextField("ID угодья из каталога вашего сервера", text: $boundaryGroundID)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    Button("Загрузить GeoJSON с сервера") {
+                        Task { await boundaryDownloader.fetch(server: tileStore.serviceURL, groundID: boundaryGroundID, model: model) }
+                    }.disabled(boundaryDownloader.busy || boundaryGroundID.isEmpty)
+                    Text(boundaryDownloader.message).font(.caption).foregroundStyle(.secondary)
+                }
+                Section("Открытые источники границ") {
+                    Link("Государственные геоданные Казахстана (проверяйте права)", destination: URL(string: "https://data.egov.kz/")!)
+                    Link("Tabigat: исходные данные и карта", destination: URL(string: "https://tabigat.gov.kz/")!)
+                    Text("Автоматическая загрузка официальных границ не включена: требуется подтверждённый машиночитаемый адрес и разрешение. GeoJSON импортируется отдельно.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section("Сервер карт") {
                     TextField("https://maps.example.kz", text: $tileStore.serviceURL)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()

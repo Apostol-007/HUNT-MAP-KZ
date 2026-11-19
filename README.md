@@ -1,3 +1,13 @@
+# HUNT MAP KZ · Source Release v0.9
+
+**Старт на Windows / GitHub / IPA:** [docs/GITHUB_IPA_WINDOWS_RU.md](docs/GITHUB_IPA_WINDOWS_RU.md)
+
+**Что нового:** отдельная онлайн-карта OpenFreeMap в MapLibre, которая показывает картографическую подложку с интернетом; поправлен небезопасный вызов background location в `FieldModel.startTrack`; добавлен импорт GeoJSON через HTTPS API, просмотр агрегированных названий наблюдений GBIF по Казахстану, экраны «О приложении» и «Диагностика», жест встряхивания для диагностики и экспорт текстового отчёта, GitHub Actions для сборки unsigned IPA.
+
+**Ограничения:** отсутствие гарантированно законных границ охотугодий, отсутствие полной офлайн-карты Казахстана, отсутствие точной проверки на устройстве, неподтверждённая сборка через Xcode. Подпись и установка unsigned IPA требует отдельного инструмента. Никаких ложных разрешений на охоту.
+
+[Подробнее об авторе](docs/ABOUT_AUTHOR.md) · [GitHub README](README_GITHUB.md) · [отчёт проверки](docs/RELEASE_v0.9.md)
+
 > **Последний релиз: MVP v0.3.** Возобновляемая HTTP Range загрузка с SHA-256 и 14 Swift + 5 серверными тестами. См. `docs/RELEASE_v0.3.md`. iOS-сборка и работа на устройстве пока не проверены.
 
 # HUNT MAP KZ — работающий код прототипа / частичная реализация ТЗ v1.0
@@ -85,3 +95,7 @@ python -m pip install -r server/requirements.txt pytest httpx
 python -m pytest -q server/tests
 python -m server.gbif_etl --boundary /path/to/verified-ground.geojson --output /path/to/review-candidate.json
 ```
+
+## Обновление v0.8: импорт границ GeoJSON
+
+Добавлен проверяемый серверный конвейер подготовки GeoJSON с контролем источника, датой актуальности, ограничениями геометрии, SHA-256 и требованием ручного подтверждения публикации. API: `/v1/catalog/grounds`, `/v1/grounds/{ground_id}`, `/v1/grounds/{ground_id}/geojson`. Локальный iOS-импорт принимает `Feature` и `FeatureCollection`. **Все импортированные границы отмечены как юридически не подтверждённые.** Инструкции и фактически выполненные тесты: `docs/RELEASE_v0.8.md`. Реальные официальные границы в архиве отсутствуют.

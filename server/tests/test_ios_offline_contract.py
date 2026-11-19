@@ -11,8 +11,10 @@ def test_offline_maplibre_has_no_online_tile_fallback():
     assert 'import MapKit' not in map_view
     assert '"sources":{}' in map_view
     assert 'mbtiles://' in map_view
-    assert 'https://' not in map_view
-    assert 'http://' not in map_view
+    # Remote style is allowed only behind an explicit user-controlled online flag.
+    assert 'online ? URL(string:' in map_view
+    assert 'https://tiles.openfreemap.org/styles/liberty' in map_view
+    assert 'OfflineMapStyle.url' in map_view
     assert 'didFinishLoading style' in map_view
 
 

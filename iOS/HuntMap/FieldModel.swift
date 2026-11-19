@@ -37,6 +37,8 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
     @Published var lastWarning = "Границы не загружены"
     @Published var zones: [GeoZone] = []
     @Published var strictOffline = true
+    @Published var gpsAuthorization = "не определено"
+    @Published var lastError = ""
     private let manager=CLLocationManager()
     private let engine=BoundaryEngine()
     private var lastFix: CLLocation?
@@ -54,25 +56,45 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         // Do not silently inject example hunting boundaries in a real user's location.
     }
     func requestGPS() {
-        manager.requestWhenInUseAuthorization()
-        if CLLocationManager.locationServicesEnabled() { manager.startUpdatingLocation() }
+        if manager.authorizationStatus == .notDetermined { manager.requestWhenInUseAuthorization() }
+        else if manager.authorizationStatus == .authorizedAlways || manager.authorizationStatus == .authorizedWhenInUse { manager.startUpdatingLocation() }
+        else { status = "Разрешите геолокацию в настройках iPhone" }
         UNUserNotificationCenter.current().requestAuthorization(options:[.alert,.sound]) { _,_ in }
+    }
+    func requestBackgroundGPS() {
+        if manager.authorizationStatus == .authorizedWhenInUse { manager.requestAlwaysAuthorization() }
+        else if manager.authorizationStatus == .notDetermined { manager.requestWhenInUseAuthorization() }
+        else { status = manager.authorizationStatus == .authorizedAlways ? "Фоновый GPS разрешён" : "Проверьте доступ к геолокации в настройках" }
     }
     func startTrack() {
         guard !recording else {return}
+        guard CLLocationManager.locationServicesEnabled() else {
+            status = "GPS выключен в настройках iPhone"; lastError = status; return
+        }
+        guard manager.authorizationStatus == .authorizedAlways || manager.authorizationStatus == .authorizedWhenInUse else {
+            status = "Дайте разрешение GPS, затем повторите запись"
+            lastError = status
+            if manager.authorizationStatus == .notDetermined { manager.requestWhenInUseAuthorization() }
+            return
+        }
         currentTrack=Track(name:"Маршрут \(Date.now.formatted(date:.numeric,time:.shortened))")
         recording=true;paused=false
-        manager.requestAlwaysAuthorization()
-        manager.allowsBackgroundLocationUpdates=true
-        manager.pausesLocationUpdatesAutomatically=false
+        // Background updates are enabled ONLY after Always authorization; foreground-only
+        // recording must never terminate the app because the user denied Always access.
+        if manager.authorizationStatus == .authorizedAlways {
+            manager.allowsBackgroundLocationUpdates = true
+            manager.pausesLocationUpdatesAutomatically = false
+        }
         manager.startUpdatingLocation()
+        status = manager.authorizationStatus == .authorizedAlways ? "Запись: фон разрешён" : "Запись: только на экране; для фона разрешите «Всегда»"
+        persist()
     }
     func togglePause() { paused.toggle(); persist() }
     func stopTrack() {
         guard recording else {return}
         if let track=currentTrack, !track.fixes.isEmpty {tracks.insert(track,at:0)}
         currentTrack=nil;recording=false;paused=false
-        manager.allowsBackgroundLocationUpdates=false
+        if manager.allowsBackgroundLocationUpdates { manager.allowsBackgroundLocationUpdates=false }
         manager.pausesLocationUpdatesAutomatically=true
         persist()
     }
@@ -120,10 +142,11 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
             UNUserNotificationCenter.current().add(UNNotificationRequest(identifier:UUID().uuidString,content:notification,trigger:nil))
         }
     }
-    func locationManager(_ manager:CLLocationManager,didFailWithError error:Error) {status="Ошибка GPS: \(error.localizedDescription)"}
+    func locationManager(_ manager:CLLocationManager,didFailWithError error:Error) {status="Ошибка GPS: \(error.localizedDescription)"; lastError = status}
     func locationManagerDidChangeAuthorization(_ manager:CLLocationManager) {
         if manager.authorizationStatus == .authorizedAlways || manager.authorizationStatus == .authorizedWhenInUse {manager.startUpdatingLocation()}
-        if manager.authorizationStatus == .denied {status="Нет разрешения геолокации"}
+        gpsAuthorization = String(describing: manager.authorizationStatus.rawValue)
+        if manager.authorizationStatus == .denied {status="Нет разрешения геолокации"; lastError=status}
     }
     private func load() {
         guard let bytes=try? Data(contentsOf:documentURL),let obj=try? JSONDecoder().decode(LocalData.self,from:bytes) else {return}
