@@ -46,7 +46,7 @@ struct Track: Identifiable, Codable {
 }
 struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var pendingTrack:Track?=nil; var zones:[GeoZone]=[] }
 
-@MainActor final class FieldModel: NSObject, ObservableObject, CLLocationManagerDelegate {
+@MainActor final class FieldModel: NSObject, ObservableObject, @preconcurrency CLLocationManagerDelegate {
     @Published var coordinate: GeoPoint?
     @Published var accuracy: Double?
     @Published var travelHeading: Double?

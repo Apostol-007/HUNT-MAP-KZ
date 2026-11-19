@@ -182,55 +182,66 @@ struct MainView: View {
                             }
                         }
                     }
-                    Section("Офлайн-карта") {
-                        Text("Для загрузки нужен опубликованный MBTiles-пакет. Выберите пакет в разделе загрузок или импортируйте MBTiles с устройства.")
-                        if let point = tappedMapPoint {
-                            Text(tileStore.coveringDescription(latitude: point.latitude, longitude: point.longitude))
-                                .foregroundStyle(tileStore.covering(latitude: point.latitude, longitude: point.longitude).isEmpty ? .orange : .green)
-                        }
-                        if tileStore.installed.isEmpty {
-                            Text("На устройстве нет офлайн-карт").foregroundStyle(.orange)
-                        } else {
-                            Text("Установлено пакетов: \(tileStore.installed.count)")
-                        }
-                        if tileStore.serviceURL.isEmpty {
-                            Text("Активный сервер не выбран. Поиск по точке проверит все настроенные каталоги.").foregroundStyle(.orange)
-                        }
-                        if let point = tappedMapPoint {
-                            Button("Найти офлайн-карты для этой точки") {
-                                Task { await tileStore.fetchAtPointFromCatalogs(latitude: point.latitude, longitude: point.longitude, catalogs: [primaryCatalog, secondaryCatalog, tertiaryCatalog]) }
-                            }
-                            .disabled(tileStore.busy || [primaryCatalog, secondaryCatalog, tertiaryCatalog].allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
-                            if !tileStore.available.isEmpty {
-                                ForEach(tileStore.available) { pack in
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(pack.pack_id).font(.headline)
-                                        Text("\(ByteCountFormatter.string(fromByteCount: pack.size_bytes, countStyle: .file)) · \(pack.license)")
-                                        if let source = pack.catalog_url { Text(source).font(.caption2).foregroundStyle(.secondary) }
-                                            .font(.caption).foregroundStyle(.secondary)
-                                        Button("Скачать / продолжить") { Task { await tileStore.install(pack) } }
-                                            .disabled(tileStore.busy)
-                                    }
-                                }
-                            }
-                            Text(tileStore.message).font(.caption).foregroundStyle(.secondary)
-                        }
-                        Button("Импортировать MBTiles для этого участка") {
-                            showMapDownload = false
-                            selectedTab = .downloads
-                            tileImportShown = true
-                        }
-                        Button("Открыть загрузки и импорт") {
-                            showMapDownload = false
-                            selectedTab = .downloads
-                        }
-                    }
+                    offlineMapDownloadSection
                 }
                 .navigationTitle("Скачать карту")
                 .toolbar { ToolbarItem(placement: .confirmationAction) {
                     Button("Закрыть") { showMapDownload = false }
                 }}
             }
+    }
+
+    // Isolated ViewBuilder: avoids an ambiguous nested Section expression in Xcode 16.4.
+    private var offlineMapDownloadSection: some View {
+        Section(header: Text("Офлайн-карта")) {
+            Text("Для загрузки нужен опубликованный MBTiles-пакет. Выберите пакет в разделе загрузок или импортируйте MBTiles с устройства.")
+            if let point = tappedMapPoint {
+                let hasCoverage = !tileStore.covering(latitude: point.latitude, longitude: point.longitude).isEmpty
+                Text(tileStore.coveringDescription(latitude: point.latitude, longitude: point.longitude))
+                    .foregroundStyle(hasCoverage ? Color.green : Color.orange)
+            }
+            Text(tileStore.installed.isEmpty ? "На устройстве нет офлайн-карт" : "Установлено пакетов: \(tileStore.installed.count)")
+            if tileStore.serviceURL.isEmpty {
+                Text("Активный сервер не выбран. Поиск по точке проверит все настроенные каталоги.")
+                    .foregroundStyle(Color.orange)
+            }
+            if let point = tappedMapPoint {
+                Button("Найти офлайн-карты для этой точки") {
+                    Task {
+                        await tileStore.fetchAtPointFromCatalogs(latitude: point.latitude, longitude: point.longitude, catalogs: [primaryCatalog, secondaryCatalog, tertiaryCatalog])
+                    }
+                }
+                .disabled(tileStore.busy || [primaryCatalog, secondaryCatalog, tertiaryCatalog].allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+                ForEach(tileStore.available) { pack in
+                    offlinePackRow(pack)
+                }
+                Text(tileStore.message).font(.caption).foregroundStyle(Color.secondary)
+            }
+            Button("Импортировать MBTiles для этого участка") {
+                showMapDownload = false
+                selectedTab = .downloads
+                tileImportShown = true
+            }
+            Button("Открыть загрузки и импорт") {
+                showMapDownload = false
+                selectedTab = .downloads
+            }
+        }
+    }
+
+    private func offlinePackRow(_ pack: PublishedPack) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(pack.pack_id).font(.headline)
+            Text("\(ByteCountFormatter.string(fromByteCount: pack.size_bytes, countStyle: .file)) · \(pack.license)")
+                .font(.caption).foregroundStyle(Color.secondary)
+            if let source = pack.catalog_url {
+                Text(source).font(.caption2).foregroundStyle(Color.secondary)
+            }
+            Button("Скачать / продолжить") {
+                Task { await tileStore.install(pack) }
+            }
+            .disabled(tileStore.busy)
+        }
     }
 
     private var mapCanvas: some View {

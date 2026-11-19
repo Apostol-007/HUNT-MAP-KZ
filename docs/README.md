@@ -190,3 +190,7 @@ py tools\build_from_pbf.py --pbf maps\kazakhstan-latest.osm.pbf --bbox 76.90,43.
 ## v1.7.10 — исправление ошибки Xcode 16.4
 
 По журналу GitHub Actions выявлена ошибка `MainView.swift:126:9: the compiler is unable to type-check this expression in reasonable time`. Большой SwiftUI `GeometryReader` разделён на независимые вычисляемые представления `mapCanvas`, `mapControls`, `mapSideControls`, `mapStatusFooter`, `mapDownloadSheet`. Расположение и функциональность экрана не менялись. Это устранение причины перегрузки type checker, но полноценная сборка iOS должна быть подтверждена GitHub Actions. Предупреждения `CLLocationManagerDelegate` в Swift 5 остаются и требуют отдельного исправления при миграции на Swift 6.
+
+## v1.7.11 — исправление ошибки компиляции SwiftUI
+
+По журналу Xcode 16.4 устранён сбой `MainView.swift:185:21: generic parameter 'V' could not be inferred`: секция загрузки офлайн-карт вынесена в `offlineMapDownloadSection`, а строка пакета — в `offlinePackRow`; неоднозначные цвета заменены на явные `Color`. Для `CLLocationManagerDelegate` добавлена совместимость `@preconcurrency` с текущим `@MainActor` состоянием модели. Проверены Swift Core tests и синтаксический разбор Swift. Полная iOS-компиляция должна быть проверена в GitHub Actions.
