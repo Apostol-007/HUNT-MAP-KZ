@@ -14,6 +14,13 @@ struct MainView: View {
     @State private var wildlifeGround = ""
     @State private var wildlifeImportShown = false
     @State private var wildlifeSearch = ""
+    // Independent HTTPS catalogs operated by the user or a licensed map provider.
+    // No public OSM/Google/Yandex tile endpoint is used as a bulk downloader.
+    @AppStorage("hunt.catalog.primary") private var primaryCatalog = ""
+    @AppStorage("hunt.catalog.secondary") private var secondaryCatalog = ""
+    @AppStorage("hunt.catalog.tertiary") private var tertiaryCatalog = ""
+    @AppStorage("hunt.catalog.selected") private var selectedCatalog = 0
+    @State private var catalogError: String?
     @State private var selectedScope = "ground"
     @State private var scopeID = ""
     @State private var tileImportShown=false
@@ -491,10 +498,38 @@ struct MainView: View {
                     Text("Автоматическая загрузка официальных границ не включена: требуется подтверждённый машиночитаемый адрес и разрешение. GeoJSON импортируется отдельно.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Section("Сервер карт") {
-                    TextField("https://maps.example.kz", text: $tileStore.serviceURL)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Text("Только HTTPS. В публичном каталоге нет проверенных охотугодий: сервер должен быть настроен и наполнен правомерными данными.")
+                Section("Источники офлайн-карт") {
+                    Picker("Активный каталог", selection: $selectedCatalog) {
+                        Text("Источник 1").tag(0)
+                        Text("Источник 2").tag(1)
+                        Text("Источник 3").tag(2)
+                    }.pickerStyle(.segmented)
+                    switch selectedCatalog {
+                    case 0:
+                        TextField("https://ваш-сервер-1.kz", text: $primaryCatalog)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    case 1:
+                        TextField("https://ваш-сервер-2.kz", text: $secondaryCatalog)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    default:
+                        TextField("https://ваш-сервер-3.kz", text: $tertiaryCatalog)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    }
+                    Button("Использовать выбранный источник") {
+                        let raw = [primaryCatalog, secondaryCatalog, tertiaryCatalog][selectedCatalog]
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard let url = URL(string: raw), url.scheme == "https", url.host != nil,
+                              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else {
+                            catalogError = "Укажите HTTPS-адрес без логина, пароля и параметров."
+                            return
+                        }
+                        tileStore.serviceURL = raw.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                        catalogError = nil
+                    }
+                    if let catalogError { Text(catalogError).foregroundStyle(.red).font(.caption) }
+                    Text("Три независимых каталога MBTiles. Каждый должен поддерживать API /v1/packs/manifest и /v1/packs/{pack_id}, HTTP Range и SHA-256. Адреса сохраняются на устройстве. Переключение источника не удаляет установленные карты.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text("Google и Яндекс не являются источниками офлайн-MBTiles без отдельного разрешения. Публичные тайловые серверы OSM нельзя использовать для массовой загрузки.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Режим загрузки") {
