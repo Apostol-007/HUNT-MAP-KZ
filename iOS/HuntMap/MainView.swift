@@ -125,120 +125,13 @@ struct MainView: View {
     private var mapTab: some View {
         GeometryReader { geometry in
             ZStack {
-                OfflineMapView(
-                    zones: showGrounds ? model.zones : [], position: showGPS ? model.coordinate : nil,
-                    travelHeading: model.travelHeading,
-                    markers: showMarkers ? model.markers : [],
-                    track: showTrack ? (selectedRoute ?? model.currentTrack) : nil,
-                    centerRequest: centerRequest, mapStyle: mapStyle, tileFiles: tileStore.paths,
-                    tileRevision: tileStore.revision, offlineOSMLines: nativeOSM.lines,
-                    offlineOSMRevision: nativeOSM.revision, downloadGridVisible: showDownloadGrid,
-                    downloadedRegions: nativeOSM.regions, online: onlineBasemap,
-                    selectedZone: $selectedZone, onMapTap: { point in
-                        tappedMapPoint = point
-                        showMapDownload = true
-                    }
-                )
-                .ignoresSafeArea(.container, edges: .all)
+                mapCanvas
+                    .ignoresSafeArea(.container, edges: .all)
 
-                VStack(spacing: 0) {
-                    headerControls
-                    HStack(alignment: .top, spacing: 0) {
-                        VStack(spacing: 9) {
-                            sideControl("magnifyingglass", "Поиск") { selectedTab = .downloads }
-                            sideControl("figure.hiking", "Маршруты") { selectedTab = .tracks }
-                            sideControl("square.3.layers.3d", "Слои") { showLayers = true }
-                            sideControl(showDownloadGrid ? "square.grid.3x3.fill" : "square.grid.3x3", "Сетка") { showDownloadGrid.toggle() }
-                            sideControl("pawprint.fill", "Животные") { selectedTab = .wildlife }
-                            sideControl("map", "Карты") { showMapSources = true }
-                        }
-                        Spacer(minLength: 0)
-                        VStack(spacing: 9) {
-                            sideControl("location.north.fill", "GPS") { model.requestGPS() }
-                            sideControl("scope", "Центр") { centerRequest += 1 }
-                            sideControl("car.fill", "Машина") { model.addMarker(kind: "Машина") }
-                            sideControl(model.recording ? "stop.circle.fill" : "record.circle", model.recording ? "Стоп" : "Трек") {
-                                if model.recording { model.stopTrack() } else { model.startTrack() }
-                            }
-                            sideControl("mappin.and.ellipse", "Метка") { model.addMarker() }
-                            sideControl("square.dashed", "Границы") { selectedTab = .downloads }
-                            sideControl("ladybug", "Диагн.") { showDiagnostics = true }
-                        }
-                    }
-                    .padding(.top, 12)
-                    Spacer(minLength: 0)
-                    if model.recording, let active = model.currentTrack {
-                        HStack(spacing: 12) {
-                            Image(systemName: model.paused ? "pause.circle.fill" : "record.circle.fill")
-                                .foregroundStyle(model.paused ? .yellow : .red)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(active.name).font(.caption.bold()).lineLimit(1)
-                                Text(String(format: "%.2f км · %d точек", active.distanceMeters / 1000, active.fixes.count))
-                                    .font(.caption2)
-                                HStack(spacing: 8) {
-                                    Text("Скорость: " + (model.currentSpeedKmh.map { String(format: "%.1f км/ч", $0) } ?? "—"))
-                                    Text("Темп: " + (model.averagePaceSecondsPerKm.map { paceText($0) } ?? "—"))
-                                }.font(.caption2)
-                            }
-                            Spacer(minLength: 0)
-                            Button(model.paused ? "Продолжить" : "Пауза") { model.togglePause() }
-                                .font(.caption.bold())
-                            Button("Стоп") { model.stopTrack() }.font(.caption.bold())
-                        }
-                        .foregroundStyle(.white)
-                        .padding(10)
-                        .background(.black.opacity(0.85), in: RoundedRectangle(cornerRadius: 12))
-                        .padding(.bottom, 6)
-                    }
-                    if let route = selectedRoute {
-                        HStack(spacing: 8) {
-                            Image(systemName: "arrow.uturn.backward.circle.fill")
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Возврат: \(route.name)").font(.caption.bold())
-                                Text(returnGuidance(for: route)).font(.caption2)
-                            }
-                            Spacer(minLength: 4)
-                            Button("Завершить") { selectedRoute = nil }
-                                .font(.caption.bold())
-                        }
-                        .foregroundStyle(.white).padding(10)
-                        .background(.black.opacity(0.86), in: RoundedRectangle(cornerRadius: 12))
-                        .padding(.bottom, 6)
-                    }
-                    if !model.lastWarning.isEmpty && model.lastWarning != "Границы не загружены" {
-                        Text(model.lastWarning).font(.caption.bold())
-                            .foregroundStyle(.white).padding(8)
-                            .background(.orange.opacity(0.92), in: RoundedRectangle(cornerRadius: 10))
-                            .padding(.bottom, 8)
-                    }
-                    if tileStore.installed.isEmpty {
-                        Button { showMapDownload = true } label: {
-                            HStack(spacing: 9) {
-                                Image(systemName: "arrow.down.to.line.compact").font(.title3)
-                                    .foregroundStyle(.orange)
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text("Карта не загружена").font(.system(size: 13, weight: .bold))
-                                    Text("Нажмите для загрузки офлайн-карты")
-                                        .font(.system(size: 10)).foregroundStyle(.white.opacity(0.8))
-                                }
-                                Spacer(minLength: 3)
-                                Text("Скачать").font(.system(size: 12, weight: .bold))
-                                    .padding(.horizontal, 12).padding(.vertical, 10)
-                                    .background(.orange, in: RoundedRectangle(cornerRadius: 11))
-                            }
-                            .foregroundStyle(.white).padding(10)
-                            .background(.black.opacity(0.88), in: RoundedRectangle(cornerRadius: 16))
-                        }
-                        .buttonStyle(.plain)
-                        // Reserve the complete dock height; never draw behind navigation.
-                        .padding(.bottom, 69)
-                    } else {
-                        Color.clear.frame(height: 69)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.top, 8)
-                .frame(width: geometry.size.width, height: geometry.size.height)
+                mapControls
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+                    .frame(width: geometry.size.width, height: geometry.size.height)
             }
         }
         .confirmationDialog("Слои карты", isPresented: $showLayers) {
@@ -258,7 +151,18 @@ struct MainView: View {
             Button("Яндекс Карты · открыть отдельно") { openExternalMap("yandex") }
             Button("Импорт / загрузка офлайн-карт") { selectedTab = .downloads }
         } message: { Text("Google и Яндекс открываются в официальных сервисах. Скачивание их тайлов в MBTiles без разрешения правообладателя не поддерживается.") }
-        .sheet(isPresented: $showMapDownload) {
+        .sheet(isPresented: $showMapDownload) { mapDownloadSheet }
+        .sheet(item: $selectedZone) { zone in
+            GroundDetailsSheet(zone: zone)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+    }
+
+
+    // Break up the large SwiftUI result-builder expression. Xcode 16.4
+    // otherwise times out type-checking mapTab (GitHub Actions log, line 126).
+    private var mapDownloadSheet: some View {
             NavigationStack {
                 Form {
                     Section("Выбранная точка") {
@@ -327,11 +231,130 @@ struct MainView: View {
                     Button("Закрыть") { showMapDownload = false }
                 }}
             }
+    }
+
+    private var mapCanvas: some View {
+        OfflineMapView(
+            zones: showGrounds ? model.zones : [], position: showGPS ? model.coordinate : nil,
+            travelHeading: model.travelHeading,
+            markers: showMarkers ? model.markers : [],
+            track: showTrack ? (selectedRoute ?? model.currentTrack) : nil,
+            centerRequest: centerRequest, mapStyle: mapStyle, tileFiles: tileStore.paths,
+            tileRevision: tileStore.revision, offlineOSMLines: nativeOSM.lines,
+            offlineOSMRevision: nativeOSM.revision, downloadGridVisible: showDownloadGrid,
+            downloadedRegions: nativeOSM.regions, online: onlineBasemap,
+            selectedZone: $selectedZone, onMapTap: { point in
+                tappedMapPoint = point
+                showMapDownload = true
+            }
+        )
+    }
+
+    private var mapControls: some View {
+        VStack(spacing: 0) {
+            headerControls
+            mapSideControls
+            Spacer(minLength: 0)
+            mapStatusFooter
         }
-        .sheet(item: $selectedZone) { zone in
-            GroundDetailsSheet(zone: zone)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+    }
+
+    private var mapSideControls: some View {
+            HStack(alignment: .top, spacing: 0) {
+                VStack(spacing: 9) {
+                    sideControl("magnifyingglass", "Поиск") { selectedTab = .downloads }
+                    sideControl("figure.hiking", "Маршруты") { selectedTab = .tracks }
+                    sideControl("square.3.layers.3d", "Слои") { showLayers = true }
+                    sideControl(showDownloadGrid ? "square.grid.3x3.fill" : "square.grid.3x3", "Сетка") { showDownloadGrid.toggle() }
+                    sideControl("pawprint.fill", "Животные") { selectedTab = .wildlife }
+                    sideControl("map", "Карты") { showMapSources = true }
+                }
+                Spacer(minLength: 0)
+                VStack(spacing: 9) {
+                    sideControl("location.north.fill", "GPS") { model.requestGPS() }
+                    sideControl("scope", "Центр") { centerRequest += 1 }
+                    sideControl("car.fill", "Машина") { model.addMarker(kind: "Машина") }
+                    sideControl(model.recording ? "stop.circle.fill" : "record.circle", model.recording ? "Стоп" : "Трек") {
+                        if model.recording { model.stopTrack() } else { model.startTrack() }
+                    }
+                    sideControl("mappin.and.ellipse", "Метка") { model.addMarker() }
+                    sideControl("square.dashed", "Границы") { selectedTab = .downloads }
+                    sideControl("ladybug", "Диагн.") { showDiagnostics = true }
+                }
+            }
+            .padding(.top, 12)
+    }
+
+    private var mapStatusFooter: some View {
+        VStack(spacing: 0) {
+            if model.recording, let active = model.currentTrack {
+                HStack(spacing: 12) {
+                    Image(systemName: model.paused ? "pause.circle.fill" : "record.circle.fill")
+                        .foregroundStyle(model.paused ? .yellow : .red)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(active.name).font(.caption.bold()).lineLimit(1)
+                        Text(String(format: "%.2f км · %d точек", active.distanceMeters / 1000, active.fixes.count))
+                            .font(.caption2)
+                        HStack(spacing: 8) {
+                            Text("Скорость: " + (model.currentSpeedKmh.map { String(format: "%.1f км/ч", $0) } ?? "—"))
+                            Text("Темп: " + (model.averagePaceSecondsPerKm.map { paceText($0) } ?? "—"))
+                        }.font(.caption2)
+                    }
+                    Spacer(minLength: 0)
+                    Button(model.paused ? "Продолжить" : "Пауза") { model.togglePause() }
+                        .font(.caption.bold())
+                    Button("Стоп") { model.stopTrack() }.font(.caption.bold())
+                }
+                .foregroundStyle(.white)
+                .padding(10)
+                .background(.black.opacity(0.85), in: RoundedRectangle(cornerRadius: 12))
+                .padding(.bottom, 6)
+            }
+            if let route = selectedRoute {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.uturn.backward.circle.fill")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Возврат: \(route.name)").font(.caption.bold())
+                        Text(returnGuidance(for: route)).font(.caption2)
+                    }
+                    Spacer(minLength: 4)
+                    Button("Завершить") { selectedRoute = nil }
+                        .font(.caption.bold())
+                }
+                .foregroundStyle(.white).padding(10)
+                .background(.black.opacity(0.86), in: RoundedRectangle(cornerRadius: 12))
+                .padding(.bottom, 6)
+            }
+            if !model.lastWarning.isEmpty && model.lastWarning != "Границы не загружены" {
+                Text(model.lastWarning).font(.caption.bold())
+                    .foregroundStyle(.white).padding(8)
+                    .background(.orange.opacity(0.92), in: RoundedRectangle(cornerRadius: 10))
+                    .padding(.bottom, 8)
+            }
+            if tileStore.installed.isEmpty {
+                Button { showMapDownload = true } label: {
+                    HStack(spacing: 9) {
+                        Image(systemName: "arrow.down.to.line.compact").font(.title3)
+                            .foregroundStyle(.orange)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Карта не загружена").font(.system(size: 13, weight: .bold))
+                            Text("Нажмите для загрузки офлайн-карты")
+                                .font(.system(size: 10)).foregroundStyle(.white.opacity(0.8))
+                        }
+                        Spacer(minLength: 3)
+                        Text("Скачать").font(.system(size: 12, weight: .bold))
+                            .padding(.horizontal, 12).padding(.vertical, 10)
+                            .background(.orange, in: RoundedRectangle(cornerRadius: 11))
+                    }
+                    .foregroundStyle(.white).padding(10)
+                    .background(.black.opacity(0.88), in: RoundedRectangle(cornerRadius: 16))
+                }
+                .buttonStyle(.plain)
+                // Reserve the complete dock height; never draw behind navigation.
+                .padding(.bottom, 69)
+            } else {
+                Color.clear.frame(height: 69)
+            }
         }
     }
 
