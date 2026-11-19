@@ -50,7 +50,7 @@ struct MainView: View {
         ZStack {
             Group {
                 switch selectedTab {
-                case .map: mapTab.ignoresSafeArea(.container, edges: .all)
+                case .map: mapTab
                 case .tracks: tracksTab
                 case .markers: markersTab
                 case .wildlife: wildlifeTab
@@ -93,11 +93,11 @@ struct MainView: View {
         .padding(.bottom, 0)
     }
 
+    // All controls are laid out in the SAFE AREA. Only the underlying MapLibre
+    // canvas extends under the status bar and home indicator.
     private var mapTab: some View {
-        ZStack {
-            // A true edge-to-edge MapLibre UIView, including behind the status bar,
-            // home indicator, and all floating controls. No VStack controls its height.
-            GeometryReader { geometry in
+        GeometryReader { geometry in
+            ZStack {
                 OfflineMapView(
                     zones: model.zones, position: model.coordinate, markers: model.markers,
                     track: model.currentTrack, tileFiles: tileStore.paths,
@@ -107,56 +107,67 @@ struct MainView: View {
                         if tileStore.installed.isEmpty { showMapDownload = true }
                     }
                 )
+                .ignoresSafeArea(.container, edges: .all)
+
+                VStack(spacing: 0) {
+                    headerControls
+                    HStack(alignment: .top, spacing: 0) {
+                        VStack(spacing: 9) {
+                            sideControl("magnifyingglass", "Поиск") { selectedTab = .downloads }
+                            sideControl("figure.hiking", "Маршруты") { selectedTab = .tracks }
+                            sideControl("square.3.layers.3d", "Слои") { onlineBasemap.toggle() }
+                            sideControl("pawprint.fill", "Животные") { selectedTab = .wildlife }
+                            sideControl("cloud.sun", "Погода") { showAbout = true }
+                        }
+                        Spacer(minLength: 0)
+                        VStack(spacing: 9) {
+                            sideControl("location.north.fill", "GPS") { model.requestGPS() }
+                            sideControl("location.fill", "Позиция") { model.requestGPS() }
+                            sideControl(model.recording ? "stop.circle.fill" : "record.circle", model.recording ? "Стоп" : "Трек") {
+                                if model.recording { model.stopTrack() } else { model.startTrack() }
+                            }
+                            sideControl("mappin.and.ellipse", "Метка") { model.addMarker() }
+                            sideControl("square.dashed", "Границы") { selectedTab = .downloads }
+                            sideControl("ladybug", "Диагн.") { showDiagnostics = true }
+                        }
+                    }
+                    .padding(.top, 12)
+                    Spacer(minLength: 0)
+                    if !model.lastWarning.isEmpty && model.lastWarning != "Границы не загружены" {
+                        Text(model.lastWarning).font(.caption.bold())
+                            .foregroundStyle(.white).padding(8)
+                            .background(.orange.opacity(0.92), in: RoundedRectangle(cornerRadius: 10))
+                            .padding(.bottom, 8)
+                    }
+                    if tileStore.installed.isEmpty {
+                        Button { showMapDownload = true } label: {
+                            HStack(spacing: 9) {
+                                Image(systemName: "arrow.down.to.line.compact").font(.title3)
+                                    .foregroundStyle(.orange)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Карта не загружена").font(.system(size: 13, weight: .bold))
+                                    Text("Нажмите для загрузки офлайн-карты")
+                                        .font(.system(size: 10)).foregroundStyle(.white.opacity(0.8))
+                                }
+                                Spacer(minLength: 3)
+                                Text("Скачать").font(.system(size: 12, weight: .bold))
+                                    .padding(.horizontal, 12).padding(.vertical, 10)
+                                    .background(.orange, in: RoundedRectangle(cornerRadius: 11))
+                            }
+                            .foregroundStyle(.white).padding(10)
+                            .background(.black.opacity(0.88), in: RoundedRectangle(cornerRadius: 16))
+                        }
+                        .buttonStyle(.plain)
+                        // Reserve the complete dock height; never draw behind navigation.
+                        .padding(.bottom, 69)
+                    } else {
+                        Color.clear.frame(height: 69)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
                 .frame(width: geometry.size.width, height: geometry.size.height)
             }
-            .ignoresSafeArea(.container, edges: .all)
-
-            VStack {
-                HStack {
-                    Text("HUNT MAP KZ").font(.subheadline.bold())
-                        .padding(12).background(.black.opacity(0.78), in: Capsule())
-                    Spacer()
-                    Text(onlineBasemap ? "● ONLINE" : "● OFFLINE")
-                        .foregroundStyle(onlineBasemap ? .green : .orange)
-                        .font(.caption.bold()).padding(12)
-                        .background(.black.opacity(0.78), in: Capsule())
-                }
-                .foregroundStyle(.white)
-                .padding(.horizontal, 12).padding(.top, 8)
-                HStack(alignment: .top) {
-                    VStack(spacing: 10) {
-                        sideControl("figure.hiking", "Маршруты") { selectedTab = .tracks }
-                        sideControl("square.3.layers.3d", "Слои") { onlineBasemap.toggle() }
-                        sideControl("pawprint.fill", "Животные") { selectedTab = .wildlife }
-                        sideControl("arrow.down.circle", "Карты") { selectedTab = .downloads }
-                    }
-                    Spacer()
-                    VStack(spacing: 10) {
-                        sideControl("location.north.fill", "GPS") { model.requestGPS() }
-                        sideControl("mappin.and.ellipse", "Метка") { model.addMarker() }
-                        sideControl(model.recording ? "stop.fill" : "record.circle.fill", model.recording ? "Стоп" : "Запись") {
-                            if model.recording { model.stopTrack() } else { model.startTrack() }
-                        }
-                        sideControl("ladybug", "Диагн.") { showDiagnostics = true }
-                    }
-                }.padding(.horizontal, 12).padding(.top, 12)
-                Spacer(minLength: 0)
-                if !model.lastWarning.isEmpty && model.lastWarning != "Границы не загружены" {
-                    Text(model.lastWarning).font(.caption.bold()).foregroundStyle(.white)
-                        .padding(9).background(.orange.opacity(0.9), in: RoundedRectangle(cornerRadius: 10))
-                }
-                if tileStore.installed.isEmpty {
-                    Button { showMapDownload = true } label: {
-                        Label("Карта не загружена · Скачать", systemImage: "arrow.down.circle")
-                            .font(.footnote.bold()).frame(maxWidth: .infinity).padding(12)
-                            .background(.black.opacity(0.82), in: RoundedRectangle(cornerRadius: 14))
-                    }
-                    .buttonStyle(.plain).foregroundStyle(.white)
-                    .padding(.horizontal, 12).padding(.bottom, 6)
-                }
-            }
-            .padding(.bottom, 64)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .sheet(isPresented: $showMapDownload) {
             NavigationStack {
@@ -167,7 +178,7 @@ struct MainView: View {
                         } else { Text("Текущая область карты") }
                     }
                     Section("Офлайн-карта") {
-                        Text("Для загрузки нужен опубликованный MBTiles-пакет. Сервер должен предоставить каталог для выбранного региона или угодья. Само нажатие на карту не создаёт пакет.")
+                        Text("Для загрузки нужен опубликованный MBTiles-пакет. Выберите пакет в разделе загрузок или импортируйте MBTiles с устройства.")
                         if tileStore.serviceURL.isEmpty {
                             Text("Сервер карт не настроен").foregroundStyle(.orange)
                         }
@@ -190,15 +201,46 @@ struct MainView: View {
         }
     }
 
+    private var headerControls: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Button { showAbout = true } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "map.fill").foregroundStyle(.orange)
+                    Text("HUNT MAP").foregroundStyle(.white)
+                    Text("KZ").foregroundStyle(.orange)
+                }
+                .font(.system(size: 13, weight: .heavy))
+                .lineLimit(1).minimumScaleFactor(0.8)
+                .padding(.horizontal, 11).frame(height: 39)
+                .background(.black.opacity(0.88), in: Capsule())
+            }.buttonStyle(.plain)
+            Spacer(minLength: 0)
+            HStack(spacing: 5) {
+                Circle().fill(model.coordinate == nil ? .orange : .green).frame(width: 6, height: 6)
+                Text("GPS")
+            }
+            .padding(.horizontal, 9).frame(height: 35)
+            .background(.black.opacity(0.88), in: Capsule())
+            HStack(spacing: 4) {
+                Circle().fill(onlineBasemap ? .green : .orange).frame(width: 6, height: 6)
+                Text(onlineBasemap ? "Online" : "Offline")
+            }
+            .padding(.horizontal, 9).frame(height: 35)
+            .background(.black.opacity(0.88), in: Capsule())
+        }
+        .font(.system(size: 11, weight: .bold))
+        .foregroundStyle(.white)
+    }
+
     private func sideControl(_ symbol: String, _ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(spacing: 3) {
+            VStack(spacing: 4) {
                 Image(systemName: symbol).font(.system(size: 20, weight: .semibold))
                 Text(title).font(.system(size: 9, weight: .medium)).lineLimit(1)
             }
-            .frame(width: 62, height: 59)
+            .frame(width: 59, height: 54)
             .foregroundStyle(.white)
-            .background(.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 17))
+            .background(.black.opacity(0.86), in: RoundedRectangle(cornerRadius: 16))
         }.buttonStyle(.plain).accessibilityLabel(title)
     }
 
