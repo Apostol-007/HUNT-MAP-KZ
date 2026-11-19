@@ -1,0 +1,100 @@
+name: HUNT MAP KZ - unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'iOS/**'
+      - 'Core/**'
+      - '.github/workflows/ios-unsigned-ipa.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Swift Core and server tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.0'
+      - name: Test HuntCore
+        run: swift test --package-path Core
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install server test dependencies
+        run: python -m pip install -r server/requirements.txt pytest httpx
+      - name: Test server
+        run: python -m pytest -q server/tests
+
+  ios:
+    name: Compile iOS and package unsigned IPA
+    needs: verify
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show Xcode version
+        run: xcodebuild -version
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        working-directory: iOS
+        run: xcodegen generate --spec project.yml
+      - name: Show schemes
+        working-directory: iOS
+        run: xcodebuild -list -project HuntMapKZ.xcodeproj
+      - name: Resolve Swift packages
+        working-directory: iOS
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project HuntMapKZ.xcodeproj \
+            -scheme HuntMapKZ
+      - name: Build for physical iPhone without signing
+        working-directory: iOS
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project HuntMapKZ.xcodeproj \
+            -scheme HuntMapKZ \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/HuntBuild" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            build 2>&1 | tee "$RUNNER_TEMP/ios-build.log"
+      - name: Package and inspect IPA
+        run: |
+          set -euo pipefail
+          PRODUCTS="$RUNNER_TEMP/HuntBuild/Build/Products/Release-iphoneos"
+          APP="$PRODUCTS/HuntMapKZ.app"
+          test -d "$APP" || { echo "Expected .app not found: $APP"; exit 1; }
+          test -f "$APP/Info.plist" || { echo "Info.plist missing"; exit 1; }
+          EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$APP/Info.plist")
+          test -f "$APP/$EXECUTABLE" || { echo "App executable missing"; exit 1; }
+          /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Info.plist"
+          OUT="$RUNNER_TEMP/unsigned-output"
+          mkdir -p "$OUT/Payload"
+          ditto "$APP" "$OUT/Payload/HuntMapKZ.app"
+          (cd "$OUT" && /usr/bin/zip -qry HUNT_MAP_KZ_unsigned.ipa Payload)
+          /usr/bin/unzip -t "$OUT/HUNT_MAP_KZ_unsigned.ipa" | tail -1
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: HUNT_MAP_KZ_unsigned_IPA
+          path: ${{ runner.temp }}/unsigned-output/HUNT_MAP_KZ_unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload build log for diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-log
+          path: ${{ runner.temp }}/ios-build.log
+          if-no-files-found: ignore
+          retention-days: 7
