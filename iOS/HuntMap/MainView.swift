@@ -238,6 +238,24 @@ struct MainView: View {
                         if tileStore.serviceURL.isEmpty {
                             Text("Сервер карт не настроен").foregroundStyle(.orange)
                         }
+                        if let point = tappedMapPoint {
+                            Button("Найти офлайн-карты для этой точки") {
+                                Task { await tileStore.fetchAtPoint(latitude: point.latitude, longitude: point.longitude) }
+                            }
+                            .disabled(tileStore.busy || tileStore.serviceURL.isEmpty)
+                            if !tileStore.available.isEmpty {
+                                ForEach(tileStore.available) { pack in
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(pack.pack_id).font(.headline)
+                                        Text("\(ByteCountFormatter.string(fromByteCount: pack.size_bytes, countStyle: .file)) · \(pack.license)")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                        Button("Скачать / продолжить") { Task { await tileStore.install(pack) } }
+                                            .disabled(tileStore.busy)
+                                    }
+                                }
+                            }
+                            Text(tileStore.message).font(.caption).foregroundStyle(.secondary)
+                        }
                         Button("Импортировать MBTiles для этого участка") {
                             showMapDownload = false
                             selectedTab = .downloads

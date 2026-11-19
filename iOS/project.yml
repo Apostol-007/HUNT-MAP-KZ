@@ -22,8 +22,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: kz.huntmap.field
         GENERATE_INFOPLIST_FILE: YES
-        MARKETING_VERSION: 1.5.4
-        CURRENT_PROJECT_VERSION: 154
+        MARKETING_VERSION: 1.5.5
+        CURRENT_PROJECT_VERSION: 155
         INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen
         INFOPLIST_KEY_UIRequiresFullScreen: YES
         INFOPLIST_KEY_UIBackgroundModes: location

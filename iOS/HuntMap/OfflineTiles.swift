@@ -81,6 +81,26 @@ struct PublishedPack: Codable, Identifiable {
             message = available.isEmpty ? "Нет опубликованных растровых пакетов для этого района" : "Доступно пакетов: \(available.count)"
         } catch { message = "Каталог: \(error.localizedDescription)" }
     }
+    /// Search a licensed catalog for packages containing a map tap coordinate.
+    /// An empty result is honest: a server is not a source of arbitrary tiles.
+    func fetchAtPoint(latitude: Double, longitude: Double) async {
+        guard !busy else { return }
+        busy = true; defer { busy = false }
+        do {
+            let base = try endpoint()
+            guard (-90...90).contains(latitude), (-180...180).contains(longitude),
+                  var components = URLComponents(url: base.appendingPathComponent("v1/packs/at-point"), resolvingAgainstBaseURL: false) else {
+                throw StoreError.invalidEndpoint
+            }
+            components.queryItems = [URLQueryItem(name: "lat", value: String(latitude)), URLQueryItem(name: "lon", value: String(longitude))]
+            guard let url = components.url else { throw StoreError.invalidEndpoint }
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw StoreError.invalidManifest }
+            let items = try JSONDecoder().decode([PublishedPack].self, from: data)
+            available = items.filter { $0.layers.contains("raster-mbtiles") && $0.pack_id.range(of: "^[A-Za-z0-9_-]{1,100}$", options: .regularExpression) != nil }
+            message = available.isEmpty ? "На сервере нет опубликованной карты для выбранной точки" : "Для точки найдено пакетов: \(available.count)"
+        } catch { message = "Поиск по точке: \(error.localizedDescription)" }
+    }
     /// Resume is persisted in a .part file. Only a fully verified SQLite pack becomes visible.
     /// A partial file is bound to the expected content hash, so changed manifests cannot corrupt it.
     func install(_ pack: PublishedPack) async {

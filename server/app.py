@@ -83,6 +83,44 @@ def manifest(scope: Literal['region','ground','country'], id: str = Query(...), 
     wanted=set(filter(None, layers.split(',')))
     return [p for p in catalog() if p.scope == scope and p.scope_id == id and (not wanted or wanted.issubset(p.layers))]
 
+def _mbtiles_bounds(path: Path) -> tuple[float, float, float, float] | None:
+    """Return declared MBTiles bounds; missing metadata is not assumed to cover a point."""
+    import sqlite3
+    try:
+        with sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=2) as db:
+            row = db.execute("SELECT value FROM metadata WHERE name='bounds' LIMIT 1").fetchone()
+        if not row:
+            return None
+        values = tuple(float(v.strip()) for v in row[0].split(','))
+        if len(values) != 4:
+            return None
+        west, south, east, north = values
+        if not (-180 <= west <= east <= 180 and -90 <= south <= north <= 90):
+            return None
+        return west, south, east, north
+    except (ValueError, OSError, sqlite3.Error):
+        return None
+
+
+@app.get('/v1/packs/at-point', response_model=list[ManifestRecord])
+def packs_at_point(lat: float = Query(..., ge=-90, le=90), lon: float = Query(..., ge=-180, le=180)):
+    """Find published raster MBTiles whose declared bounds include the selected point.
+
+    Bounding boxes are an index, not proof that every tile exists at every zoom.
+    """
+    matches = []
+    for entry in catalog():
+        if 'raster-mbtiles' not in entry.layers:
+            continue
+        path = PACKS / (entry.pack_id + '.bin')
+        if not path.is_file() or path.stat().st_size != entry.size_bytes:
+            continue
+        bounds = _mbtiles_bounds(path)
+        if bounds and bounds[0] <= lon <= bounds[2] and bounds[1] <= lat <= bounds[3]:
+            matches.append(entry)
+    return matches
+
+
 @app.api_route('/v1/packs/{pack_id}', methods=['GET', 'HEAD'])
 def pack(request: Request, pack_id: str, range_header: str | None = Header(default=None, alias='Range'), if_range: str | None = Header(default=None, alias='If-Range')):
     entry=next((p for p in catalog() if p.pack_id == pack_id),None)
