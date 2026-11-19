@@ -12,13 +12,19 @@ struct OfflineMapView: UIViewRepresentable {
     let tileFiles: [URL]
     let tileRevision: Int
     let online: Bool
+    @Binding var selectedZone: GeoZone?
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator { Coordinator(selectedZone: $selectedZone) }
 
     func makeUIView(context: Context) -> MLNMapView {
         let styleURL = online ? URL(string: "https://tiles.openfreemap.org/styles/liberty")! : OfflineMapStyle.url
         let view = MLNMapView(frame: .zero, styleURL: styleURL)
         view.delegate = context.coordinator
+        context.coordinator.zones = zones
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
+        tap.cancelsTouchesInView = false
+        view.addGestureRecognizer(tap)
+        context.coordinator.map = view
         view.setCenter(CLLocationCoordinate2D(latitude: 43.24, longitude: 76.91), zoomLevel: 11, animated: false)
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
         return view
@@ -30,11 +36,25 @@ struct OfflineMapView: UIViewRepresentable {
         if requestedOnline != currentOnline {
             view.styleURL = requestedOnline ? URL(string: "https://tiles.openfreemap.org/styles/liberty") : OfflineMapStyle.url
         }
+        context.coordinator.zones = zones
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
         context.coordinator.updateAnnotations(view: view, zones: zones, markers: markers, position: position, track: track)
     }
 
     final class Coordinator: NSObject, MLNMapViewDelegate {
+        var selectedZone: Binding<GeoZone?>
+        weak var map: MLNMapView?
+        var zones: [GeoZone] = []
+        init(selectedZone: Binding<GeoZone?>) { self.selectedZone = selectedZone }
+        @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
+            guard recognizer.state == .ended, let map else { return }
+            let coordinate = map.convert(recognizer.location(in: map), toCoordinateFrom: map)
+            let position = GeoPoint(coordinate.latitude, coordinate.longitude)
+            // Find the smallest enclosing boundary for overlapping territories.
+            let matching = zones.filter { $0.contains(position) }
+            if let zone = matching.first { selectedZone.wrappedValue = zone }
+        }
+
         private var lastRevision = -1
         private var lastStyle: MLNStyle?
         private var latestFiles: [URL] = []

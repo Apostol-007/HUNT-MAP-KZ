@@ -5,6 +5,29 @@ import HuntCore
     @Published private(set) var message = "Публичные границы не загружены"
     @Published private(set) var busy = false
 
+    /// Import directly from an explicitly supplied HTTPS GeoJSON URL.
+    /// This is NOT a bypass of the source's licensing or access controls.
+    func fetchGeoJSON(urlString: String, model: FieldModel) async {
+        guard !busy else { return }
+        busy = true; defer { busy = false }
+        do {
+            guard let url = URL(string: urlString), url.scheme == "https", url.host != nil,
+                  url.user == nil, url.password == nil else { throw URLError(.badURL) }
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 45
+            request.setValue("application/geo+json, application/json", forHTTPHeaderField: "Accept")
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  !data.isEmpty, data.count <= 20_000_000 else { throw URLError(.badServerResponse) }
+            let path = FileManager.default.temporaryDirectory.appendingPathComponent("ground-\(UUID().uuidString).geojson")
+            defer { try? FileManager.default.removeItem(at: path) }
+            try data.write(to: path, options: .atomic)
+            let zones = try GeoJSONImport.load(path)
+            model.setImportedZones(zones)
+            message = "Импортировано территорий: \(zones.count). Юридический статус не проверен"
+        } catch { message = "Ошибка HTTPS GeoJSON: \(error.localizedDescription)" }
+    }
+
     func fetch(server: String, groundID: String, model: FieldModel) async {
         guard !busy else { return }
         busy = true; defer { busy = false }

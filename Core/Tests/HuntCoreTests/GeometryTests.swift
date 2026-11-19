@@ -64,3 +64,23 @@ func square(_ x: Double = 77, _ y: Double = 43) -> GeoPolygon {
     let stale=GPSFix(position:GeoPoint(43.005,77.005),accuracyMeters:5,timestamp:now.addingTimeInterval(-60))
     #expect(engine.process(stale,zones:[zone],now:now).isEmpty)
 }
+
+
+import XCTest
+final class GroundMetadataTests: XCTestCase {
+    func testOriginalAttributesSurviveJSONRoundTrip() throws {
+        let zone = GeoZone(id: "official-1", name: "Манул", kind: .huntingGround,
+                           verified: false, source: "demo source", polygons: [],
+                           attributes: ["Название": "Манул", "Площадь, га": "124767.23",
+                                        "Договор на ведение охот. хоз.": "12.05.2006 № 17"])
+        let output = try JSONDecoder().decode(GeoZone.self, from: JSONEncoder().encode(zone))
+        XCTAssertEqual(output.attributes?["Площадь, га"], "124767.23")
+        XCTAssertEqual(output.attributes?["Название"], "Манул")
+        XCTAssertFalse(output.verified)
+    }
+    func testOldZoneWithoutAttributesStillDecodes() throws {
+        let json = #"{"id":"legacy","name":"Old","kind":"huntingGround","verified":false,"source":"old","polygons":[]}"#
+        let old = try JSONDecoder().decode(GeoZone.self, from: Data(json.utf8))
+        XCTAssertNil(old.attributes)
+    }
+}

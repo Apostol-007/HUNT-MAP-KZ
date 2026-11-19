@@ -28,8 +28,10 @@ public struct GeoZone: Codable, Identifiable, Sendable {
     public let verified: Bool
     public let source: String
     public let polygons: [GeoPolygon]
-    public init(id: String, name: String, kind: ZoneKind, verified: Bool, source: String, polygons: [GeoPolygon]) {
-        self.id = id; self.name = name; self.kind = kind; self.verified = verified; self.source = source; self.polygons = polygons
+    /// Original source attributes, preserved without pretending they are legally verified.
+    public var attributes: [String: String]? = nil
+    public init(id: String, name: String, kind: ZoneKind, verified: Bool, source: String, polygons: [GeoPolygon], attributes: [String: String]? = nil) {
+        self.id = id; self.name = name; self.kind = kind; self.verified = verified; self.source = source; self.polygons = polygons; self.attributes = attributes
     }
     public func contains(_ point: GeoPoint) -> Bool { polygons.contains { $0.contains(point) } }
     public func distanceToBoundaryMeters(_ point: GeoPoint) -> Double { polygons.map { $0.distanceToBoundaryMeters(point) }.min() ?? .infinity }

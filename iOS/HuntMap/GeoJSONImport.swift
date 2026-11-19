@@ -48,12 +48,23 @@ enum GeoJSONImport {
             default:throw GeoJSONImportError.invalidGeometry
             }
             let props=feature["properties"] as? [String:Any] ?? [:]
-            let name=(props["name"] as? String)?.trimmingCharacters(in:.whitespacesAndNewlines) ?? "Полигон \(index+1)"
+            func propertyText(_ value: Any) -> String? {
+                if value is NSNull { return nil }
+                if let text = value as? String { return String(text.prefix(2000)) }
+                if let number = value as? NSNumber { return number.stringValue }
+                return nil
+            }
+            var attributes: [String:String] = [:]
+            for (key, value) in props where key.count <= 150 {
+                if let text = propertyText(value) { attributes[key] = text }
+            }
+            let name = ["name", "Название", "название", "NAME", "title"]
+                .compactMap { attributes[$0] }.first ?? "Полигон \(index+1)"
             let type=(props["kind"] as? String)=="protectedArea" ? ZoneKind.protectedArea : .huntingGround
             let identifier=(props["ground_id"] as? String) ?? "LOCAL-\(index)"
             let origin=(props["source_url"] as? String) ?? "Источник не указан"
             // Neither server operator approval nor client import is legal proof.
-            return GeoZone(id:"IMPORTED-\(identifier)-\(index)",name:name,kind:type,verified:false,source:"\(origin) · локальный импорт, юридически не проверено",polygons:polygons)
+            return GeoZone(id:"IMPORTED-\(identifier)-\(index)",name:name,kind:type,verified:false,source:"\(origin) · локальный импорт, юридически не проверено",polygons:polygons,attributes:attributes)
         }
     }
 }

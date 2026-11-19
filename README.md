@@ -1,3 +1,5 @@
+# HUNT MAP KZ v1.0 — полноэкранная карта и сведения об угодьях
+
 # HUNT MAP KZ · Source Release v0.9
 
 **Старт на Windows / GitHub / IPA:** [docs/GITHUB_IPA_WINDOWS_RU.md](docs/GITHUB_IPA_WINDOWS_RU.md)

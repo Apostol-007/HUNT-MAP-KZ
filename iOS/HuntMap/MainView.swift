@@ -9,6 +9,7 @@ struct MainView: View {
     @StateObject private var wildlifeUpdater = WildlifeUpdater()
     @StateObject private var boundaryDownloader = BoundaryDownloader()
     @State private var boundaryGroundID = ""
+    @State private var directGeoJSONURL = ""
     @State private var wildlifeServer = "https://example.org"
     @State private var wildlifeGround = ""
     @State private var wildlifeImportShown = false
@@ -20,6 +21,7 @@ struct MainView: View {
     @State private var importError:String?
     @State private var showDiagnostics = false
     @State private var showAbout = false
+    @State private var selectedZone: GeoZone?
     @State private var publicTaxa: [GBIFTaxon] = []
     @State private var gbifStatus = "Не загружено"
     @State private var loadingGBIF = false
@@ -38,25 +40,76 @@ struct MainView: View {
         .sheet(isPresented: $showDiagnostics) { DiagnosticsView(model: model, mapCount: tileStore.installed.count, wildlifeCount: wildlifeStore.packs.count, onlineMap: onlineBasemap) }
         .sheet(isPresented: $showAbout) { AboutHuntView() }
     }
-    private var mapTab:some View {
-        NavigationStack {
-            VStack(spacing:12) {
-                HStack {Image(systemName:"location.fill").foregroundStyle(.orange);Text(model.status);Spacer();Text(onlineBasemap ? "ONLINE · OpenFreeMap" : "OFFLINE").font(.caption.bold()).foregroundStyle(onlineBasemap ? .orange : .green)}.font(.subheadline)
-                Group {
-                    OfflineMapView(zones:model.zones,position:model.coordinate,markers:model.markers,track:model.currentTrack,tileFiles:tileStore.paths,tileRevision:tileStore.revision,online:onlineBasemap)
+    private var mapTab: some View {
+        ZStack(alignment: .top) {
+            OfflineMapView(
+                zones: model.zones, position: model.coordinate, markers: model.markers,
+                track: model.currentTrack, tileFiles: tileStore.paths,
+                tileRevision: tileStore.revision, online: onlineBasemap,
+                selectedZone: $selectedZone
+            )
+            .ignoresSafeArea(edges: .top)
+
+            VStack(spacing: 0) {
+                HStack(spacing: 8) {
+                    Image(systemName: "location.fill").foregroundStyle(.orange)
+                    Text(model.status).lineLimit(1)
+                    Spacer(minLength: 4)
+                    Text(onlineBasemap ? "ONLINE" : "OFFLINE")
+                        .foregroundStyle(onlineBasemap ? .green : .orange)
+                    Menu {
+                        Toggle("Онлайн-карта", isOn: $onlineBasemap)
+                        Button("Диагностика", systemImage: "ladybug") { showDiagnostics = true }
+                    } label: { Image(systemName: "square.3.layers.3d").font(.title3) }
                 }
-                    .frame(maxWidth:.infinity,maxHeight:.infinity).background(Color(red:0.08,green:0.13,blue:0.16)).clipShape(RoundedRectangle(cornerRadius:16))
-                Text(onlineBasemap ? "Онлайн-карта: © OpenStreetMap contributors · OpenFreeMap. Для офлайна установите MBTiles" : (tileStore.installed.isEmpty ? "НЕТ ОФЛАЙН-КАРТЫ: скачайте или импортируйте MBTiles" : "ОФЛАЙН-ПАКЕТОВ: \(tileStore.installed.count)")).font(.caption).foregroundStyle(.secondary)
-                Text(model.lastWarning).font(.footnote).foregroundStyle(.orange).frame(maxWidth:.infinity,alignment:.leading)
-                HStack {
-                    Button("GPS",systemImage:"location") {model.requestGPS()}.buttonStyle(.borderedProminent)
-                    Button("Метка",systemImage:"mappin") {model.addMarker()}.buttonStyle(.bordered)
-                    if model.recording {Button("Стоп",systemImage:"stop.fill") {model.stopTrack()}.tint(.red).buttonStyle(.borderedProminent)}
-                    else {Button("Запись",systemImage:"record.circle") {model.startTrack()}.buttonStyle(.borderedProminent)}
-                }.labelStyle(.titleAndIcon)
-            }.padding().navigationTitle("HUNT MAP KZ")
+                .font(.footnote.weight(.semibold))
+                .padding(12)
+                .foregroundStyle(.white)
+                .background(.black.opacity(0.78), in: RoundedRectangle(cornerRadius: 14))
+                .padding(.horizontal, 12).padding(.top, 8)
+
+                Spacer(minLength: 0)
+
+                if !model.lastWarning.isEmpty && model.lastWarning != "Границы не загружены" {
+                    Text(model.lastWarning)
+                        .font(.footnote.bold()).foregroundStyle(.white)
+                        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.orange.opacity(0.92), in: RoundedRectangle(cornerRadius: 12))
+                        .padding(.horizontal, 12).padding(.bottom, 6)
+                }
+                HStack(spacing: 12) {
+                    fieldControl("location.north.fill", "GPS") { model.requestGPS() }
+                    fieldControl("mappin.and.ellipse", "Метка") { model.addMarker() }
+                    fieldControl(model.recording ? "stop.fill" : "record.circle.fill",
+                                 model.recording ? "Стоп" : "Запись") {
+                        if model.recording { model.stopTrack() } else { model.startTrack() }
+                    }
+                }
+                .padding(10)
+                .background(.black.opacity(0.82), in: RoundedRectangle(cornerRadius: 18))
+                .padding(.horizontal, 12).padding(.bottom, 10)
+            }
+        }
+        .toolbar(.hidden, for: .navigationBar)
+        .sheet(item: $selectedZone) { zone in
+            GroundDetailsSheet(zone: zone)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
         }
     }
+
+    private func fieldControl(_ symbol: String, _ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: symbol).font(.title3)
+                Text(title).font(.caption2.weight(.semibold))
+            }
+            .frame(maxWidth: .infinity).frame(minHeight: 44)
+        }
+        .buttonStyle(.plain).foregroundStyle(.white)
+        .accessibilityLabel(title)
+    }
+
     private var tracksTab:some View {
         NavigationStack {
             List {
@@ -197,6 +250,16 @@ struct MainView: View {
                     }.disabled(boundaryDownloader.busy || boundaryGroundID.isEmpty)
                     Text(boundaryDownloader.message).font(.caption).foregroundStyle(.secondary)
                 }
+                Section("Загрузить GeoJSON напрямую") {
+                    TextField("https://.../grounds.geojson", text: $directGeoJSONURL)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .keyboardType(.URL)
+                    Button("Загрузить границы из HTTPS GeoJSON", systemImage: "globe") {
+                        Task { await boundaryDownloader.fetchGeoJSON(urlString: directGeoJSONURL, model: model) }
+                    }.disabled(boundaryDownloader.busy || directGeoJSONURL.isEmpty)
+                    Text("Источник должен разрешать загрузку и повторное использование. Поддерживаются FeatureCollection и Feature с Polygon/MultiPolygon. Сохраняются все простые поля properties.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section("Открытые источники границ") {
                     Link("Государственные геоданные Казахстана (проверяйте права)", destination: URL(string: "https://data.egov.kz/")!)
                     Link("Tabigat: исходные данные и карта", destination: URL(string: "https://tabigat.gov.kz/")!)
@@ -302,6 +365,48 @@ struct OfflineCanvas:View {
             .overlay(alignment:.topLeading) {VStack(alignment:.leading){Text("СХЕМА · БЕЗ ПОДЛОЖКИ").font(.caption.bold());Text("Не навигационная топокарта").font(.caption2)}.foregroundStyle(.white).padding(10).background(.black.opacity(0.6)).clipShape(RoundedRectangle(cornerRadius:8)).padding(10)}
             .overlay(alignment:.bottomTrailing) {VStack {Button {scale=min(20,scale*1.5)} label:{Image(systemName:"plus")};Button {scale=max(0.5,scale/1.5)} label:{Image(systemName:"minus")}}.buttonStyle(.borderedProminent).padding(12)}
             .gesture(DragGesture().onChanged {offset=$0.translation}.onEnded {_ in offset = .zero})
+        }
+    }
+}
+
+
+/// All original fields are presented, rather than a hardcoded mock of one hunting ground.
+private struct GroundDetailsSheet: View {
+    let zone: GeoZone
+    @Environment(\.dismiss) private var dismiss
+    private var fields: [(key: String, value: String)] {
+        (zone.attributes ?? [:]).map { (key: $0.key, value: $0.value) }
+            .sorted { $0.key.localizedStandardCompare($1.key) == .orderedAscending }
+    }
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Общая информация") {
+                    LabeledContent("Название", value: zone.name)
+                    LabeledContent("Тип", value: zone.kind == .protectedArea ? "Охраняемая территория" : "Охотничье хозяйство")
+                    LabeledContent("Достоверность", value: zone.verified ? "Верифицировано" : "Не подтверждено")
+                    LabeledContent("Источник", value: zone.source)
+                }
+                Section("Все атрибуты источника · \(fields.count)") {
+                    if fields.isEmpty {
+                        Text("В GeoJSON отсутствуют атрибуты хозяйства. Их нельзя восстановить по одной геометрии.")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(fields.indices, id: \.self) { index in
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(fields[index].key).font(.caption).foregroundStyle(.secondary)
+                            Text(fields[index].value.isEmpty ? "Нет данных" : fields[index].value)
+                                .font(.body).textSelection(.enabled)
+                        }.padding(.vertical, 3)
+                    }
+                }
+                Section {
+                    Text("Данные информационные. Актуальность границ, договоров и разрешений необходимо проверить по первоисточнику.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle(zone.name).navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Закрыть") { dismiss() } } }
         }
     }
 }
