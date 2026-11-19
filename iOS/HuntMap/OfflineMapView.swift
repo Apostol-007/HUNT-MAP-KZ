@@ -17,15 +17,14 @@ struct OfflineMapView: UIViewRepresentable {
     @Binding var selectedZone: GeoZone?
     var onMapTap: (GeoPoint) -> Void
 
-    private static func onlineStyle(_ name: String) -> URL {
-        let safe = ["liberty", "bright", "positron"].contains(name) ? name : "liberty"
-        return URL(string: "https://tiles.openfreemap.org/styles/\(safe)")!
+    private var safeOnlineStyle: String {
+        ["liberty", "bright", "positron"].contains(mapStyle) ? mapStyle : "liberty"
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(selectedZone: $selectedZone, onMapTap: onMapTap) }
 
     func makeUIView(context: Context) -> MLNMapView {
-        let styleURL = online ? Self.onlineStyle(mapStyle) : OfflineMapStyle.url
+        let styleURL = online ? URL(string: "https://tiles.openfreemap.org/styles/liberty".replacingOccurrences(of: "liberty", with: safeOnlineStyle))! : OfflineMapStyle.url
         let view = MLNMapView(frame: .zero, styleURL: styleURL)
         view.delegate = context.coordinator
         context.coordinator.zones = zones
@@ -40,7 +39,7 @@ struct OfflineMapView: UIViewRepresentable {
 
     func updateUIView(_ view: MLNMapView, context: Context) {
         let requestedOnline = online
-        let wantedStyle = requestedOnline ? Self.onlineStyle(mapStyle) : OfflineMapStyle.url
+        let wantedStyle = requestedOnline ? URL(string: "https://tiles.openfreemap.org/styles/liberty".replacingOccurrences(of: "liberty", with: safeOnlineStyle))! : OfflineMapStyle.url
         if view.styleURL != wantedStyle { view.styleURL = wantedStyle }
         if context.coordinator.lastCenterRequest != centerRequest {
             context.coordinator.lastCenterRequest = centerRequest
