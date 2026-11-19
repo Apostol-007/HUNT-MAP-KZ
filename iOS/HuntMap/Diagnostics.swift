@@ -26,13 +26,31 @@ struct DiagnosticsView: View {
     let onlineMap: Bool
     @State private var includeApproximatePosition = false
 
+    private var releaseVersion: String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = info["CFBundleShortVersionString"] as? String ?? "unknown"
+        let build = info["CFBundleVersion"] as? String ?? "unknown"
+        return "\(version) (\(build))"
+    }
+    private var screenGeometry: String {
+        let bounds = UIScreen.main.bounds
+        let native = UIScreen.main.nativeBounds
+        let window = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap { $0.windows }
+            .first(where: { $0.isKeyWindow })
+        let frame = window?.bounds ?? .zero
+        let insets = window?.safeAreaInsets ?? .zero
+        return "Screen pt: \(Int(bounds.width))x\(Int(bounds.height)); pixels: \(Int(native.width))x\(Int(native.height)); window pt: \(Int(frame.width))x\(Int(frame.height)); safe area T/B: \(Int(insets.top))/\(Int(insets.bottom))"
+    }
     var report: String {
         let location = includeApproximatePosition && model.coordinate != nil
             ? "GPS approximate: \(String(format: "%.2f", model.coordinate!.latitude)), \(String(format: "%.2f", model.coordinate!.longitude))"
             : "GPS coordinates: REDACTED"
         return """
         HUNT MAP KZ — diagnostic report
-        Build: 0.9.0 (source build; exact Xcode revision from app build)
+        Build: \(releaseVersion)
+        \(screenGeometry)
         Captured UTC: \(ISO8601DateFormatter().string(from: Date()))
         iOS: \(UIDevice.current.systemVersion)
         Device: \(UIDevice.current.model)
@@ -86,7 +104,7 @@ struct AboutHuntView: View {
         NavigationStack {
             Form {
                 Section("HUNT MAP KZ") {
-                    Text("Версия исходников: 0.9.0 · Offline First")
+                    Text("Версия приложения: \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "неизвестна") · Offline First")
                     Text("Навигатор для маршрутов, пользовательских меток и проверки геозон Казахстана. Данные о границах и животных не являются юридическим разрешением на охоту.")
                 }
                 Section("Автор и инициатор") {
