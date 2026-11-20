@@ -2,8 +2,8 @@ import SwiftUI
 import MapLibre
 import HuntCore
 
-/// MapLibre receives only a locally generated, source-free style and file-backed MBTiles.
-/// No HTTP style, glyph, sprite or tile endpoint is configured by this view.
+/// Online styles use OpenFreeMap. Offline mode uses a cached completed MapLibre
+/// pack (same style URL) or the local fallback with imported MBTiles.
 struct OfflineMapView: UIViewRepresentable {
     let zones: [GeoZone]
     let position: GeoPoint?
@@ -31,7 +31,7 @@ struct OfflineMapView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(selectedZone: $selectedZone, onMapTap: onMapTap, onMarkerSelect: onMarkerSelect, onMarkerMove: onMarkerMove) }
 
     func makeUIView(context: Context) -> MLNMapView {
-        let styleURL = online ? URL(string: "https://tiles.openfreemap.org/styles/liberty".replacingOccurrences(of: "liberty", with: safeOnlineStyle))! : OfflineMapStyle.url
+        let styleURL = online ? URL(string: "https://tiles.openfreemap.org/styles/\(safeOnlineStyle)")! : OfflineMapStyle.url
         let view = MLNMapView(frame: .zero, styleURL: styleURL)
         view.delegate = context.coordinator
         context.coordinator.zones = zones
@@ -51,7 +51,7 @@ struct OfflineMapView: UIViewRepresentable {
 
     func updateUIView(_ view: MLNMapView, context: Context) {
         let requestedOnline = online
-        let wantedStyle = requestedOnline ? URL(string: "https://tiles.openfreemap.org/styles/liberty".replacingOccurrences(of: "liberty", with: safeOnlineStyle))! : OfflineMapStyle.url
+        let wantedStyle = requestedOnline ? URL(string: "https://tiles.openfreemap.org/styles/\(safeOnlineStyle)")! : OfflineMapStyle.url
         if view.styleURL != wantedStyle { view.styleURL = wantedStyle }
         if context.coordinator.lastCenterRequest != centerRequest {
             context.coordinator.lastCenterRequest = centerRequest
@@ -68,7 +68,6 @@ struct OfflineMapView: UIViewRepresentable {
         context.coordinator.updateOSMLines(view: view, lines: offlineOSMLines, revision: offlineOSMRevision)
         context.coordinator.updateDownloadGrid(view: view, visible: downloadGridVisible, regions: downloadedRegions, revision: offlineOSMRevision)
         context.coordinator.updateAnnotations(view: view, zones: zones, markers: markers, position: position, heading: travelHeading, track: track)
-
     }
 
     final class Coordinator: NSObject, MLNMapViewDelegate {
@@ -204,9 +203,14 @@ struct OfflineMapView: UIViewRepresentable {
         }
 
         private var osmRevision = -1
+        private var osmContentSignature = ""
         private var osmShapes: [MLNAnnotation] = []
         func updateOSMLines(view: MLNMapView, lines: [OSMOfflineLine], revision: Int) {
-            guard revision != osmRevision else { return }
+            // Revision alone is insufficient: turning the OSM layer off and back on
+            // can reuse the same revision, leaving stale overlays on screen.
+            let signature = "\(revision):\(lines.count):\(lines.first?.kind ?? "none")"
+            guard signature != osmContentSignature else { return }
+            osmContentSignature = signature
             if !osmShapes.isEmpty { view.removeAnnotations(osmShapes) }
             var updated: [MLNAnnotation] = []
             for line in lines.prefix(4_000) {
@@ -253,7 +257,13 @@ struct OfflineMapView: UIViewRepresentable {
                 mapView.removeAnnotation(gpsShape)
                 mapView.addAnnotation(gpsShape)
             }
-
+            // A style reload may drop overlays without changing their data revision.
+            // Restore independently managed overlays as well.
+            if !osmShapes.isEmpty {
+                mapView.removeAnnotations(osmShapes)
+                mapView.addAnnotations(osmShapes)
+            }
+            if gridVisible { lastGridBounds = ""; rebuildDownloadGrid(view: mapView) }
         }
 
         private func configure(style: MLNStyle, files: [URL]) {
@@ -267,7 +277,8 @@ struct OfflineMapView: UIViewRepresentable {
                 guard file.isFileURL, file.pathExtension.lowercased() == "mbtiles",
                       FileManager.default.fileExists(atPath: file.path) else { continue }
                 let id = "hunt-raster-\(index)"
-                // MapLibre Native's local MBTiles protocol reads directly from SQLite on disk.
+                // EXPERIMENTAL: mbtiles:// is not guaranteed to be supported by MapLibre Native.
+                // Do not treat presence of an MBTiles file as proof of a rendered basemap.
                 guard let url = URL(string: "mbtiles://\(file.path)") else { continue }
                 let source = MLNRasterTileSource(identifier: id, configurationURL: url, tileSize: 256)
                 style.addSource(source)

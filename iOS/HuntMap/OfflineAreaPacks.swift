@@ -11,6 +11,7 @@ import Combine
     @Published private(set) var busy = false
     @Published private(set) var fraction = 0.0
     @Published private(set) var hasPacks = false
+    @Published private(set) var hasCompletedPacks = false
     private var observations: [NSObjectProtocol] = []
 
     init() {
@@ -30,6 +31,20 @@ import Combine
     func refresh() {
         packs = MLNOfflineStorage.shared.packs ?? []
         hasPacks = !packs.isEmpty
+        // A pack being created or partially downloaded is NOT an offline map.
+        hasCompletedPacks = packs.contains { $0.state == .complete }
+    }
+
+    /// A completed pack is usable only with the exact style it downloaded.
+    /// A completed Bright pack must not make Liberty or Positron appear offline-ready.
+    func hasCompletedPack(forStyle style: String) -> Bool {
+        let safeStyle = ["liberty", "bright", "positron"].contains(style) ? style : "liberty"
+        let expected = "https://tiles.openfreemap.org/styles/\(safeStyle)"
+        return packs.contains { pack in
+            guard pack.state == .complete,
+                  let region = pack.region as? MLNTilePyramidOfflineRegion else { return false }
+            return region.styleURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == expected
+        }
     }
 
     func download(latitude: Double, longitude: Double, radiusMeters: Int, style: String) {
@@ -40,7 +55,7 @@ import Combine
             return
         }
         let safeStyle = ["liberty", "bright", "positron"].contains(style) ? style : "liberty"
-        let radius = Double(max(500, min(5_000, radiusMeters)))
+        let radius = Double(max(500, min(10_000, radiusMeters)))
         let latDelta = radius / 111_195
         let lonDelta = radius / max(1, 111_195 * cos(latitude * .pi / 180))
         let bounds = MLNCoordinateBounds(

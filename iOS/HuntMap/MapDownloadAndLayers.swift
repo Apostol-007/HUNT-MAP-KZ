@@ -136,6 +136,7 @@ struct MapLayersSheet: View {
     @Binding var online: Bool
     @Binding var grounds: Bool
     @Binding var markers: Bool
+    @Binding var roads: Bool
     @Binding var track: Bool
     @Binding var gps: Bool
     @Binding var grid: Bool
@@ -147,7 +148,9 @@ struct MapLayersSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Подложка").font(.headline)
+                    Text("Картографическая подложка").font(.headline)
+                    Text("Выбор оформления изменяет настоящую карту, а переключатели ниже управляют отдельными слоями.")
+                        .font(.caption).foregroundStyle(.secondary)
                     HStack(spacing: 10) {
                         styleCard("Туристическая", subtitle: "Liberty", symbol: "mountain.2", key: "liberty")
                         styleCard("Контрастная", subtitle: "Bright", symbol: "map", key: "bright")
@@ -158,12 +161,14 @@ struct MapLayersSheet: View {
                     }
                     .padding(14)
                     .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 15))
-                    Text("При выключении интернета остаются установленные карты, дороги, тропы и ваши объекты.")
+                    Text("Для офлайна дождитесь 100% загрузки пакета MapLibre. Незавершённый пакет не считается установленной картой. Дороги Overpass не заменяют подложку.")
                         .font(.caption).foregroundStyle(.secondary)
 
                     Text("Объекты на карте").font(.headline)
                     VStack(spacing: 0) {
                         layerToggle("Границы охотугодий", "square.dashed", binding: $grounds)
+                        Divider().padding(.leading, 48)
+                        layerToggle("Загруженные дороги и тропы OSM", "point.topleft.down.to.point.bottomright.curvepath", binding: $roads)
                         Divider().padding(.leading, 48)
                         layerToggle("Маркеры и машина", "mappin.circle", binding: $markers)
                         Divider().padding(.leading, 48)

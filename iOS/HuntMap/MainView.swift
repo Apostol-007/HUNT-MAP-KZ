@@ -47,11 +47,13 @@ struct MainView: View {
     @State private var selectedZone: GeoZone?
     @State private var tappedMapPoint: GeoPoint?
     @State private var showMapDownload = false
+    @State private var showMapPointActions = false
+    @AppStorage("hunt.showOSMRoads") private var showOSMRoads = true
     @State private var publicTaxa: [GBIFTaxon] = []
     @State private var gbifStatus = "Не загружено"
     @State private var loadingGBIF = false
     @AppStorage("hunt.onlineBasemap") private var onlineBasemap = true
-    @AppStorage("hunt.mapStyle") private var mapStyle = "liberty"
+    @AppStorage("hunt.mapStyle") private var mapStyle = "bright"
     @State private var showMapSources = false
     @State private var showLayers = false
     @State private var showGrounds = true
@@ -143,7 +145,7 @@ struct MainView: View {
         .sheet(isPresented: $showLayers) {
             MapLayersSheet(
                 mapStyle: $mapStyle, online: $onlineBasemap,
-                grounds: $showGrounds, markers: $showMarkers,
+                grounds: $showGrounds, markers: $showMarkers, roads: $showOSMRoads,
                 track: $showTrack, gps: $showGPS, grid: $showDownloadGrid,
                 onDownload: { showMapDownload = true },
                 onLibrary: { selectedTab = .downloads }
@@ -153,12 +155,21 @@ struct MainView: View {
         .sheet(isPresented: $showMapSources) {
             MapLayersSheet(
                 mapStyle: $mapStyle, online: $onlineBasemap,
-                grounds: $showGrounds, markers: $showMarkers,
+                grounds: $showGrounds, markers: $showMarkers, roads: $showOSMRoads,
                 track: $showTrack, gps: $showGPS, grid: $showDownloadGrid,
                 onDownload: { showMapDownload = true },
                 onLibrary: { selectedTab = .downloads }
             )
             .presentationDetents([.large])
+        }
+        .confirmationDialog("Точка на карте", isPresented: $showMapPointActions, titleVisibility: .visible) {
+            Button("Поставить маркер") {
+                if let point = tappedMapPoint { model.addMarker(kind: "Точка", at: point) }
+            }
+            Button("Скачать карту этого района") { showMapDownload = true }
+            Button("Отмена", role: .cancel) {}
+        } message: {
+            Text("Выберите действие для отмеченной точки")
         }
         .sheet(isPresented: $showMapDownload) {
             QuickMapDownloadSheet(
@@ -270,14 +281,14 @@ struct MainView: View {
             markers: showMarkers ? model.markers : [],
             track: showTrack ? (selectedRoute ?? model.currentTrack) : nil,
             centerRequest: centerRequest, mapStyle: mapStyle, tileFiles: tileStore.paths,
-            tileRevision: tileStore.revision, offlineOSMLines: nativeOSM.lines,
-            offlineOSMRevision: nativeOSM.revision, downloadGridVisible: showDownloadGrid,
-            downloadedRegions: nativeOSM.regions, online: onlineBasemap || offlineAreas.hasPacks,
+            tileRevision: tileStore.revision, offlineOSMLines: showOSMRoads ? nativeOSM.lines : [],
+            offlineOSMRevision: nativeOSM.revision + (showOSMRoads ? 0 : 1_000_000), downloadGridVisible: showDownloadGrid,
+            downloadedRegions: nativeOSM.regions, online: onlineBasemap || offlineAreas.hasCompletedPack(forStyle: mapStyle),
             onMarkerSelect: { id in editingMarker = model.markers.first { $0.id == id } },
             onMarkerMove: { id, point in model.moveMarker(id: id, to: point) },
             selectedZone: $selectedZone, onMapTap: { point in
                 tappedMapPoint = point
-                showMapDownload = true
+                showMapPointActions = true
             }
         )
     }
@@ -298,12 +309,12 @@ struct MainView: View {
     private var mapSideControls: some View {
             HStack(alignment: .top, spacing: 0) {
                 VStack(spacing: 9) {
-                    sideControl("magnifyingglass", "Поиск") { selectedTab = .downloads }
+                    sideControl("magnifyingglass", "Поиск") { selectedTab = .markers }
                     sideControl("figure.hiking", "Маршруты") { selectedTab = .tracks }
                     sideControl("square.3.layers.3d", "Слои") { showLayers = true }
                     sideControl(showDownloadGrid ? "square.grid.3x3.fill" : "square.grid.3x3", "Сетка") { showDownloadGrid.toggle() }
                     sideControl("pawprint.fill", "Животные") { selectedTab = .wildlife }
-                    sideControl("arrow.down.circle.fill", "Скачать") { showMapDownload = true }
+                    sideControl("arrow.down.circle.fill", "Скачать") { tappedMapPoint = nil; showMapDownload = true }
                 }
                 Spacer(minLength: 0)
                 VStack(spacing: 9) {
@@ -315,7 +326,7 @@ struct MainView: View {
                         if model.recording { model.stopTrack() } else { model.startTrack() }
                     }
                     sideControl("mappin.and.ellipse", "Метка") { model.addMarker() }
-                    sideControl("square.dashed", "Границы") { selectedTab = .downloads }
+                    sideControl("square.dashed", "Границы") { showGrounds.toggle() }
                     sideControl("ladybug", "Диагн.") { showDiagnostics = true }
                 }
             }
@@ -699,6 +710,7 @@ struct MainView: View {
                 Text("1 км").tag(1000)
                 Text("2 км").tag(2000)
                 Text("5 км").tag(5000)
+                Text("10 км").tag(10000)
             }
             Button("Скачать карту выбранного района", systemImage: "square.and.arrow.down.fill") {
                 if let point = tappedMapPoint ?? model.coordinate {
@@ -709,6 +721,10 @@ struct MainView: View {
             .disabled(offlineAreas.busy || (tappedMapPoint == nil && model.coordinate == nil))
             if offlineAreas.busy { ProgressView(value: offlineAreas.fraction) }
             Text(offlineAreas.status).font(.caption).foregroundStyle(.secondary)
+            if !onlineBasemap && !offlineAreas.hasCompletedPack(forStyle: mapStyle) && tileStore.installed.isEmpty {
+                Label("Нет завершённого офлайн-пакета для выбранного стиля. Включите онлайн-карту или скачайте этот стиль.", systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.orange)
+            }
             if !offlineAreas.packs.isEmpty {
                 ForEach(Array(offlineAreas.packs.enumerated()), id: \.offset) { _, pack in
                     HStack {
