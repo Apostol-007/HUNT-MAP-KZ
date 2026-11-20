@@ -1,0 +1,21 @@
+{
+  "file": "almaty-city.mbtiles",
+  "source": "Geofabrik / OpenStreetMap",
+  "license": "ODbL 1.0 (attribution required)",
+  "bbox": [
+    76.85,
+    43.18,
+    77.05,
+    43.32
+  ],
+  "zoom": [
+    9,
+    14
+  ],
+  "tiles": 146,
+  "coverage_complete": true,
+  "features": 51429,
+  "bytes": 1499136,
+  "sha256": "30dd161ba18e82be9cc6b4d35407b5addc200f12a22e41f8b5280713ecd7ac94",
+  "pbf": "maps\\kazakhstan-latest.osm.pbf"
+}
