@@ -44,7 +44,7 @@ struct OfflineMapView: UIViewRepresentable {
         hold.cancelsTouchesInView = false
         view.addGestureRecognizer(hold)
         context.coordinator.map = view
-        view.setCenter(CLLocationCoordinate2D(latitude: 43.24, longitude: 76.91), zoomLevel: 11, animated: false)
+        view.setCenter(CLLocationCoordinate2D(latitude: 43.24, longitude: 76.91), zoomLevel: online ? 11 : 5, animated: false)
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
         return view
     }
@@ -85,6 +85,12 @@ struct OfflineMapView: UIViewRepresentable {
             self.onMapTap = onMapTap
             self.onMarkerSelect = onMarkerSelect
             self.onMarkerMove = onMarkerMove
+            NotificationCenter.default.addObserver(self, selector: #selector(localTilesReady), name: .huntMBTilesReady, object: nil)
+        }
+        deinit { NotificationCenter.default.removeObserver(self) }
+        @objc private func localTilesReady() {
+            guard let map, let style = map.style else { return }
+            configure(style: style, files: latestFiles)
         }
         @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
             guard recognizer.state == .ended, let map else { return }
@@ -273,14 +279,11 @@ struct OfflineMapView: UIViewRepresentable {
                 if let layer = style.layer(withIdentifier: id) { style.removeLayer(layer) }
                 if let source = style.source(withIdentifier: id) { style.removeSource(source) }
             }
-            for (index, file) in files.enumerated() {
-                guard file.isFileURL, file.pathExtension.lowercased() == "mbtiles",
-                      FileManager.default.fileExists(atPath: file.path) else { continue }
+            let server = LocalMBTilesServer.shared
+            for (index, item) in server.register(files).enumerated() {
                 let id = "hunt-raster-\(index)"
-                // EXPERIMENTAL: mbtiles:// is not guaranteed to be supported by MapLibre Native.
-                // Do not treat presence of an MBTiles file as proof of a rendered basemap.
-                guard let url = URL(string: "mbtiles://\(file.path)") else { continue }
-                let source = MLNRasterTileSource(identifier: id, configurationURL: url, tileSize: 256)
+                guard let template = server.tileTemplate(for: item.0) else { continue }
+                let source = MLNRasterTileSource(identifier: id, tileURLTemplates: [template], options: [.tileSize: 256])
                 style.addSource(source)
                 style.addLayer(MLNRasterStyleLayer(identifier: id, source: source))
             }

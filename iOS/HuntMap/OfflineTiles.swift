@@ -100,8 +100,16 @@ struct PublishedPack: Codable, Identifiable {
     }
     func coveringDescription(latitude: Double, longitude: Double) -> String {
         let matches = covering(latitude: latitude, longitude: longitude)
-        if !matches.isEmpty { return "Покрытие найдено: \(matches.count) пакет(ов)" }
-        return "Покрытие выбранной точки не подтверждено. Проверьте границы MBTiles или загрузите пакет."
+        guard !matches.isEmpty else {
+            return "Нет подтверждённого покрытия. Импортируйте подробный растровый MBTiles для выбранного района."
+        }
+        let detailed = matches.filter { (RasterMBTiles.zoomRange(path(for: $0))?.upperBound ?? 0) >= 12 }
+        if detailed.isEmpty {
+            let ranges = matches.compactMap { RasterMBTiles.zoomRange(path(for: $0)) }
+                .map { "z\($0.lowerBound)–z\($0.upperBound)" }.joined(separator: ", ")
+            return "Есть только обзорная карта (\(ranges)). Детальные улицы и тропы не загружены."
+        }
+        return "Подробные MBTiles найдены: \(detailed.count). Проверьте отображение нужного масштаба офлайн."
     }
     private func endpoint(_ raw: String? = nil) throws -> URL {
         guard let url = URL(string: raw ?? serviceURL), url.scheme == "https", url.host != nil,
@@ -340,6 +348,138 @@ struct PublishedPack: Codable, Identifiable {
         }
     }
 
+    struct StaticCatalog: Decodable {
+        let schema: String
+        let packs: [StaticPack]
+    }
+    struct StaticPack: Decodable, Identifiable {
+        struct Chunk: Decodable {
+            let path: String
+            let bytes: Int
+            let sha256: String
+        }
+        let id: String
+        let name: String
+        let bounds: [Double]
+        let bytes: Int64
+        let sha256: String
+        let chunks: [Chunk]
+        let minzoom: Int
+        let maxzoom: Int
+        let attribution: String
+    }
+    @Published private(set) var staticPacks: [StaticPack] = []
+    @Published var staticCatalogURL: String = ""
+
+    private func staticCatalogEndpoint() throws -> URL {
+        let value = staticCatalogURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: value), url.scheme == "https", url.host != nil,
+              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil,
+              url.lastPathComponent == "catalog.json" else { throw StoreError.invalidEndpoint }
+        return url
+    }
+
+    func loadStaticCatalog() async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        do {
+            let url = try staticCatalogEndpoint()
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 25
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  http.url?.scheme == "https", data.count < 5_000_000 else { throw StoreError.invalidManifest }
+            let catalog = try JSONDecoder().decode(StaticCatalog.self, from: data)
+            guard catalog.schema == "hunt-map-kz-static-v1" else { throw StoreError.invalidManifest }
+            staticPacks = catalog.packs.filter { pack in
+                pack.id.range(of: "^[A-Za-z0-9_-]{1,80}$", options: .regularExpression) != nil &&
+                pack.bytes > 0 && pack.bytes <= 20_000_000_000 &&
+                pack.sha256.range(of: "^[a-fA-F0-9]{64}$", options: .regularExpression) != nil &&
+                pack.bounds.count == 4 && pack.minzoom <= pack.maxzoom &&
+                !pack.chunks.isEmpty && pack.chunks.count <= 100_000 &&
+                pack.chunks.allSatisfy { $0.path.range(of: "^packs/[A-Za-z0-9_-]{1,80}/[0-9]{6}\\.part$", options: .regularExpression) != nil &&
+                    $0.path.hasPrefix("packs/\(pack.id)/") && $0.bytes > 0 &&
+                    $0.bytes <= 32 * 1024 * 1024 &&
+                    $0.sha256.range(of: "^[a-fA-F0-9]{64}$", options: .regularExpression) != nil } &&
+                pack.chunks.reduce(Int64(0)) { $0 + Int64($1.bytes) } == pack.bytes
+            }
+            message = "На хостинге найдено карт: \(staticPacks.count)"
+        } catch { message = "Ошибка каталога: \(error.localizedDescription)" }
+    }
+
+    func installStaticPack(_ pack: StaticPack) async {
+        guard !busy else { return }
+        busy = true; progress = 0
+        defer { busy = false }
+        do {
+            let catalogURL = try staticCatalogEndpoint()
+            guard staticPacks.contains(where: { $0.id == pack.id && $0.sha256 == pack.sha256 }) else {
+                throw StoreError.invalidManifest
+            }
+            let root = catalogURL.deletingLastPathComponent()
+            let temp = folder.appendingPathComponent("static-\(pack.id)-\(pack.sha256).part")
+            if !FileManager.default.fileExists(atPath: temp.path) {
+                _ = FileManager.default.createFile(atPath: temp.path, contents: nil)
+            }
+            let handle = try FileHandle(forWritingTo: temp)
+            defer { try? handle.close() }
+            var position = try handle.seekToEnd()
+            if position > UInt64(pack.bytes) {
+                try handle.truncate(atOffset: 0); position = 0
+            }
+            // A partial file is accepted only at a complete chunk boundary.
+            var boundary: UInt64 = 0
+            var startIndex = 0
+            for (index, chunk) in pack.chunks.enumerated() {
+                if boundary == position { startIndex = index }
+                boundary += UInt64(chunk.bytes)
+            }
+            if position == UInt64(pack.bytes) { startIndex = pack.chunks.count }
+            else if position != pack.chunks.prefix(startIndex).reduce(UInt64(0), { $0 + UInt64($1.bytes) }) {
+                try handle.truncate(atOffset: 0); position = 0; startIndex = 0
+            }
+            for index in startIndex..<pack.chunks.count {
+                try Task.checkCancellation()
+                let chunk = pack.chunks[index]
+                guard let url = URL(string: chunk.path, relativeTo: root)?.absoluteURL,
+                      url.scheme == "https", url.host == root.host else { throw StoreError.invalidEndpoint }
+                var request = URLRequest(url: url)
+                request.timeoutInterval = 90
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                      http.url?.scheme == "https", http.url?.host == root.host,
+                      data.count == chunk.bytes,
+                      Self.sha256(data: data).lowercased() == chunk.sha256.lowercased() else {
+                    throw StoreError.badChecksum
+                }
+                try handle.write(contentsOf: data)
+                position += UInt64(data.count)
+                progress = Double(position) / Double(pack.bytes)
+                message = "\(pack.name): \(Int(progress * 100))%"
+            }
+            try handle.synchronize()
+            guard try Self.sha256(file: temp).lowercased() == pack.sha256.lowercased(),
+                  RasterMBTiles.isSupported(temp) else { throw StoreError.badChecksum }
+            let installedPack = PublishedPack(pack_id: pack.id, scope: "region", scope_id: "STATIC",
+                size_bytes: pack.bytes, sha256: pack.sha256, source_version: "static-v1",
+                license: pack.attribution, verified: true, layers: ["raster-mbtiles"],
+                catalog_url: catalogURL.absoluteString)
+            let target = scopedPath(for: installedPack)
+            if FileManager.default.fileExists(atPath: target.path) {
+                _ = try FileManager.default.replaceItemAt(target, withItemAt: temp)
+            } else { try FileManager.default.moveItem(at: temp, to: target) }
+            installed.removeAll { $0.pack_id == installedPack.pack_id && $0.catalog_url == installedPack.catalog_url }
+            installed.append(installedPack)
+            try persist(); revision += 1; progress = 1
+            message = "Карта \(pack.name) установлена, SHA-256 проверен"
+        } catch { message = "Загрузка карты: \(error.localizedDescription)" }
+    }
+
+    private static func sha256(data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
     /// Import a user-provided, licensed raster MBTiles archive without connecting to the server.
     /// Original files are not modified. This does not certify legal status or map accuracy.
     func importLocal(_ incoming: URL) async {
@@ -395,6 +535,25 @@ struct PublishedPack: Codable, Identifiable {
 
 // One readonly SQLite connection per tile read. SQLite handles parallel readers safely.
 enum RasterMBTiles {
+    /// Read actual zoom limits: geographical bounds alone do not imply street-level coverage.
+    static func zoomRange(_ url: URL) -> ClosedRange<Int>? {
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(url.path, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            if db != nil { sqlite3_close(db) }
+            return nil
+        }
+        defer { sqlite3_close(db) }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT MIN(zoom_level), MAX(zoom_level) FROM tiles", -1, &stmt, nil) == SQLITE_OK else { return nil }
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_step(stmt) == SQLITE_ROW,
+              sqlite3_column_type(stmt, 0) != SQLITE_NULL,
+              sqlite3_column_type(stmt, 1) != SQLITE_NULL else { return nil }
+        let lower = Int(sqlite3_column_int(stmt, 0))
+        let upper = Int(sqlite3_column_int(stmt, 1))
+        guard (0...22).contains(lower), (0...22).contains(upper), lower <= upper else { return nil }
+        return lower...upper
+    }
     /// MBTiles bounds are west,south,east,north in WGS84. Missing/invalid metadata is unknown coverage.
     static func covers(_ url: URL, latitude: Double, longitude: Double) -> Bool {
         guard latitude.isFinite, longitude.isFinite, (-90...90).contains(latitude), (-180...180).contains(longitude) else { return false }

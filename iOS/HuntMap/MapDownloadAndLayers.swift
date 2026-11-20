@@ -89,6 +89,35 @@ struct QuickMapDownloadSheet: View {
                     .padding(16)
                     .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
 
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("Карты с моего хостинга", systemImage: "server.rack")
+                            .font(.headline)
+                        TextField("https://site.kz/maps/catalog.json", text: $tiles.staticCatalogURL)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .textFieldStyle(.roundedBorder)
+                        Button("Получить список карт") {
+                            Task { await tiles.loadStaticCatalog() }
+                        }
+                        .disabled(tiles.busy)
+                        ForEach(tiles.staticPacks) { pack in
+                            HStack {
+                                VStack(alignment: .leading) {
+                                    Text(pack.name).font(.subheadline.bold())
+                                    Text("z\(pack.minzoom)–z\(pack.maxzoom) · \(pack.bytes / 1_048_576) МБ")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button("Скачать") { Task { await tiles.installStaticPack(pack) } }
+                                    .disabled(tiles.busy)
+                            }
+                        }
+                        if tiles.busy { ProgressView(value: tiles.progress) }
+                        Text(tiles.message).font(.caption).foregroundStyle(.secondary)
+                    }
+                    .padding(16)
+                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
+
                     VStack(alignment: .leading, spacing: 8) {
                         Label("Мои офлайн-районы", systemImage: "internaldrive").font(.headline)
                         Text("\(osm.regions.count) районов · \(osm.lines.count) объектов OSM")
