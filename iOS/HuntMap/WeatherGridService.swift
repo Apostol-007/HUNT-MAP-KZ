@@ -194,10 +194,15 @@ struct ForecastGrid: Codable {
             status = cached ? "Офлайн · сохранённая погодная карта" : "Нет сохранённой сетки для этого времени и масштаба"
             return
         }
-        let points: [(Double, Double)] = (0..<region.height).flatMap { row in
-            (0..<region.width).map { col in
-                (region.south + (region.north - region.south) * Double(row) / Double(region.height - 1),
-                 region.west + (region.east - region.west) * Double(col) / Double(region.width - 1))
+        var points: [(Double, Double)] = []
+        points.reserveCapacity(region.width * region.height)
+        let latitudeStep = (region.north - region.south) / Double(region.height - 1)
+        let longitudeStep = (region.east - region.west) / Double(region.width - 1)
+        for row in 0..<region.height {
+            let latitude = region.south + Double(row) * latitudeStep
+            for column in 0..<region.width {
+                let longitude = region.west + Double(column) * longitudeStep
+                points.append((latitude, longitude))
             }
         }
         let iso = ISO8601DateFormatter()

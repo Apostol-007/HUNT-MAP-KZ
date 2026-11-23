@@ -805,7 +805,8 @@ struct MainView: View {
             while !Task.isCancelled && recordedRoutePlay,
                   let current = recordedRoute, recordedRoutePreviewIndex < current.points.count - 1 {
                 try? await Task.sleep(nanoseconds: 230_000_000)
-                if Task.isCancelled || !recordedRoutePlay { break }                recordedRoutePreviewIndex += 1
+                if Task.isCancelled || !recordedRoutePlay { break }
+                recordedRoutePreviewIndex += 1
                 if recordedRoutePreviewIndex % 8 == 0 || recordedRoutePreviewIndex == current.points.count - 1 {
                     mapFocus = current.points[recordedRoutePreviewIndex]
                     centerRequest += 1
