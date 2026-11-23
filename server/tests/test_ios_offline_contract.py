@@ -90,3 +90,15 @@ def test_protomaps_catalog_is_editable_and_diagnosed():
     assert "URL(string: raw, relativeTo: catalog)" in store
     assert "protomaps_catalog_address" in ui
     assert "Проверить хостинг и каталог" in ui
+
+
+def test_offline_hybrid_is_file_backed():
+    style = (IOS / "ProtomapsVectorStyle.swift").read_text()
+    mapview = (IOS / "OfflineMapView.swift").read_text()
+    store = (IOS / "ProtomapsOfflineStore.swift").read_text()
+    assert "hybrid: Bool = false" in style
+    assert "if !hybrid {" in style
+    assert "protomaps-offline-hybrid.json" in style
+    assert "hybridOfflineStyleURL" in store
+    assert "protomapsHybridStyleURL" in mapview
+    assert "style.insertLayer(raster, below: vector)" in mapview

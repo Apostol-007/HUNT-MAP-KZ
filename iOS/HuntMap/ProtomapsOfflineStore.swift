@@ -79,6 +79,7 @@ private struct ProtomapsCatalog: Codable { let schema: String; let packs: [Proto
     @Published private(set) var installed: [ProtomapsPack] = []
     @Published private(set) var onlineStyleURL: URL?
     @Published private(set) var offlineStyleURL: URL?
+    @Published private(set) var hybridOfflineStyleURL: URL?
     @Published private(set) var busy = false
     @Published private(set) var progress = 0.0
     @Published private(set) var assetsReady = false
@@ -98,6 +99,7 @@ private struct ProtomapsCatalog: Codable { let schema: String; let packs: [Proto
               let saved = try? JSONDecoder().decode([ProtomapsPack].self, from: data) else { return }
         installed = saved.filter { $0.valid && FileManager.default.fileExists(atPath: file($0).path) }
         offlineStyleURL = ProtomapsVectorStyle.write(installed, folder: folder, local: true)
+        hybridOfflineStyleURL = ProtomapsVectorStyle.write(installed, folder: folder, local: true, hybrid: true)
     }
     func refresh() async {
         guard !busy else { return }
@@ -177,6 +179,7 @@ private struct ProtomapsCatalog: Codable { let schema: String; let packs: [Proto
             try await ProtomapsAssets.download(into: folder)
             assetsReady = ProtomapsAssets.ready(in: folder)
             offlineStyleURL = ProtomapsVectorStyle.write(installed, folder: folder, local: true)
+        hybridOfflineStyleURL = ProtomapsVectorStyle.write(installed, folder: folder, local: true, hybrid: true)
             status = "Protomaps: подписи RU/KZ и значки сохранены для офлайна"
         } catch { status = "Геометрия карты доступна; подписи: \(error.localizedDescription)" }
     }
@@ -242,6 +245,7 @@ private struct ProtomapsCatalog: Codable { let schema: String; let packs: [Proto
                 installed.append(item)
                 try JSONEncoder().encode(installed).write(to: registry, options: .atomic)
                 offlineStyleURL = ProtomapsVectorStyle.write(installed, folder: folder, local: true)
+        hybridOfflineStyleURL = ProtomapsVectorStyle.write(installed, folder: folder, local: true, hybrid: true)
                 status = "Protomaps: установлено \(installed.count) регионов"
             } catch { status = "Ошибка \(item.name): \(error.localizedDescription)" }
         }
@@ -254,6 +258,7 @@ private struct ProtomapsCatalog: Codable { let schema: String; let packs: [Proto
             installed.removeAll { $0.id == item.id }
             try JSONEncoder().encode(installed).write(to: registry, options: .atomic)
             offlineStyleURL = ProtomapsVectorStyle.write(installed, folder: folder, local: true)
+        hybridOfflineStyleURL = ProtomapsVectorStyle.write(installed, folder: folder, local: true, hybrid: true)
             status = "Удалено: \(item.name)"
         } catch { status = error.localizedDescription }
     }

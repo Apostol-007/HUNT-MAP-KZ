@@ -23,6 +23,7 @@ struct OfflineMapView: UIViewRepresentable {
     var nativeOfflineStyleURL: URL? = nil
     var protomapsOnlineStyleURL: URL? = nil
     var protomapsOfflineStyleURL: URL? = nil
+    var protomapsHybridStyleURL: URL? = nil
     let online: Bool
     @Binding var selectedZone: GeoZone?
     let weatherGrid: ForecastGrid?
@@ -42,7 +43,7 @@ struct OfflineMapView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> MLNMapView {
         let styleURL = online ? (mapStyle == MapBasemap.protomaps.rawValue ? (protomapsOnlineStyleURL ?? selectedStyle) : selectedStyle)
-                              : (protomapsOfflineStyleURL ?? nativeOfflineStyleURL ?? OfflineMapStyle.url)
+                              : (mapStyle == MapBasemap.hybrid.rawValue && !tileFiles.isEmpty ? (protomapsHybridStyleURL ?? protomapsOfflineStyleURL ?? nativeOfflineStyleURL ?? OfflineMapStyle.url) : (protomapsOfflineStyleURL ?? nativeOfflineStyleURL ?? OfflineMapStyle.url))
         let view = MLNMapView(frame: .zero, styleURL: styleURL)
         view.delegate = context.coordinator
         context.coordinator.zones = zones
@@ -54,6 +55,7 @@ struct OfflineMapView: UIViewRepresentable {
         context.coordinator.onGridTap = onGridTap
         context.coordinator.onViewportChanged = onViewportChanged
         context.coordinator.isOffline = !online
+        context.coordinator.hybridOffline = !online && mapStyle == MapBasemap.hybrid.rawValue
         context.coordinator.routingGeneration = routingGeneration
         let longPress = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleLongPress(_:)))
         longPress.minimumPressDuration = 0.55
@@ -84,7 +86,7 @@ struct OfflineMapView: UIViewRepresentable {
     func updateUIView(_ view: MLNMapView, context: Context) {
         let requestedOnline = online
         let targetStyle = requestedOnline ? (mapStyle == MapBasemap.protomaps.rawValue ? (protomapsOnlineStyleURL ?? selectedStyle) : selectedStyle)
-                                          : (protomapsOfflineStyleURL ?? nativeOfflineStyleURL ?? OfflineMapStyle.url)
+                                          : (mapStyle == MapBasemap.hybrid.rawValue && !tileFiles.isEmpty ? (protomapsHybridStyleURL ?? protomapsOfflineStyleURL ?? nativeOfflineStyleURL ?? OfflineMapStyle.url) : (protomapsOfflineStyleURL ?? nativeOfflineStyleURL ?? OfflineMapStyle.url))
         if view.styleURL != targetStyle {
             view.styleURL = targetStyle
         }
@@ -102,6 +104,11 @@ struct OfflineMapView: UIViewRepresentable {
         let needsRoadRefresh = context.coordinator.isOffline != !online ||
                                context.coordinator.routingGeneration != routingGeneration
         context.coordinator.isOffline = !online
+        let nextHybrid = !online && mapStyle == MapBasemap.hybrid.rawValue
+        if context.coordinator.hybridOffline != nextHybrid {
+            context.coordinator.hybridOffline = nextHybrid
+            context.coordinator.invalidateRasterLayout()
+        }
         context.coordinator.routingGeneration = routingGeneration
         if needsRoadRefresh {
             DispatchQueue.main.async { [weak coordinator = context.coordinator, weak view] in
@@ -145,6 +152,8 @@ struct OfflineMapView: UIViewRepresentable {
         var onGridTap: (String) -> Void = { _ in }
         var onViewportChanged: ([Double]) -> Void = { _ in }
         var isOffline = false
+        var hybridOffline = false
+        func invalidateRasterLayout() { lastRevision = -1 }
         var routingGeneration = 0
         private var gridAnnotations: [MLNShape] = []
         private var markerAnnotations: [ObjectIdentifier: UUID] = [:]
@@ -271,10 +280,9 @@ struct OfflineMapView: UIViewRepresentable {
                 if let layer = style.layer(withIdentifier: id) { style.removeLayer(layer) }
                 if let source = style.source(withIdentifier: id) { style.removeSource(source) }
             }
-            // Protomaps is the complete basemap. Do not lay legacy opaque raster
-            // MBTiles over its vector roads, trails, woods and water.
-            // Previously imported MBTiles remain the fallback when no PMTiles exist.
-            if style.source(withIdentifier: "protomaps_0") != nil { return }
+            // Hybrid only: use local MBTiles below Protomaps road/trail labels.
+            let hasProtomaps = style.source(withIdentifier: "protomaps_0") != nil
+            if hasProtomaps && !hybridOffline { return }
             // Raster MBTiles are served by the existing loopback-only tile service.
             // MapLibre cannot open arbitrary mbtiles:// files using a generic HTTP source.
             let server = LocalMBTilesServer.shared
@@ -285,7 +293,13 @@ struct OfflineMapView: UIViewRepresentable {
                 let id = "hunt-raster-\(index)"
                 let source = MLNRasterTileSource(identifier: id, tileURLTemplates: [template])
                 style.addSource(source)
-                style.addLayer(MLNRasterStyleLayer(identifier: id, source: source))
+                let raster = MLNRasterStyleLayer(identifier: id, source: source)
+                if hasProtomaps && hybridOffline,
+                   let vector = style.layer(withIdentifier: "highways_0") {
+                    style.insertLayer(raster, below: vector)
+                } else {
+                    style.addLayer(raster)
+                }
             }
         }
 

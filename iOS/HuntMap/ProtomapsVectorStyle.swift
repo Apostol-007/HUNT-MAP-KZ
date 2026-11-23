@@ -4,7 +4,7 @@ import Foundation
 /// This independent visual style has no network glyph dependencies. Offline name labels
 /// require separately packaged fontstack glyphs, not implemented in this minimal style.
 enum ProtomapsVectorStyle {
-    static func write(_ regions: [ProtomapsPack], folder: URL, local: Bool) -> URL? {
+    static func write(_ regions: [ProtomapsPack], folder: URL, local: Bool, hybrid: Bool = false) -> URL? {
         guard !regions.isEmpty else { return nil }
         var sources: [String: Any] = [:]
         var layers: [[String: Any]] = [
@@ -32,12 +32,14 @@ enum ProtomapsVectorStyle {
             let address = local ? archive.absoluteString : item.url
             sources[id] = ["type":"vector","url":"pmtiles://\(address)",
                            "attribution":"© OpenStreetMap contributors · Protomaps"]
+            if !hybrid {
             fill("grass_\(index)",id,"landcover","#a6c99a",
                  ["in","kind","forest","grassland","scrub"])
             fill("parks_\(index)",id,"landuse","#8fbc86",
                  ["in","kind","forest","wood","park","grass","meadow"])
             fill("water_\(index)",id,"water","#7eafd1")
             fill("buildings_\(index)",id,"buildings","#c7c5b9")
+            }
             line("highways_\(index)",id,"roads","#e1ab68",
                  ["interpolate",["linear"],["zoom"],5,0.6,15,4.0],
                  ["in","kind","highway","major_road","minor_road"])
@@ -77,7 +79,7 @@ enum ProtomapsVectorStyle {
                 "https://protomaps.github.io/basemaps-assets/sprites/v4/light"
         }
         guard let data = try? JSONSerialization.data(withJSONObject:style,options:[.sortedKeys]) else { return nil }
-        let url = folder.appendingPathComponent(local ? "protomaps-offline-style.json" : "protomaps-online-style.json")
+        let url = folder.appendingPathComponent(local ? (hybrid ? "protomaps-offline-hybrid.json" : "protomaps-offline-style.json") : "protomaps-online-style.json")
         do { try data.write(to:url,options:.atomic); return url }
         catch { return nil }
     }

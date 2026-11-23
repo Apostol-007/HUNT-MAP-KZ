@@ -352,6 +352,7 @@ struct MainView: View {
                            nativeOfflineStyleURL: nativePacks.styleURL,
                            protomapsOnlineStyleURL: protomaps.onlineStyleURL,
                            protomapsOfflineStyleURL: protomaps.offlineStyleURL,
+                           protomapsHybridStyleURL: protomaps.hybridOfflineStyleURL,
                            online: online, selectedZone: $zone,
                            weatherGrid: weatherLayer == .none ? nil : weatherGrid.grid,
                            weatherLayer: weatherLayer,
@@ -796,6 +797,13 @@ struct MainView: View {
                     Text("MBTiles отображаются как подложка, а сохранённые дорожные GeoJSON как линии поверх неё. Без MBTiles офлайн-дороги видны на тёмном фоне, но изображения местности нет.")
                         .font(.caption2).foregroundStyle(HuntReference.muted)
 
+                    if !online && mapStyle == MapBasemap.hybrid.rawValue {
+                        Text(maps.installed.isEmpty
+                             ? "Гибрид без интернета требует предварительно скачанных спутниковых MBTiles."
+                             : "Гибрид офлайн: только локальные MBTiles и Protomaps; проверьте, что MBTiles — спутниковые снимки.")
+                            .font(.caption)
+                            .foregroundStyle(maps.installed.isEmpty ? Color.orange : HuntReference.muted)
+                    }
                     Text("Дополнительные слои").font(.headline).foregroundStyle(.white)
                     ReferenceLayerRow(symbol: "map", title: "Охотугодья",
                                       detail: "Проверенные и импортированные границы", enabled: $showGrounds)
