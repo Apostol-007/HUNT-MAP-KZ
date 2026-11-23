@@ -214,6 +214,8 @@ def test_weather_uses_lightweight_overlay_without_maplibre_shape_flood():
     assert 'fieldOverlay?.configure(grid: weatherGrid, layer: weatherLayer)' in map_view
     assert 'WeatherGeometry.shade(' not in map_view
     assert 'WeatherGeometry.windArrow(' not in map_view
-    assert 'for subY in 0..<2' in overlay
+    assert 'let pixelStep: CGFloat = 20' in overlay
+    assert 'context.fill(tile)' in overlay
+    assert 'mapView.convert(screenPoint, toCoordinateFrom: self)' in overlay
     assert 'private let particleCount = 85' in wind
     assert 'link.preferredFramesPerSecond = 15' in wind
