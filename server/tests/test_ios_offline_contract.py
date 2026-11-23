@@ -204,3 +204,16 @@ def test_weather_grid_hourly_query_has_no_conflicting_forecast_days():
     # Open-Meteo rejects forecast_days together with an explicit hour window (HTTP 400).
     assert 'URLQueryItem(name: "forecast_days"' not in source
     assert 'http.statusCode != 200' in source
+
+
+def test_weather_uses_lightweight_overlay_without_maplibre_shape_flood():
+    map_view = (IOS / "OfflineMapView.swift").read_text()
+    overlay = (IOS / "WeatherFieldOverlay.swift").read_text()
+    wind = (IOS / "WindParticlesOverlay.swift").read_text()
+    assert 'WeatherFieldOverlay(mapView: view)' in map_view
+    assert 'fieldOverlay?.configure(grid: weatherGrid, layer: weatherLayer)' in map_view
+    assert 'WeatherGeometry.shade(' not in map_view
+    assert 'WeatherGeometry.windArrow(' not in map_view
+    assert 'for subY in 0..<2' in overlay
+    assert 'private let particleCount = 85' in wind
+    assert 'link.preferredFramesPerSecond = 15' in wind
