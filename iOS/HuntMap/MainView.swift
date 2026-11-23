@@ -765,6 +765,30 @@ struct MainView: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(.white)
 
+                    Button {
+                        mapStyle = MapBasemap.hybrid.rawValue
+                        online = false
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "square.3.layers.3d").frame(width: 25)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Гибрид · полностью офлайн").font(.subheadline.bold())
+                                Text("Спутниковые MBTiles + дороги/тропы Protomaps")
+                                    .font(.caption2).foregroundStyle(HuntReference.muted)
+                            }
+                            Spacer()
+                            if !online && mapStyle == MapBasemap.hybrid.rawValue {
+                                Image(systemName: "checkmark.circle.fill").foregroundStyle(HuntReference.green)
+                            }
+                        }
+                        .padding(12)
+                        .background(HuntReference.green.opacity(!online && mapStyle == MapBasemap.hybrid.rawValue ? 0.15 : 0.05),
+                                    in: RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white)
+                    .disabled(protomaps.installed.isEmpty || maps.installed.isEmpty)
+
                     ForEach(MapBasemap.allCases) { basemap in
                         let available = basemap.isAvailable(apiKey: MapTilerConfiguration.apiKey)
                         Button {

@@ -102,3 +102,11 @@ def test_offline_hybrid_is_file_backed():
     assert "hybridOfflineStyleURL" in store
     assert "protomapsHybridStyleURL" in mapview
     assert "style.insertLayer(raster, below: vector)" in mapview
+
+
+def test_offline_style_cannot_fallback_to_remote_native_pack():
+    mapview = (IOS / "OfflineMapView.swift").read_text()
+    ui = (IOS / "MainView.swift").read_text()
+    assert "nativeOfflineStyleURL ?? OfflineMapStyle.url" not in mapview
+    assert "Гибрид · полностью офлайн" in ui
+    assert ".disabled(protomaps.installed.isEmpty || maps.installed.isEmpty)" in ui

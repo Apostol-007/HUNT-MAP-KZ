@@ -43,7 +43,7 @@ struct OfflineMapView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> MLNMapView {
         let styleURL = online ? (mapStyle == MapBasemap.protomaps.rawValue ? (protomapsOnlineStyleURL ?? selectedStyle) : selectedStyle)
-                              : (mapStyle == MapBasemap.hybrid.rawValue && !tileFiles.isEmpty ? (protomapsHybridStyleURL ?? protomapsOfflineStyleURL ?? nativeOfflineStyleURL ?? OfflineMapStyle.url) : (protomapsOfflineStyleURL ?? nativeOfflineStyleURL ?? OfflineMapStyle.url))
+                              : (mapStyle == MapBasemap.hybrid.rawValue && !tileFiles.isEmpty ? (protomapsHybridStyleURL ?? protomapsOfflineStyleURL ?? OfflineMapStyle.url) : (protomapsOfflineStyleURL ?? OfflineMapStyle.url))
         let view = MLNMapView(frame: .zero, styleURL: styleURL)
         view.delegate = context.coordinator
         context.coordinator.zones = zones
@@ -86,7 +86,7 @@ struct OfflineMapView: UIViewRepresentable {
     func updateUIView(_ view: MLNMapView, context: Context) {
         let requestedOnline = online
         let targetStyle = requestedOnline ? (mapStyle == MapBasemap.protomaps.rawValue ? (protomapsOnlineStyleURL ?? selectedStyle) : selectedStyle)
-                                          : (mapStyle == MapBasemap.hybrid.rawValue && !tileFiles.isEmpty ? (protomapsHybridStyleURL ?? protomapsOfflineStyleURL ?? nativeOfflineStyleURL ?? OfflineMapStyle.url) : (protomapsOfflineStyleURL ?? nativeOfflineStyleURL ?? OfflineMapStyle.url))
+                                          : (mapStyle == MapBasemap.hybrid.rawValue && !tileFiles.isEmpty ? (protomapsHybridStyleURL ?? protomapsOfflineStyleURL ?? OfflineMapStyle.url) : (protomapsOfflineStyleURL ?? OfflineMapStyle.url))
         if view.styleURL != targetStyle {
             view.styleURL = targetStyle
         }
