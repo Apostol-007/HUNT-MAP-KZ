@@ -12,7 +12,7 @@ struct MainView: View {
 
     @AppStorage("hunt.onlineBasemap") private var online = true
     @AppStorage("hunt.map.style") private var mapStyle = MapBasemap.bright.rawValue
-    @AppStorage("hunt.map.maptilerKey") private var mapTilerKey = ""
+    private var hasMapTilerKey: Bool { MapTilerConfiguration.isConfigured }
 
     @State private var tab: Tab = .home
     @State private var dataSection: DataSection = .routes
@@ -309,7 +309,7 @@ struct MainView: View {
                     Text("Подложка карты").font(.title3.bold())
                     ForEach(MapBasemap.allCases) { style in
                         Button {
-                            if style == .satellite && mapTilerKey.isEmpty { return }
+                            if style == .satellite && !hasMapTilerKey { return }
                             mapStyle = style.rawValue
                             online = true
                         } label: {
@@ -321,7 +321,7 @@ struct MainView: View {
                                     .background(FBTheme.green.opacity(0.13), in: RoundedRectangle(cornerRadius: 14))
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text(style.name).font(.subheadline.bold()).foregroundStyle(.white)
-                                    if style == .satellite && mapTilerKey.isEmpty {
+                                    if style == .satellite && !hasMapTilerKey {
                                         Text("Нужен ключ MapTiler").font(.caption).foregroundStyle(FBTheme.warning)
                                     }
                                 }
@@ -336,15 +336,14 @@ struct MainView: View {
                     }
                     Toggle("Онлайн-карта", isOn: $online).tint(FBTheme.green).fbCard()
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("MapTiler API-ключ").font(.headline)
-                        SecureField("Введите ключ для спутника и других карт", text: $mapTilerKey)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .padding(12)
-                            .background(FBTheme.panel2, in: RoundedRectangle(cornerRadius: 13))
-                        Text("Без ключа доступны стили OpenFreeMap. Офлайн-карты подключаются только из установленных пакетов. Русские подписи включаются при наличии name:ru.")
+                        Label(hasMapTilerKey ? "MapTiler подключён" : "MapTiler не настроен", systemImage: hasMapTilerKey ? "checkmark.shield.fill" : "info.circle")
+                            .foregroundStyle(hasMapTilerKey ? FBTheme.green : FBTheme.warning)
+                            .font(.headline)
+                        Text(hasMapTilerKey ? "Ключ карты уже встроен в сборку приложения. Вводить его не нужно." : "Ключ задаётся при сборке GitHub Actions. Пока доступны открытые стили OpenFreeMap.")
                             .font(.caption).foregroundStyle(FBTheme.textSecondary)
-                        Text("Данные © OpenStreetMap contributors. Для MapTiler действуют условия его лицензии.")
+                        Text("Офлайн-пакеты не зависят от ключа. Русские подписи доступны там, где исходные данные содержат name:ru.")
+                            .font(.caption).foregroundStyle(FBTheme.textSecondary)
+                        Text("Данные © OpenStreetMap contributors. Использование карт MapTiler регулируется условиями поставщика.")
                             .font(.caption2).foregroundStyle(FBTheme.textSecondary)
                     }.fbCard()
                     Button { showWeatherLayers = true } label: {

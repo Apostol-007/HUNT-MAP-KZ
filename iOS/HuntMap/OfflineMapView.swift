@@ -6,9 +6,8 @@ import HuntCore
 /// No HTTP style, glyph, sprite or tile endpoint is configured by this view.
 struct OfflineMapView: UIViewRepresentable {
     @AppStorage("hunt.map.style") private var mapStyle = MapBasemap.bright.rawValue
-    @AppStorage("hunt.map.maptilerKey") private var mapTilerKey = ""
     private var selectedStyle: URL {
-        (MapBasemap(rawValue: mapStyle) ?? .bright).styleURL(apiKey: mapTilerKey) ?? MapBasemap.bright.styleURL(apiKey: "")!
+        (MapBasemap(rawValue: mapStyle) ?? .bright).styleURL(apiKey: MapTilerConfiguration.apiKey) ?? MapBasemap.bright.styleURL(apiKey: "")!
     }
 
     let zones: [GeoZone]

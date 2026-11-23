@@ -1,45 +1,25 @@
-# HUNT MAP KZ v3.0 — ПАТЧ ТОЛЬКО ИЗМЕНЁННЫХ ФАЙЛОВ
+# HUNT MAP KZ v3.1 — встроенный MapTiler ключ (без ручного ввода)
 
-Базовая версия: **v2.5 FREEDOMBANK UI GITHUB**.
+**Базовая версия:** v3.0, установленная в GitHub. ZIP содержит только изменённые и новые файлы. Сохраняйте пути при замене.
 
-## Установка
+## Один раз в GitHub
 
-1. Не загружайте весь старый архив заново.
-2. Перенесите файлы из этого ZIP в корень существующего репозитория, сохраняя каталоги `iOS`, `server`, `scripts`.
-3. При загрузке через браузер GitHub проверяйте пути: нельзя складывать все `.swift` в корень.
-4. Запустите Actions → `HUNT MAP KZ - unsigned iOS IPA`.
-5. Запуск на iPhone, отсутствие чёрных полей и спутниковый режим требуют проверки на реальном устройстве.
+1. Откройте свой репозиторий GitHub → Settings → Secrets and variables → Actions.
+2. Нажмите **New repository secret**.
+3. Название: `MAPTILER_API_KEY`.
+4. Значение: **актуальный MapTiler API Key** (не загружайте ключ в репозиторий и не публикуйте в чат).
+5. Запустите Actions → **HUNT MAP KZ - unsigned iOS IPA** → Run workflow.
 
-## Что изменено
+Workflow встраивает ключ в Info.plist на этапе Xcode. Поле ручного ввода удалено. Ключ начинает работать в новой IPA автоматически.
 
-- Полностью новый UI с разделами Главная / Карта / Данные / Сервисы / Ещё.
-- Полноэкранный MapLibre; экземпляр карты сохраняется при переключении разделов.
-- Новая палитра Freedom Bank (чёрный / графит / зелёный).
-- Новая картография: другой базовый стиль OpenFreeMap Bright, выбор дополнительных стилей, MapTiler с пользовательским API-ключом и спутниковым видом.
-- Сохранены GPS, запись треков, маркеры, каталоги, импорт GeoJSON/MBTiles и диагностика.
-- Старый сложный UI перенесён в LegacyMainView как расширенные инструменты; не удаляйте его.
+**Важно:** ключ MapTiler в IPA можно извлечь, поэтому это не секрет в криптографическом смысле. Создайте отдельный ключ для приложения, ограничьте User-Agent, если подтверждён на реальных запросах, задайте квоты и отслеживайте использование. Если API key ранее публиковался в ссылке/чате, перевыпустите его.
 
-**Ограничение:** без собственного ключа MapTiler спутниковая карта недоступна. Не скачивайте публичные тайлы массово для офлайна. Русские подписи зависят от наличия name:ru у поставщика.
+## Что менялось
+- `iOS/HuntMap/MapTilerConfiguration.swift` — **новый**, читает ключ из Info.plist.
+- `iOS/HuntMap/OfflineMapView.swift` — получает ключ без AppStorage/ручного ввода.
+- `iOS/HuntMap/MainView.swift` — нет поля SecureField для API key, отображается статус подключения.
+- `iOS/project.yml` — Info.plist build setting, версия 3.1.0.
+- `.github/workflows/ios-unsigned-ipa.yml` — build-time ключ и проверка Info.plist, без печати значения.
 
-## Реальные проверки
-
-- Синтаксис Swift-файлов: `swiftc -frontend -parse` — прошёл.
-- Swift Core: `swift test --package-path Core` — прошёл.
-- FastAPI: `pytest server/tests` — 34 теста пройдены.
-- Статическая проверка структуры UI: пройдена.
-- **Полный билд iOS в Xcode и работа на физическом iPhone не проверены.**
-
-## Изменённые/новые файлы
-
-- `iOS/HuntMap/LegacyMainView.swift`
-- `iOS/HuntMap/MainView.swift`
-- `iOS/HuntMap/MapSources.swift`
-- `iOS/HuntMap/OfflineMapView.swift`
-- `iOS/project.yml`
-- `scripts/check_ui_structure.py`
-- `scripts/verify_iphone_layout.py`
-- `server/tests/test_ios_offline_contract.py`
-
-## Файлы на удаление
-
-Нет.
+## Проверки и ограничения
+Локальные тесты HuntCore/API не компилируют iOS target. Полную сборку MapLibre + SwiftUI и факт получения MapTiler-карт должен подтвердить GitHub Actions и тест на iPhone.
