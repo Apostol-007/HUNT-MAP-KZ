@@ -149,3 +149,13 @@ def test_valhalla_download_and_windows_builder_contract():
     assert "ghcr.io/valhalla/valhalla-scripted:latest" in builder
     assert "serve_tiles=False" in builder
     assert "valhalla_tiles.tar" in builder
+
+
+def test_recorded_route_guidance_handles_foreground_and_background_gps():
+    model = (IOS / "FieldModel.swift").read_text()
+    ui = (IOS / "MainView.swift").read_text()
+    assert "startRecordedRouteGuidance" in model
+    assert "stopRecordedRouteGuidance" in model
+    assert "manager.authorizationStatus == .authorizedAlways" in model
+    assert "model.startRecordedRouteGuidance()" in ui
+    assert "model.stopRecordedRouteGuidance()" in ui

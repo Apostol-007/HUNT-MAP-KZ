@@ -40,6 +40,7 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
     @Published var tracks: [Track] = []
     @Published var currentTrack: Track?
     @Published var recording = false
+    @Published private(set) var navigatingRecordedTrack = false
     @Published var paused = false
     @Published var status = "GPS не запущен"
     @Published var lastWarning = "Границы не загружены"
@@ -74,6 +75,25 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         else if manager.authorizationStatus == .notDetermined { manager.requestWhenInUseAuthorization() }
         else { status = manager.authorizationStatus == .authorizedAlways ? "Фоновый GPS разрешён" : "Проверьте доступ к геолокации в настройках" }
     }
+    func startRecordedRouteGuidance() {
+        navigatingRecordedTrack = true
+        requestGPS()
+        if manager.authorizationStatus == .authorizedAlways {
+            manager.allowsBackgroundLocationUpdates = true
+            manager.pausesLocationUpdatesAutomatically = false
+        } else {
+            status = "Ведение по маршруту: GPS на экране. Для фонового режима разрешите доступ «Всегда»."
+        }
+    }
+
+    func stopRecordedRouteGuidance() {
+        navigatingRecordedTrack = false
+        if !recording {
+            manager.allowsBackgroundLocationUpdates = false
+            manager.pausesLocationUpdatesAutomatically = true
+        }
+    }
+
     func startTrack() {
         guard !recording else {return}
         guard CLLocationManager.locationServicesEnabled() else {
@@ -110,8 +130,8 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         if let track=currentTrack, !track.fixes.isEmpty {tracks.insert(track,at:0)}
         currentTrack=nil;recording=false;paused=false
         lastFix=nil
-        if manager.allowsBackgroundLocationUpdates { manager.allowsBackgroundLocationUpdates=false }
-        manager.pausesLocationUpdatesAutomatically=true
+        if manager.allowsBackgroundLocationUpdates && !navigatingRecordedTrack { manager.allowsBackgroundLocationUpdates=false }
+        manager.pausesLocationUpdatesAutomatically = !navigatingRecordedTrack
         persist()
     }
     func addMarker(kind:String="Точка") {
@@ -190,7 +210,13 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
     }
     func locationManager(_ manager:CLLocationManager,didFailWithError error:Error) {status="Ошибка GPS: \(error.localizedDescription)"; lastError = status}
     func locationManagerDidChangeAuthorization(_ manager:CLLocationManager) {
-        if manager.authorizationStatus == .authorizedAlways || manager.authorizationStatus == .authorizedWhenInUse {manager.startUpdatingLocation()}
+        if manager.authorizationStatus == .authorizedAlways || manager.authorizationStatus == .authorizedWhenInUse {
+            if manager.authorizationStatus == .authorizedAlways && navigatingRecordedTrack {
+                manager.allowsBackgroundLocationUpdates = true
+                manager.pausesLocationUpdatesAutomatically = false
+            }
+            manager.startUpdatingLocation()
+        }
         gpsAuthorization = String(describing: manager.authorizationStatus.rawValue)
         if manager.authorizationStatus == .denied {status="Нет разрешения геолокации"; lastError=status}
     }

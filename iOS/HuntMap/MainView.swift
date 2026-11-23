@@ -125,6 +125,7 @@ struct MainView: View {
                 if recordedRouteProgress >= route.points.count - 1 &&
                    p.deviation < max(25, model.accuracy ?? 25) {
                     recordedRouteFollowing = false
+                    model.stopRecordedRouteGuidance()
                     navigationKind = "Маршрут завершён"
                 }
             }
@@ -711,10 +712,11 @@ struct MainView: View {
         tab = .map
         mapFocus = route.points[0]
         centerRequest += 1
-        if follow { model.requestGPS() }
+        if follow { model.startRecordedRouteGuidance() }
     }
 
     private func stopRecordedTrack() {
+        model.stopRecordedRouteGuidance()
         playbackTask?.cancel()
         playbackTask = nil
         recordedRoutePlay = false
@@ -785,7 +787,7 @@ struct MainView: View {
                             playbackTask?.cancel()
                             recordedRouteFollowing = true
                             recordedRouteProgress = 0
-                            model.requestGPS()
+                            model.startRecordedRouteGuidance()
                             navigationKind = "Повторное прохождение · \(route.direction.rawValue)"
                         }.accessibilityIdentifier("recorded_track_follow")
                     }
