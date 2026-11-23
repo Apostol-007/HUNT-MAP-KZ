@@ -85,34 +85,55 @@ struct ForecastGrid: Decodable {
         return date < Date().addingTimeInterval(-3600)
     }
     private var task: Task<Void, Never>?
-    private let cacheURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("hunt_weather_grid.json")
+    private let cacheDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("HuntWeatherGrids", isDirectory: true)
+    private func cachePath(latitude: Double, longitude: Double, target: Date) -> URL {
+        let latitudeBucket = Int((latitude * 10).rounded())
+        let longitudeBucket = Int((longitude * 10).rounded())
+        let hour = Int(target.timeIntervalSince1970 / 3600)
+        return cacheDirectory.appendingPathComponent("grid_\(latitudeBucket)_\(longitudeBucket)_\(hour).json")
+    }
+    private func cachedGrid(latitude: Double, longitude: Double, target: Date) -> ForecastGrid? {
+        let file = cachePath(latitude: latitude, longitude: longitude, target: target)
+        guard let data = try? Data(contentsOf: file),
+              let decoded = try? JSONDecoder().decode(ForecastGrid.self, from: data), decoded.validated(),
+              let time = decoded.forecastDate, abs(time.timeIntervalSince(target)) < 60,
+              abs((decoded.bounds.west + decoded.bounds.east) / 2 - longitude) < 0.06,
+              abs((decoded.bounds.south + decoded.bounds.north) / 2 - latitude) < 0.06 else { return nil }
+        return decoded
+    }
     init() {
-        if let data = try? Data(contentsOf: cacheURL),
-           let value = try? JSONDecoder().decode(ForecastGrid.self, from: data), value.validated() {
-            grid = value
-            cached = true
-            status = "Сохранённая сетка прогноза: \(value.forecastTimeUTC) · проверьте актуальность"
-        }
+        try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
     }
     func stop() { task?.cancel(); loading = false }
     func clear() { stop(); grid = nil; cached = false; status = "Погодная карта выключена" }
     func load(server: String, latitude: Double, longitude: Double, hourOffset: Int, strictOffline: Bool) {
         stop()
+        guard latitude.isFinite, longitude.isFinite, (-89...89).contains(latitude), (-179...179).contains(longitude),
+              (0...167).contains(hourOffset) else { status = "Некорректные координаты или час прогноза"; return }
         chosenOffset = hourOffset
+        let baseHour = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970 / 3600) * 3600)
+        let utcHour = baseHour.addingTimeInterval(Double(hourOffset) * 3600)
+        // Never reuse a forecast for a different hour or a different map location.
+        if let stored = cachedGrid(latitude: latitude, longitude: longitude, target: utcHour) {
+            grid = stored
+            cached = true
+            status = "Кэш · \(stored.forecastTimeUTC)"
+        } else {
+            grid = nil
+            cached = false
+        }
         guard !strictOffline else {
-            status = grid == nil ? "Офлайн: сохранённой сетки нет" : "Офлайн: сохранённая сетка, не текущая погода"
+            status = grid == nil ? "Офлайн: для выбранного часа нет данных" : "Офлайн: сохранённый прогноз · проверьте актуальность"
             return
         }
-        guard latitude.isFinite, longitude.isFinite, (-89...89).contains(latitude), (-179...179).contains(longitude),
-              (0...48).contains(hourOffset) else { status = "Некорректные координаты или час прогноза"; return }
-        guard let base = URL(string: server), base.scheme == "https", base.host != nil, base.user == nil, base.password == nil else {
-            status = "Укажи HTTPS-адрес своего сервера погоды"; return
+        guard let base = URL(string: server), base.scheme == "https", base.host != nil,
+              base.user == nil, base.password == nil else {
+            status = grid == nil ? "Укажи HTTPS-адрес своего сервера погоды" : "Показан локальный кэш"
+            return
         }
-        // The backend enforces bbox <= 3 degrees, 3x3 sampling and upstream quotas.
         let halfSize = 0.45
         let url = base.appendingPathComponent("v1/weather/grid")
-        let utcHour = Calendar(identifier: .gregorian).date(byAdding: .hour, value: hourOffset,
-            to: Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970 / 3600) * 3600)) ?? Date()
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         var components = URLComponents(url: url, resolvingAgainstBaseURL: false)!
@@ -140,8 +161,8 @@ struct ForecastGrid: Decodable {
                 guard !Task.isCancelled else { return }
                 self.grid = decoded
                 self.cached = false
-                self.status = "Модельный прогноз Open-Meteo · \(decoded.forecastTimeUTC) (не радар)"
-                try? data.write(to: self.cacheURL, options: .atomic)
+                self.status = "Модельный прогноз · \(decoded.forecastTimeUTC)"
+                try? data.write(to: self.cachePath(latitude: latitude, longitude: longitude, target: utcHour), options: .atomic)
             } catch {
                 guard !Task.isCancelled else { return }
                 self.cached = self.grid != nil
@@ -149,4 +170,5 @@ struct ForecastGrid: Decodable {
             }
         }
     }
+
 }

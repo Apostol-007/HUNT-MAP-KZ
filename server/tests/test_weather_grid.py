@@ -63,3 +63,16 @@ def test_four_by_four_weather_nodes_preserve_order_and_units():
     assert value['points'][15]['longitude'] == 77.0
     assert value['units']['precipitation'] == 'mm/hour'
     assert value['units']['wind_speed_10m'] == 'km/h'
+
+
+def test_seven_day_forecast_request_is_supported():
+    now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    target = now + timedelta(days=6, hours=12)
+    validate_request(76, 43, 77, 44, 4, target)
+    hour = target.strftime('%Y-%m-%dT%H:00')
+    def sample(url):
+        assert 'forecast_days=8' in url
+        row = {"hourly": {"time": [hour], **{v: [3.0] for v in VARIABLES}}}
+        return json.dumps([row] * 4).encode()
+    result = sample_grid(76, 43, 77, 44, 2, target, fetcher=sample)
+    assert result['forecast_time_utc'] == hour + ':00Z'

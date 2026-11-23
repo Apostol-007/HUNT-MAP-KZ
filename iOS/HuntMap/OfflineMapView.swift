@@ -69,6 +69,8 @@ struct OfflineMapView: UIViewRepresentable {
         tap.delegate = context.coordinator
         view.addGestureRecognizer(tap)
         context.coordinator.map = view
+        context.coordinator.windOverlay = WindParticlesOverlay(mapView: view)
+        context.coordinator.windOverlay?.configure(grid: weatherGrid, enabled: weatherLayer == .wind)
         context.coordinator.tilesReadyObserver = NotificationCenter.default.addObserver(
             forName: .huntMBTilesReady, object: nil, queue: .main
         ) { [weak coordinator = context.coordinator, weak view] _ in
@@ -118,6 +120,7 @@ struct OfflineMapView: UIViewRepresentable {
         }
         if changedGrid { context.coordinator.renderGrid(in: view) }
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
+        context.coordinator.windOverlay?.configure(grid: weatherGrid, enabled: weatherLayer == .wind)
         // Diagnostic-only window geometry check. Read after UIKit finishes layout.
         DispatchQueue.main.async { [weak view] in
             guard let view, let window = view.window else { return }
@@ -144,6 +147,7 @@ struct OfflineMapView: UIViewRepresentable {
             if let tilesReadyObserver { NotificationCenter.default.removeObserver(tilesReadyObserver) }
         }
         weak var map: MLNMapView?
+        var windOverlay: WindParticlesOverlay?
         var zones: [GeoZone] = []
         var onMapTap: (GeoPoint) -> Void = { _ in }
         var onMarkerTap: (UUID) -> Void = { _ in }

@@ -7,6 +7,8 @@ struct WeatherPanel: View {
     let online: Bool
     @Environment(\.dismiss) private var dismiss
     @State private var hourIndex = 0
+    @State private var mode = 0
+    @State private var selectedDay = 0
     @State private var section: WeatherSection = .wind
     @AppStorage("hunt.weather.pressureMMHG") private var pressureMMHG = false
     @AppStorage("hunt.weather.windMS") private var windMS = false
@@ -40,6 +42,43 @@ struct WeatherPanel: View {
                             }
                         }
                         if !forecast.hourly.isEmpty {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Picker("Период", selection: $mode) {
+                                    Text("По часам").tag(0)
+                                    Text("По дням").tag(1)
+                                    Text("Неделя").tag(2)
+                                }.pickerStyle(.segmented)
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 7) {
+                                        ForEach(0..<7, id: \.self) { day in
+                                            let first = forecast.hourly.first!.timestamp
+                                            let dayDate = Calendar.current.date(byAdding: .day, value: day, to: Calendar.current.startOfDay(for: first)) ?? first
+                                            Button {
+                                                selectedDay = day
+                                                if let index = forecast.hourly.firstIndex(where: { Calendar.current.isDate($0.timestamp, inSameDayAs: dayDate) }) { hourIndex = index }
+                                            } label: {
+                                                Text(dayDate.formatted(.dateTime.weekday(.abbreviated).day().locale(Locale(identifier: "ru_RU"))))
+                                                    .font(.caption.bold()).padding(.horizontal, 10).padding(.vertical, 8)
+                                                    .background(day == selectedDay ? FBTheme.green.opacity(0.3) : Color.secondary.opacity(0.12), in: Capsule())
+                                            }.buttonStyle(.plain)
+                                        }
+                                    }
+                                }
+                                if mode != 0 {
+                                    ForEach(mode == 1 ? [selectedDay] : Array(0..<7), id: \.self) { day in
+                                        let dates = dailyHours(forecast, day: day)
+                                        if !dates.isEmpty {
+                                            let speeds = dates.compactMap(\.windSpeedKmh)
+                                            let gusts = dates.compactMap(\.windGustKmh)
+                                            VStack(alignment: .leading, spacing: 3) {
+                                                Text(dates[0].timestamp.formatted(.dateTime.weekday(.wide).day().month().locale(Locale(identifier: "ru_RU")))).font(.subheadline.bold())
+                                                Text("Средний ветер: \(speeds.isEmpty ? "—" : String(format: "%.1f км/ч", speeds.reduce(0, +) / Double(speeds.count))) · Макс. порывы: \(gusts.max().map { String(format: "%.1f км/ч", $0) } ?? "—")")
+                                                    .font(.caption).foregroundStyle(.secondary)
+                                            }.padding(.vertical, 5)
+                                        }
+                                    }
+                                }
+                            }.padding(14).background(FBTheme.panel2, in: RoundedRectangle(cornerRadius: 16))
                             VStack(alignment: .leading, spacing: 9) {
                                 HStack {
                                     Text("ПРОГНОЗ ПО ЧАСАМ").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
@@ -47,7 +86,7 @@ struct WeatherPanel: View {
                                     Text(selectedHour(forecast).timestamp.formatted(date: .abbreviated, time: .shortened))
                                         .font(.caption.weight(.medium))
                                 }
-                                Slider(value: Binding(get: { Double(hourIndex) }, set: { hourIndex = Int($0) }),
+                                Slider(value: Binding(get: { Double(hourIndex) }, set: { hourIndex = Int($0); selectedDay = dayIndex(forecast, index: hourIndex) }),
                                        in: 0...Double(max(0, forecast.hourly.count - 1)), step: 1)
                                     .tint(FBTheme.green)
                                 Text("Это прогноз для одной точки, не карта осадков или поле ветра.")
@@ -93,6 +132,17 @@ struct WeatherPanel: View {
                 service.refresh(latitude: coordinate.latitude, longitude: coordinate.longitude, strictOffline: !online)
             }
         }
+    }
+    private func dailyHours(_ weather: PointWeather, day: Int) -> [WeatherHour] {
+        guard let first = weather.hourly.first else { return [] }
+        let start = Calendar.current.startOfDay(for: first.timestamp)
+        guard let requested = Calendar.current.date(byAdding: .day, value: day, to: start) else { return [] }
+        return weather.hourly.filter { Calendar.current.isDate($0.timestamp, inSameDayAs: requested) }
+    }
+    private func dayIndex(_ weather: PointWeather, index: Int) -> Int {
+        guard let first = weather.hourly.first else { return 0 }
+        let start = Calendar.current.startOfDay(for: first.timestamp)
+        return max(0, min(6, Calendar.current.dateComponents([.day], from: start, to: weather.hourly[index].timestamp).day ?? 0))
     }
     private func selectedHour(_ weather: PointWeather) -> WeatherHour {
         weather.hourly[min(hourIndex, weather.hourly.count - 1)]

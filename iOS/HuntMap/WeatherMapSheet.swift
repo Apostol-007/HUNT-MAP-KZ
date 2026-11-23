@@ -9,8 +9,14 @@ struct WeatherMapSheet: View {
     let online: Bool
     @AppStorage("hunt.weather.gridServer") private var server = ""
     @State private var hoursAhead = 0.0
+    @State private var forecastMode = 0
+    @State private var selectedDay = 0
     @Environment(\.dismiss) private var dismiss
 
+    private var maximumHour: Double { 167 }
+    private var baseHour: Date {
+        Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970 / 3600) * 3600)
+    }
     private var forecastDate: Date {
         let start = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970 / 3600) * 3600)
         return start.addingTimeInterval(hoursAhead * 3600)
@@ -41,18 +47,47 @@ struct WeatherMapSheet: View {
                                 Image(systemName: "clock.arrow.circlepath").foregroundStyle(.orange)
                                 Text("Время прогноза").font(.headline)
                             }
-                            Text(timeDescription.capitalized).font(.subheadline.bold())
-                            HStack(spacing: 12) {
-                                Button { hoursAhead = max(0, hoursAhead - 1) } label: {
-                                    Image(systemName: "minus").frame(width: 44, height: 44)
-                                }.disabled(hoursAhead == 0)
-                                Slider(value: $hoursAhead, in: 0...48, step: 1).tint(FBTheme.green)
-                                    .accessibilityLabel("Час прогноза")
-                                Button { hoursAhead = min(48, hoursAhead + 1) } label: {
-                                    Image(systemName: "plus").frame(width: 44, height: 44)
-                                }.disabled(hoursAhead == 48)
+                            Picker("Период", selection: $forecastMode) {
+                                Text("По часам").tag(0)
+                                Text("По дням").tag(1)
+                                Text("Неделя").tag(2)
+                            }.pickerStyle(.segmented)
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 7) {
+                                    ForEach(0..<7, id: \.self) { day in
+                                        let date = baseHour.addingTimeInterval(Double(day * 24) * 3600)
+                                        Button {
+                                            selectedDay = day
+                                            hoursAhead = Double(min(167, day * 24))
+                                        } label: {
+                                            Text(date.formatted(.dateTime.weekday(.abbreviated).day().locale(Locale(identifier: "ru_RU"))))
+                                                .font(.caption.bold()).padding(.vertical, 9).padding(.horizontal, 12)
+                                                .background(selectedDay == day ? FBTheme.green.opacity(0.24) : Color.secondary.opacity(0.12), in: Capsule())
+                                        }.buttonStyle(.plain)
+                                    }
+                                }
                             }
-                            Text("Сдвиг: +\(Int(hoursAhead)) ч. Чтобы сменить прогноз на карте, нажмите «Загрузить».")
+                            Text(timeDescription.capitalized).font(.subheadline.bold())
+                            if forecastMode == 0 {
+                                HStack(spacing: 12) {
+                                    Button { hoursAhead = max(0, hoursAhead - 1); selectedDay = Int(hoursAhead) / 24 } label: {
+                                        Image(systemName: "minus").frame(width: 44, height: 44)
+                                    }.disabled(hoursAhead == 0)
+                                    Slider(value: $hoursAhead, in: 0...maximumHour, step: 1).tint(FBTheme.green)
+                                        .accessibilityLabel("Час прогноза")
+                                        .onChange(of: hoursAhead) { _, value in selectedDay = Int(value) / 24 }
+                                    Button { hoursAhead = min(maximumHour, hoursAhead + 1); selectedDay = Int(hoursAhead) / 24 } label: {
+                                        Image(systemName: "plus").frame(width: 44, height: 44)
+                                    }.disabled(hoursAhead == maximumHour)
+                                }
+                            } else if forecastMode == 1 {
+                                Text("Выбран день \(selectedDay + 1). Час для карты: \(Int(hoursAhead) % 24):00 от начала прогноза. Для точного выбора переключись на «По часам».")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                Text("Недельный обзор. Выбери день выше для просмотра погодного слоя на карте.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            Text("Прогноз до 7 дней (168 часов). Отображаемая сетка загружается отдельно для выбранного часа.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         .padding(16)
@@ -124,7 +159,7 @@ struct WeatherMapSheet: View {
             .navigationTitle("Погодные слои")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Готово") { dismiss() } } }
-            .onAppear { hoursAhead = Double(service.chosenOffset) }
+            .onAppear { hoursAhead = Double(service.chosenOffset); selectedDay = service.chosenOffset / 24 }
         }
     }
 
