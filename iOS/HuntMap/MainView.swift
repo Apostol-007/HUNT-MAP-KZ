@@ -733,6 +733,8 @@ struct MainView: View {
         }
         playbackTask?.cancel()
         recordedRoutePlay = false
+        model.stopRecordedRouteGuidance()
+        routeRequestID = nil
         navigationTargetID = nil
         selectedRecordedTrackID = track.id
         recordedRoute = route
