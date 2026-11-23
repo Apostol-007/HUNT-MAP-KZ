@@ -271,6 +271,10 @@ struct OfflineMapView: UIViewRepresentable {
                 if let layer = style.layer(withIdentifier: id) { style.removeLayer(layer) }
                 if let source = style.source(withIdentifier: id) { style.removeSource(source) }
             }
+            // Protomaps is the complete basemap. Do not lay legacy opaque raster
+            // MBTiles over its vector roads, trails, woods and water.
+            // Previously imported MBTiles remain the fallback when no PMTiles exist.
+            if style.source(withIdentifier: "protomaps_0") != nil { return }
             // Raster MBTiles are served by the existing loopback-only tile service.
             // MapLibre cannot open arbitrary mbtiles:// files using a generic HTTP source.
             let server = LocalMBTilesServer.shared
