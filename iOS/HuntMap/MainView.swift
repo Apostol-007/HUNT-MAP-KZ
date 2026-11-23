@@ -382,7 +382,7 @@ struct MainView: View {
             OfflineMapView(zones: showGrounds ? model.zones : [],
                            position: showGPSOnMap ? model.coordinate : nil,
                            markers: showMarkersOnMap ? model.markers : [],
-                           track: showTrackOnMap ? (model.currentTrack ?? model.tracks.first(where: { $0.id == selectedRecordedTrackID })) : nil,
+                           track: showTrackOnMap ? (model.tracks.first(where: { $0.id == selectedRecordedTrackID }) ?? model.currentTrack) : nil,
                            navigationPath: navigationPath,
                            replayPosition: replayMapPosition,
                            tileFiles: maps.paths, tileRevision: maps.revision,
@@ -777,6 +777,10 @@ struct MainView: View {
                 try? await Task.sleep(nanoseconds: 230_000_000)
                 if Task.isCancelled || !recordedRoutePlay { break }
                 recordedRoutePreviewIndex += 1
+                if recordedRoutePreviewIndex % 8 == 0 || recordedRoutePreviewIndex == current.points.count - 1 {
+                    mapFocus = current.points[recordedRoutePreviewIndex]
+                    centerRequest += 1
+                }
             }
             recordedRoutePlay = false
         }
