@@ -23,15 +23,15 @@ import CoreLocation
     private var failed = false
 
     init() {
-        observer = NotificationCenter.default.addObserver(forName: MLNOfflinePackProgressChangedNotification,
+        observer = NotificationCenter.default.addObserver(forName: .MLNOfflinePackProgressChanged,
                                                           object: nil, queue: .main) { [weak self] note in
             Task { @MainActor [weak self] in self?.onProgress(note.object as? MLNOfflinePack) }
         }
-        errorObserver = NotificationCenter.default.addObserver(forName: MLNOfflinePackErrorNotification,
+        errorObserver = NotificationCenter.default.addObserver(forName: .MLNOfflinePackError,
                                                                object: nil, queue: .main) { [weak self] note in
             Task { @MainActor [weak self] in
                 self?.failed = true
-                self?.status = (note.userInfo?[MLNOfflinePackUserInfoKeyError] as? Error)?
+                self?.status = (note.userInfo?[MLNOfflinePackUserInfoKey.error] as? Error)?
                     .localizedDescription ?? "Ошибка скачивания тайлов"
             }
         }
