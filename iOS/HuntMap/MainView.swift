@@ -16,11 +16,9 @@ struct MainView: View {
     @StateObject private var valhalla = ValhallaRoutingStore()
     @State private var importingValhallaTiles = false
     @State private var routeRequestID: UUID?
-    @State private var showHostingDownloads = false
     @State private var gridMode = false
     @State private var gridStep = 0.1
     @State private var selectedGridCells: Set<String> = []
-    @State private var showGridDownloads = false
     @StateObject private var animals = WildlifeStore()
     @StateObject private var connectivity = WeatherConnectivity()
     @StateObject private var weather = WeatherService()
@@ -65,6 +63,10 @@ struct MainView: View {
     @State private var trackToDelete: Track?
     @State private var mapFocus: GeoPoint?
     @State private var navigationTargetID: UUID?
+    @State private var routeDestination: GeoPoint?
+    @State private var routeTitle = "Выбранная точка"
+    @State private var routeGuidance = false
+    @State private var rerouteTime = Date.distantPast
     @State private var navigationPath: [GeoPoint] = []
     @State private var navigationKind = ""
     @State private var recordedRoute: RecordedTrackFollow?
@@ -128,6 +130,7 @@ struct MainView: View {
             startupSync.begin(hosting: hosting, tiles: maps, protomaps: protomaps,
                               model: model, valhalla: valhalla)
             refreshWeatherOnLaunch()
+            weatherGrid.load(hourOffset: 0)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { refreshWeatherOnLaunch() }
@@ -144,11 +147,18 @@ struct MainView: View {
             if let point = newPoint {
                 weather.updateIfNeeded(latitude: point.latitude, longitude: point.longitude)
             }
-            if newPoint != nil, navigationKind == "Ожидание GPS", let id = navigationTargetID {
-                startNavigation(to: id)
+            if newPoint != nil, navigationKind == "Ожидание GPS", let destination = routeDestination {
+                planRoute(to: destination, title: routeTitle, markerID: navigationTargetID)
             }
-            if let position = newPoint, navigationTargetID != nil, !valhallaManeuvers.isEmpty {
+            if let position = newPoint, routeGuidance, let destination = routeDestination {
                 refreshNextTurn(at: position)
+                if navigationPath.count >= 2, Date().timeIntervalSince(rerouteTime) > 45 {
+                    let distance = navigationPath.map { GeoMath.meters(position, $0) }.min() ?? 0
+                    if distance > 150 {
+                        rerouteTime = Date()
+                        planRoute(to: destination, title: routeTitle, markerID: navigationTargetID)
+                    }
+                }
             }
             if let position = newPoint, let route = recordedRoute, recordedRouteFollowing {
                 let p = route.progress(from: position, after: recordedRouteProgress)
@@ -190,10 +200,6 @@ struct MainView: View {
             Button("Понятно") { routingError = nil }
         } message: { Text(routingError ?? "") }
         .sheet(isPresented: $showLayers) { layerSheet }
-        .sheet(isPresented: $showGridDownloads) {
-            OfflineGridDownloadSheet(hosting: hosting, tiles: maps, nativePacks: nativePacks, protomaps: protomaps,
-                                     selected: $selectedGridCells, step: gridStep)
-        }
         .sheet(isPresented: $showSearch) { mapSearchSheet }
         .sheet(item: $selectedMapMarker) { selection in
             MapMarkerDetails(markerID: selection.id, model: model,
@@ -215,6 +221,11 @@ struct MainView: View {
                 .presentationDragIndicator(.visible)
         }
         .confirmationDialog("Точка на карте", isPresented: $showMapPointActions, titleVisibility: .visible) {
+            Button("Построить маршрут") {
+                if let point = pendingMapPoint { planRoute(to: point, title: "Точка на карте") }
+                pendingMapPoint = nil
+                pendingMapZone = nil
+            }
             Button("Поставить метку") {
                 if let point = pendingMapPoint {
                     creatingMapMarker = Marker(title: "Моя метка", kind: "Точка", coordinate: point)
@@ -284,7 +295,6 @@ struct MainView: View {
                             wildlifeCount: animals.packs.count, onlineMap: online)
         }
         .sheet(isPresented: $showAbout) { AboutHuntView() }
-        .sheet(isPresented: $showHostingDownloads) { HostingOfflineSheet(hosting: hosting, tiles: maps).environmentObject(model) }
     }
 
     // MARK: - Root layout
@@ -377,7 +387,7 @@ struct MainView: View {
             Text("Быстрые действия").font(.headline.bold())
             LazyVGrid(columns: [.init(.flexible()), .init(.flexible())], spacing: 10) {
                 ReferenceActionCard(title: "Карта и угодья", subtitle: "Открыть карту", symbol: "map") { tab = .map }
-                ReferenceActionCard(title: "Загрузить карты", subtitle: "Офлайн-районы", symbol: "arrow.down.circle") { showHostingDownloads = true }
+                ReferenceActionCard(title: "Офлайн-карты", subtitle: "Обновляются автоматически", symbol: "checkmark.icloud") { tab = .map }
                 ReferenceActionCard(title: "Мои маршруты", subtitle: "Треки и GPX", symbol: "mappin.and.ellipse") { dataSection = .routes; tab = .data }
                 ReferenceActionCard(title: "Слои и погода", subtitle: "Прогноз и карта", symbol: "square.3.layers.3d") { tab = .map; showLayers = true }
             }
@@ -566,7 +576,7 @@ struct MainView: View {
                         .padding(.horizontal, 12)
                         .padding(.bottom, 8)
                 }
-                if navigationTargetID != nil {
+                if routeDestination != nil {
                     navigationPanel
                         .padding(.horizontal, 12)
                         .padding(.bottom, 8)
@@ -631,9 +641,7 @@ struct MainView: View {
                 Button("Очистить") { selectedGridCells.removeAll() }
                     .disabled(selectedGridCells.isEmpty)
                 Spacer()
-                Button("Скачать карту по сетке") { showGridDownloads = true }
-                    .disabled(selectedGridCells.isEmpty)
-                    .fontWeight(.semibold)
+                Text("Карты обновляются при запуске").fontWeight(.semibold)
             }
             .font(.caption)
         }
@@ -657,13 +665,16 @@ struct MainView: View {
 
     private func startNavigation(to id: UUID) {
         guard let marker = model.markers.first(where: { $0.id == id }) else { return }
+        planRoute(to: marker.coordinate, title: marker.title, markerID: id)
+    }
+    private func planRoute(to destination: GeoPoint, title: String, markerID: UUID? = nil) {
         stopRecordedTrack()
-        navigationTargetID = id
+        routeDestination = destination
+        routeTitle = title
+        navigationTargetID = markerID
         valhallaManeuvers = []
         nextTurnText = ""
         tab = .map
-        mapFocus = marker.coordinate
-        centerRequest += 1
         guard let current = model.coordinate else {
             navigationPath = []
             navigationKind = "Ожидание GPS"
@@ -678,21 +689,21 @@ struct MainView: View {
             navigationKind = "Valhalla · расчёт по локальным дорогам…"
             Task {
                 do {
-                    let result = try await valhalla.route(from: current, to: marker.coordinate, mode: chosenMode)
-                    guard routeRequestID == requestID, navigationTargetID == id else { return }
+                    let result = try await valhalla.route(from: current, to: destination, mode: chosenMode)
+                    guard routeRequestID == requestID, routeDestination == destination else { return }
                     navigationPath = result.path
                     valhallaManeuvers = result.maneuvers
                     refreshNextTurn(at: current)
                     navigationKind = chosenMode == .foot ? "Valhalla · пешком" : "Valhalla · автомобиль"
                     routingError = nil
                 } catch {
-                    guard routeRequestID == requestID, navigationTargetID == id else { return }
-                    calculateLegacyRoute(from: current, to: marker.coordinate, mode: chosenMode,
+                    guard routeRequestID == requestID, routeDestination == destination else { return }
+                    calculateLegacyRoute(from: current, to: destination, mode: chosenMode,
                                          valhallaError: error.localizedDescription)
                 }
             }
         } else {
-            calculateLegacyRoute(from: current, to: marker.coordinate, mode: chosenMode)
+            calculateLegacyRoute(from: current, to: destination, mode: chosenMode)
         }
     }
 
@@ -746,6 +757,8 @@ struct MainView: View {
         nextTurnText = ""
         routeRequestID = nil
         navigationTargetID = nil
+        routeDestination = nil
+        routeGuidance = false
         if recordedRoute == nil { navigationPath = [] }
         navigationKind = ""
     }
@@ -879,56 +892,77 @@ struct MainView: View {
     }
 
     private var navigationPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let id = navigationTargetID, let marker = model.markers.first(where: { $0.id == id }) {
-                HStack(alignment: .center, spacing: 8) {
-                    Image(systemName: "location.north.line.fill").foregroundStyle(HuntReference.green)
-                    Text(marker.title).font(.subheadline.bold()).lineLimit(1)
-                    Spacer(minLength: 4)
+        VStack(alignment: .leading, spacing: 10) {
+            if let destination = routeDestination {
+                HStack(spacing: 8) {
+                    Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
+                        .foregroundStyle(HuntReference.green)
+                    Text(routeTitle).font(.subheadline.bold()).lineLimit(1)
+                    Spacer()
                     Button { stopNavigation() } label: {
                         Image(systemName: "xmark.circle.fill").font(.title3)
-                    }.accessibilityLabel("Завершить навигацию")
+                    }
                 }
-                Text(navigationKind).font(.caption2).foregroundStyle(navigationPath.isEmpty ? Color.orange : Color.gray)
-                if !nextTurnText.isEmpty {
-                    Text(nextTurnText).font(.subheadline.bold()).foregroundStyle(HuntReference.green)
-                    Text(String(format: "Следующий манёвр примерно через %.0f м по дороге", nextTurnDistance))
+                HStack(spacing: 9) {
+                    Button {
+                        travelMode = .car
+                        routeGuidance = false
+                        planRoute(to: destination, title: routeTitle, markerID: navigationTargetID)
+                    } label: {
+                        Label("Авто", systemImage: "car.fill")
+                            .frame(maxWidth: .infinity).padding(.vertical, 10)
+                            .background(travelMode == .car ? HuntReference.green.opacity(0.3) : Color.white.opacity(0.08),
+                                        in: RoundedRectangle(cornerRadius: 11))
+                    }.accessibilityIdentifier("route_drive")
+                    Button {
+                        travelMode = .foot
+                        routeGuidance = false
+                        planRoute(to: destination, title: routeTitle, markerID: navigationTargetID)
+                    } label: {
+                        Label("Пешком", systemImage: "figure.walk")
+                            .frame(maxWidth: .infinity).padding(.vertical, 10)
+                            .background(travelMode == .foot ? HuntReference.green.opacity(0.3) : Color.white.opacity(0.08),
+                                        in: RoundedRectangle(cornerRadius: 11))
+                    }.accessibilityIdentifier("route_walk")
+                }.buttonStyle(.plain).font(.caption.bold())
+                Text(navigationKind).font(.caption)
+                    .foregroundStyle(navigationPath.isEmpty ? Color.orange : Color.gray)
+                if let current = model.coordinate {
+                    let distance = GeoMath.meters(current, destination)
+                    Text(String(format: "По прямой: %.0f м · Азимут %d°",
+                                distance, bearing(to: destination, from: current)))
                         .font(.caption.monospacedDigit())
                 }
-                if let current = model.coordinate {
-                    let distance = GeoMath.meters(current, marker.coordinate)
-                    Text(String(format: "До цели: %.0f м · Азимут: %d°", distance, bearing(to: marker.coordinate, from: current)))
-                        .font(.system(.caption, design: .monospaced).bold())
-                    if distance <= max(20, model.accuracy ?? 20) {
-                        Text("Вы рядом с точкой назначения").font(.caption).foregroundStyle(HuntReference.green)
+                if routeGuidance {
+                    Label("Ведение включено", systemImage: "location.north.line.fill")
+                        .font(.caption.bold()).foregroundStyle(HuntReference.green)
+                    if !nextTurnText.isEmpty {
+                        Text(nextTurnText).font(.subheadline.bold())
+                        Text(String(format: "Следующий манёвр через %.0f м", nextTurnDistance))
+                            .font(.caption.monospacedDigit())
                     }
-                } else { Text("Ожидание координат GPS").font(.caption) }
-                HStack(spacing: 8) {
-                    Button("Пешком") { travelMode = .foot; startNavigation(to: id) }
-                        .tint(travelMode == .foot ? .green : .gray)
-                        .accessibilityIdentifier("route_walk")
-                    Button("Автомобиль") { travelMode = .car; startNavigation(to: id) }
-                        .tint(travelMode == .car ? .green : .gray)
-                        .accessibilityIdentifier("route_drive")
-                    Button("Скачать сеть") { showHostingDownloads = true }
-                        .accessibilityIdentifier("route_import")
-                    Button("Valhalla TAR") { importingValhallaTiles = true }
-                        .accessibilityIdentifier("valhalla_import")
-                    Button("Скачать Valhalla") { Task { await valhalla.downloadFromHosting() } }
-                        .disabled(valhalla.busy)
-                        .accessibilityIdentifier("valhalla_download")
+                    Button("Завершить") { stopNavigation() }.buttonStyle(.bordered)
+                } else {
+                    Button {
+                        routeGuidance = true
+                        rerouteTime = Date()
+                        model.requestGPS()
+                        if let position = model.coordinate { refreshNextTurn(at: position) }
+                    } label: {
+                        Label("В путь", systemImage: "location.north.line.fill")
+                            .font(.headline.bold()).frame(maxWidth: .infinity).frame(minHeight: 46)
+                    }
+                    .buttonStyle(.borderedProminent).tint(HuntReference.green)
+                    .disabled(navigationPath.count < 2)
+                    .accessibilityIdentifier("route_start_guidance")
                 }
-                .buttonStyle(.bordered)
-                .font(.caption2)
-                Text(valhalla.status).font(.caption2).foregroundStyle(.secondary)
-                if routeGraph != nil {
-                    Text("Офлайн-сеть: \(routeGraphCount) вершин. Только подтверждённые соединения GeoJSON.")
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                if navigationPath.count < 2 {
+                    Text("Для навигации необходима загруженная дорожная сеть.")
+                        .font(.caption2).foregroundStyle(.secondary)
                 }
             }
         }
-        .foregroundStyle(.white)
-        .padding(12)
+        .foregroundStyle(.white).padding(12)
         .background(HuntReference.card.opacity(0.97), in: RoundedRectangle(cornerRadius: 16))
     }
 
@@ -1129,11 +1163,7 @@ struct MainView: View {
             HStack {
                 Label("Valhalla", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
                 Spacer()
-                Button("Импорт TAR") { importingValhallaTiles = true }
-                    .accessibilityIdentifier("valhalla_import_routes")
-                Button("Скачать") { Task { await valhalla.downloadFromHosting() } }
-                    .disabled(valhalla.busy)
-                    .accessibilityIdentifier("valhalla_download_routes")
+                Text("Обновляется автоматически")
             }
             .font(.caption.bold())
             .foregroundStyle(HuntReference.green)
@@ -1484,7 +1514,8 @@ struct MainView: View {
                     }.fbCard()
                 }
             }
-            ReferencePrimaryButton(title: "Офлайн-карты и каталоги", symbol: "arrow.down.circle") { showHostingDownloads = true }
+            Text("Карты и каталоги синхронизируются автоматически")
+                .font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -1492,13 +1523,9 @@ struct MainView: View {
         VStack(alignment: .leading, spacing: 18) {
             ReferencePageHeader(title: "Ещё")
             VStack(spacing: 0) {
-                ReferenceMenuRow(symbol: "arrow.down.circle", title: "Загрузки карт") { showHostingDownloads = true }
-                Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "waveform.path.ecg", title: "Диагностика") { showDiagnostics = true }
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "gearshape", title: "Настройки") { showLayers = true }
-                Divider().overlay(HuntReference.separator)
-                ReferenceMenuRow(symbol: "arrow.triangle.2.circlepath", title: "Синхронизация") { showHostingDownloads = true }
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "info.circle", title: "О приложении") { showAbout = true }
             }
