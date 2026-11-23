@@ -224,6 +224,7 @@ struct ForecastGrid: Codable {
                                 URLQueryItem(name: "hourly", value: "wind_speed_10m,wind_direction_10m,pressure_msl,precipitation"),
                                 URLQueryItem(name: "timezone", value: "UTC"),
                                 URLQueryItem(name: "wind_speed_unit", value: "kmh"),
+                                URLQueryItem(name: "forecast_days", value: "8"),
                                 URLQueryItem(name: "start_hour", value: targetHour),
                                 URLQueryItem(name: "end_hour", value: targetHour)
                             ]
