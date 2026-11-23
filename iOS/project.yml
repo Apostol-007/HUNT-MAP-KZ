@@ -23,8 +23,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: kz.huntmap.field
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_MapTilerAPIKey: "$(MAPTILER_API_KEY)"
-        MARKETING_VERSION: 4.0.0
-        CURRENT_PROJECT_VERSION: 40
+        MARKETING_VERSION: 4.4.0
+        CURRENT_PROJECT_VERSION: 44
         INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen
         INFOPLIST_KEY_UIRequiresFullScreen: YES
         INFOPLIST_KEY_UIBackgroundModes: location

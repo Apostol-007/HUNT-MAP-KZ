@@ -14,6 +14,7 @@ struct OfflineMapView: UIViewRepresentable {
     let position: GeoPoint?
     let markers: [Marker]
     let track: Track?
+    var navigationPath: [GeoPoint] = []
     let tileFiles: [URL]
     let tileRevision: Int
     let online: Bool
@@ -73,7 +74,7 @@ struct OfflineMapView: UIViewRepresentable {
             UserDefaults.standard.set("\(Int(mapFrame.minX)),\(Int(mapFrame.minY)),\(Int(mapFrame.width))x\(Int(mapFrame.height))", forKey: "hunt.diag.mapFrame")
             UserDefaults.standard.set(matches, forKey: "hunt.diag.fullscreenMap")
         }
-        context.coordinator.updateAnnotations(view: view, zones: zones, markers: markers, position: position, track: track,
+        context.coordinator.updateAnnotations(view: view, zones: zones, markers: markers, position: position, track: track, navigationPath: navigationPath,
                                               weatherGrid: weatherGrid, weatherLayer: weatherLayer)
         context.coordinator.applyCameraCommands(view: view, position: focusCoordinate ?? position,
                                                 centerRequest: centerRequest, zoomCommand: zoomCommand)
@@ -210,11 +211,11 @@ struct OfflineMapView: UIViewRepresentable {
             }
         }
 
-        func updateAnnotations(view: MLNMapView, zones: [GeoZone], markers: [Marker], position: GeoPoint?, track: Track?,
+        func updateAnnotations(view: MLNMapView, zones: [GeoZone], markers: [Marker], position: GeoPoint?, track: Track?, navigationPath: [GeoPoint],
                                weatherGrid: ForecastGrid?, weatherLayer: WeatherMapLayer) {
             // Persistent MLNPointAnnotation identity is critical for tapping. Recreating
             // every marker on each GPS/SwiftUI update used to cancel selection gestures.
-            let transientKey = String(describing: zones) + "|" + String(describing: track) + "|" + String(describing: weatherLayer) + "|" + String(describing: weatherGrid)
+            let transientKey = String(describing: zones) + "|" + String(describing: track) + "|" + String(describing: navigationPath) + "|" + String(describing: weatherLayer) + "|" + String(describing: weatherGrid)
             if transientKey != lastTransientKey {
                 if !transientAnnotations.isEmpty { view.removeAnnotations(transientAnnotations) }
                 transientAnnotations.removeAll()
@@ -289,6 +290,12 @@ struct OfflineMapView: UIViewRepresentable {
                 line.title = "Записанный маршрут"
                 updated.append(line)
             }
+            if navigationPath.count >= 2 {
+                var routeCoords = navigationPath.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+                let route = MLNPolyline(coordinates: &routeCoords, count: UInt(routeCoords.count))
+                route.title = "NAV|HUNT"
+                updated.append(route)
+            }
             transientAnnotations = updated
             if !updated.isEmpty { view.addAnnotations(updated) }
             }
@@ -360,12 +367,14 @@ struct OfflineMapView: UIViewRepresentable {
         func mapView(_ mapView: MLNMapView, strokeColorForShapeAnnotation annotation: MLNShape) -> UIColor {
             if annotation.title?.hasPrefix("WX-ISOBAR|") == true { return .white }
             if annotation.title?.hasPrefix("WX-WIND|") == true { return .white }
+            if annotation.title == "NAV|HUNT" { return .systemCyan }
             if annotation.title == "Записанный маршрут" { return .systemGreen }
             return annotation.title?.hasPrefix("НЕ ПРОВЕРЕНО") == true ? .systemYellow : .systemOrange
         }
         func mapView(_ mapView: MLNMapView, lineWidthForPolylineAnnotation annotation: MLNPolyline) -> CGFloat {
             if annotation.title?.hasPrefix("WX-ISOBAR|") == true { return 1.8 }
             if annotation.title?.hasPrefix("WX-WIND|") == true { return 2.3 }
+            if annotation.title == "NAV|HUNT" { return 5 }
             return annotation.title == "Записанный маршрут" ? 4 : 3
         }
     }

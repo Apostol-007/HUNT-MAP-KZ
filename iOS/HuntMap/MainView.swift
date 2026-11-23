@@ -1,5 +1,6 @@
 import SwiftUI
 import HuntCore
+import UniformTypeIdentifiers
 
 /// Rebuilt UI: MapLibre remains the root full-screen view. No native TabView,
 /// no fixed-height map, no nested NavigationStack around the map.
@@ -48,6 +49,13 @@ struct MainView: View {
     @State private var markerToDelete: Marker?
     @State private var trackToDelete: Track?
     @State private var mapFocus: GeoPoint?
+    @State private var navigationTargetID: UUID?
+    @State private var navigationPath: [GeoPoint] = []
+    @State private var navigationKind = ""
+    @State private var routingError: String?
+    @State private var importingRoutingNetwork = false
+    @State private var routeGraph: OfflineRouteGraph?
+    @State private var routeGraphCount = 0
     @State private var taxa: [GBIFTaxon] = []
     @State private var wildlifeError: String?
 
@@ -81,6 +89,30 @@ struct MainView: View {
         .preferredColorScheme(.dark)
         .background(ShakeDetector().frame(width: 1, height: 1))
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
+        .onAppear { loadRoutingNetwork() }
+        .onChange(of: model.coordinate) { _, newPoint in
+            if newPoint != nil, navigationKind == "Ожидание GPS", let id = navigationTargetID {
+                startNavigation(to: id)
+            }
+        }
+        .fileImporter(isPresented: $importingRoutingNetwork, allowedContentTypes: [.json], allowsMultipleSelection: false) { result in
+            do {
+                guard let file = try result.get().first else { return }
+                let secured = file.startAccessingSecurityScopedResource()
+                defer { if secured { file.stopAccessingSecurityScopedResource() } }
+                let bytes = try Data(contentsOf: file)
+                let graph = try OfflineRouteGraph(geoJSON: bytes)
+                let location = routingNetworkURL
+                try FileManager.default.createDirectory(at: location.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try bytes.write(to: location, options: .atomic)
+                routeGraph = graph
+                routeGraphCount = graph.count
+                if let id = navigationTargetID { startNavigation(to: id) }
+            } catch { routingError = error.localizedDescription }
+        }
+        .alert("Маршрутизация", isPresented: Binding(get: { routingError != nil }, set: { if !$0 { routingError = nil } })) {
+            Button("Понятно") { routingError = nil }
+        } message: { Text(routingError ?? "") }
         .sheet(isPresented: $showLayers) { layerSheet }
         .sheet(isPresented: $showSearch) { mapSearchSheet }
         .sheet(item: $selectedMapMarker) { selection in
@@ -94,6 +126,10 @@ struct MainView: View {
                 onMove: {
                     movingMarkerID = selection.id
                     selectedMapMarker = nil
+                },
+                onNavigate: { id in
+                    selectedMapMarker = nil
+                    startNavigation(to: id)
                 })
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
@@ -294,6 +330,7 @@ struct MainView: View {
                            position: showGPSOnMap ? model.coordinate : nil,
                            markers: showMarkersOnMap ? model.markers : [],
                            track: showTrackOnMap ? model.currentTrack : nil,
+                           navigationPath: navigationPath,
                            tileFiles: maps.paths, tileRevision: maps.revision,
                            online: online, selectedZone: $zone,
                            weatherGrid: weatherLayer == .none ? nil : weatherGrid.grid,
@@ -395,6 +432,11 @@ struct MainView: View {
                     }
                     .padding(.bottom, 8)
                 }
+                if navigationTargetID != nil {
+                    navigationPanel
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 8)
+                }
                 if model.recording {
                     HStack(spacing: 8) {
                         Image(systemName: "record.circle.fill").foregroundStyle(.red)
@@ -426,6 +468,114 @@ struct MainView: View {
                 .padding(.bottom, 84)
             }
         }
+    }
+
+    // MARK: - In-app offline guidance / routing
+    private var routingNetworkURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("routing/network.geojson")
+    }
+
+    private func loadRoutingNetwork() {
+        guard let bytes = try? Data(contentsOf: routingNetworkURL),
+              let graph = try? OfflineRouteGraph(geoJSON: bytes) else { return }
+        routeGraph = graph
+        routeGraphCount = graph.count
+    }
+
+    private func startNavigation(to id: UUID) {
+        guard let marker = model.markers.first(where: { $0.id == id }) else { return }
+        navigationTargetID = id
+        tab = .map
+        mapFocus = marker.coordinate
+        centerRequest += 1
+        guard let current = model.coordinate else {
+            navigationPath = []
+            navigationKind = "Ожидание GPS"
+            model.requestGPS()
+            return
+        }
+        if let graph = routeGraph {
+            do {
+                navigationPath = try graph.path(from: current, to: marker.coordinate)
+                navigationKind = "По импортированным тропам"
+            } catch {
+                navigationPath = []
+                navigationKind = "Маршрут по сети не построен"
+                routingError = error.localizedDescription + " Выберите режим «Азимут» или импортируйте другую сеть."
+            }
+        } else {
+            navigateByBearing()
+        }
+    }
+
+    private func navigateByBearing() {
+        guard let id = navigationTargetID,
+              let destination = model.markers.first(where: { $0.id == id }),
+              let origin = model.coordinate else {
+            navigationPath = []
+            navigationKind = "Ожидание GPS"
+            model.requestGPS()
+            return
+        }
+        navigationPath = [origin, destination.coordinate]
+        navigationKind = "Азимут · прямая, НЕ дорога"
+    }
+
+    private func stopNavigation() {
+        navigationTargetID = nil
+        navigationPath = []
+        navigationKind = ""
+    }
+
+    private func bearing(to destination: GeoPoint, from origin: GeoPoint) -> Int {
+        let lat1 = origin.latitude * .pi / 180, lat2 = destination.latitude * .pi / 180
+        let dl = (destination.longitude - origin.longitude) * .pi / 180
+        let y = sin(dl) * cos(lat2)
+        let x = cos(lat1)*sin(lat2) - sin(lat1)*cos(lat2)*cos(dl)
+        return Int((atan2(y, x) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360).rounded()) % 360
+    }
+
+    private var navigationPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let id = navigationTargetID, let marker = model.markers.first(where: { $0.id == id }) {
+                HStack(alignment: .center, spacing: 8) {
+                    Image(systemName: "location.north.line.fill").foregroundStyle(HuntReference.green)
+                    Text(marker.title).font(.subheadline.bold()).lineLimit(1)
+                    Spacer(minLength: 4)
+                    Button { stopNavigation() } label: {
+                        Image(systemName: "xmark.circle.fill").font(.title3)
+                    }.accessibilityLabel("Завершить навигацию")
+                }
+                Text(navigationKind).font(.caption2).foregroundStyle(navigationKind.contains("НЕ дорога") ? Color.orange : Color.gray)
+                if let current = model.coordinate {
+                    let distance = GeoMath.meters(current, marker.coordinate)
+                    Text(String(format: "До цели: %.0f м · Азимут: %d°", distance, bearing(to: marker.coordinate, from: current)))
+                        .font(.system(.caption, design: .monospaced).bold())
+                    if distance <= max(20, model.accuracy ?? 20) {
+                        Text("Вы рядом с точкой назначения").font(.caption).foregroundStyle(HuntReference.green)
+                    }
+                } else { Text("Ожидание координат GPS").font(.caption) }
+                HStack(spacing: 8) {
+                    Button("Азимут") { navigateByBearing() }
+                        .accessibilityIdentifier("route_bearing")
+                    Button("По тропам") { startNavigation(to: id) }
+                        .disabled(routeGraph == nil)
+                        .accessibilityIdentifier("route_graph")
+                    Button("Импорт сети") { importingRoutingNetwork = true }
+                        .accessibilityIdentifier("route_import")
+                }
+                .buttonStyle(.bordered)
+                .font(.caption2)
+                if routeGraph != nil {
+                    Text("Офлайн-сеть: \(routeGraphCount) вершин. Только подтверждённые соединения GeoJSON.")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(12)
+        .background(HuntReference.card.opacity(0.97), in: RoundedRectangle(cornerRadius: 16))
     }
 
     private func circleMapButton(_ symbol: String, label: String, action: @escaping () -> Void) -> some View {

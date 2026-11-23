@@ -13,6 +13,7 @@ struct MapMarkerDetails: View {
     @ObservedObject var model: FieldModel
     let onShowOnMap: (GeoPoint) -> Void
     let onMove: () -> Void
+    let onNavigate: (UUID) -> Void
     @State private var confirmDelete = false
     @State private var showCopied = false
 
@@ -63,10 +64,9 @@ struct MapMarkerDetails: View {
                             ShareLink(item: shareText(marker)) {
                                 actionRow("Поделиться меткой", "square.and.arrow.up")
                             }
-                            Button {
-                                guard let url = URL(string: "https://maps.apple.com/?daddr=\(marker.coordinate.latitude),\(marker.coordinate.longitude)") else { return }
-                                UIApplication.shared.open(url)
-                            } label: { actionRow("Построить маршрут в Apple Maps", "arrow.triangle.turn.up.right.diamond") }
+                            Button { onNavigate(markerID) } label: {
+                                actionRow("Маршрут внутри HUNT MAP KZ", "arrow.triangle.turn.up.right.diamond")
+                            }
                             Button(role: .destructive) { confirmDelete = true } label: {
                                 actionRow("Удалить метку", "trash", destructive: true)
                             }
