@@ -23,10 +23,12 @@ public struct OfflineRouteGraph: Sendable {
 
     /// Input geometry is [longitude, latitude]. Links share exactly matching
     /// quantized vertices; crossing un-noded lines are NOT implicitly connected.
-    public init(geoJSON: Data) throws {
-        guard let root = try JSONSerialization.jsonObject(with: geoJSON) as? [String: Any],
-              root["type"] as? String == "FeatureCollection",
-              let features = root["features"] as? [[String: Any]] else { throw RouteError.invalidFormat }
+    public init(geoJSON: Data) throws { try self.init(geoJSONParts: [geoJSON]) }
+
+    /// Join adjacent routing packages by their shared six-decimal WGS84 vertices.
+    /// No synthetic connections are created between merely nearby roads.
+    public init(geoJSONParts: [Data]) throws {
+        guard !geoJSONParts.isEmpty else { throw RouteError.emptyNetwork }
         var nodes: [GeoPoint] = []
         var adjacency: [[Edge]] = []
         var ids: [String: Int] = [:]
@@ -56,12 +58,17 @@ public struct OfflineRouteGraph: Sendable {
                 previous = index
             }
         }
-        for feature in features {
-            guard let geometry = feature["geometry"] as? [String: Any],
-                  let type = geometry["type"] as? String, let coords = geometry["coordinates"] else { continue }
-            if type == "LineString" { try addLine(coords) }
-            else if type == "MultiLineString", let lines = coords as? [Any] {
-                for line in lines { try addLine(line) }
+        for part in geoJSONParts {
+            guard let root = try JSONSerialization.jsonObject(with: part) as? [String: Any],
+                  root["type"] as? String == "FeatureCollection",
+                  let features = root["features"] as? [[String: Any]] else { throw RouteError.invalidFormat }
+            for feature in features {
+                guard let geometry = feature["geometry"] as? [String: Any],
+                      let type = geometry["type"] as? String, let coords = geometry["coordinates"] else { continue }
+                if type == "LineString" { try addLine(coords) }
+                else if type == "MultiLineString", let lines = coords as? [Any] {
+                    for line in lines { try addLine(line) }
+                }
             }
         }
         guard !nodes.isEmpty && adjacency.contains(where: { !$0.isEmpty }) else { throw RouteError.emptyNetwork }
