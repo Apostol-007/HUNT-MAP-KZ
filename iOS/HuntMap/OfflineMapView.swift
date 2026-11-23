@@ -221,7 +221,7 @@ struct OfflineMapView: UIViewRepresentable {
                 let (key, _) = entry
                 guard let template = server.tileTemplate(for: key) else { continue }
                 let id = "hunt-raster-\(index)"
-                let source = MLNRasterTileSource(identifier: id, tileURLTemplates: [template], tileSize: 256)
+                let source = MLNRasterTileSource(identifier: id, tileURLTemplates: [template])
                 style.addSource(source)
                 style.addLayer(MLNRasterStyleLayer(identifier: id, source: source))
             }
