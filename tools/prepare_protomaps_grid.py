@@ -186,8 +186,16 @@ def extract_cell(pmtiles, source, dest, bbox, maxzoom):
         command = [pmtiles, "extract", str(source), str(temporary),
                    "--bbox=" + ",".join(map(str, bbox)), "--maxzoom=" + str(maxzoom)]
         print("COMMAND:", " ".join(command), flush=True)
-        subprocess.run(command, check=True, timeout=1800)
-        subprocess.run([pmtiles, "verify", str(temporary)], check=True, timeout=300)
+        extraction = subprocess.run(command, check=True, timeout=1800,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, errors="replace")
+        if extraction.stdout:
+            print(extraction.stdout[-8000:], flush=True)
+        verification = subprocess.run([pmtiles, "verify", str(temporary)], check=True,
+                                      timeout=300, stdout=subprocess.PIPE,
+                                      stderr=subprocess.STDOUT, text=True, errors="replace")
+        if verification.stdout:
+            print(verification.stdout[-4000:], flush=True)
         check_pmtiles(temporary)
         temporary.replace(dest)
     finally:
@@ -255,6 +263,11 @@ def run(argv):
             source = latest_source() if args.source == "auto" else args.source
             if not (source.startswith("https://") or Path(source).is_file()):
                 raise ValueError("Missing source PMTiles; use a real local file or HTTPS URL")
+            if source.startswith("https://"):
+                if not probe_source(source):
+                    raise ValueError("Remote source cannot be read with HTTP Range; check URL")
+            else:
+                check_pmtiles(Path(source))
             print("Source:", source, flush=True)
             completed = load_catalog(args.out / "catalog.json")
             all_cells = cells(bounds, args.step, args.max_cells)
@@ -270,15 +283,23 @@ def run(argv):
                         continue
                     # A valid archive from an interrupted previous run can be
                     # indexed without downloading again.
-                    if dest.is_file():
+                    previous = completed.get(name)
+                    same_region = (previous is not None and previous.get("bounds") == bbox
+                                   and previous.get("maxzoom") == args.maxzoom)
+                    if dest.is_file() and same_region:
                         try:
                             check_pmtiles(dest)
                             completed[name] = make_record(name, bbox, dest, args.base_url, args.maxzoom)
                             atomic_catalog(args.out / "catalog.json", completed, source, args.base_url)
-                            print(f"[{processed}/{total}] REINDEX {name}", flush=True)
+                            print(f"[{processed}/{total}] REINDEX previous verified region {name}", flush=True)
                             continue
                         except (OSError, ValueError):
-                            dest.unlink(missing_ok=True)
+                            pass
+                    # Different grid sizes can reuse the same filename.
+                    # Never treat such old geometry as covering the new region.
+                    if dest.is_file():
+                        print(f"[{processed}/{total}] Replace stale/different-grid file {name}", flush=True)
+                        dest.unlink()
                     try:
                         print(f"[{processed}/{total}] Extract {name} {bbox}", flush=True)
                         extract_cell(args.pmtiles, source, dest, bbox, args.maxzoom)
@@ -287,6 +308,8 @@ def run(argv):
                         print(f"[{processed}/{total}] SAVED {name} ({dest.stat().st_size} bytes)", flush=True)
                     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, ValueError) as exc:
                         failures.append((name, bbox))
+                        if isinstance(exc, subprocess.CalledProcessError) and exc.stdout:
+                            print(str(exc.stdout)[-4000:], flush=True)
                         print(f"[{processed}/{total}] WILL RETRY {name}: {exc}", flush=True)
                 print(f"BATCH {batch_index} finished; catalog has {len(completed)} packs; pending errors: {len(failures)}")
             # Retry only failed cells; never restart already completed batches.
@@ -308,6 +331,8 @@ def run(argv):
                             atomic_catalog(args.out / "catalog.json", completed, source, args.base_url)
                             print(f"RECOVERED {name}; saved {len(completed)}/{total}")
                         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError, ValueError) as exc:
+                            if isinstance(exc, subprocess.CalledProcessError) and exc.stdout:
+                                print(str(exc.stdout)[-4000:], flush=True)
                             print(f"RETRY FAILED {name}: {exc}")
                             remaining.append((name, bbox))
                 failures = remaining
