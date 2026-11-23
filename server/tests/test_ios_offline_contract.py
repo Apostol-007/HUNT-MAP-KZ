@@ -137,3 +137,15 @@ def test_valhalla_local_cpp_route_engine_integration():
     assert "ValhallaPolyline6.decode" in engine
     assert "calculateLegacyRoute" in ui
     assert "valhalla_import" in ui
+
+
+def test_valhalla_download_and_windows_builder_contract():
+    engine = (IOS / "ValhallaLocalEngine.swift").read_text()
+    ui = (IOS / "MainView.swift").read_text()
+    builder = (ROOT / "tools/PREPARE_VALHALLA_WINDOWS.bat").read_text()
+    assert "hunt-valhalla-v1" in engine
+    assert "SHA256()" in engine
+    assert "downloadFromHosting()" in ui
+    assert "ghcr.io/valhalla/valhalla-scripted:latest" in builder
+    assert "serve_tiles=False" in builder
+    assert "valhalla_tiles.tar" in builder

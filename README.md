@@ -47,3 +47,17 @@ Source data: [Protomaps downloads](https://docs.protomaps.com/basemaps/downloads
 ### Offline Protomaps labels
 
 v5.4.1 includes a separate install operation for local Protomaps label glyph ranges (Latin, Russian and Kazakh Cyrillic) and sprite resources from the public Protomaps basemaps-assets repository. Tap **Скачать подписи и значки** in the grid download manager. This data is saved locally and the Protomaps style switches to local glyph/sprite URLs only when the expected asset set is present. Other scripts/languages and the full upstream Protomaps cartographic style have not yet been packaged; test actual labels on device.
+
+## Valhalla local routing & saved track replay (v5.7)
+
+Valhalla Mobile 0.6.6 is embedded as a native iOS dependency. The app **never queries a remote routing server** for navigation. It first uses a Valhalla C++ engine with the previously downloaded `valhalla_tiles.tar` (walking = `pedestrian`, driving = `auto`). If local tiles are missing or Valhalla cannot route, it attempts the existing tagged GeoJSON offline graph. No straight-line fallback.
+
+### Build and install routing tiles on Windows
+
+Run `tools/PREPARE_VALHALLA_WINDOWS.bat` with Docker Desktop running. It uses the **official** `ghcr.io/valhalla/valhalla-scripted:latest` image and Geofabrik Kazakhstan OSM extract. It creates `hosting_upload/valhalla/valhalla_tiles.tar` and matching SHA-256 `catalog.json`. This needs substantial free disk, RAM and internet access on Windows. Do **not** rename a Protomaps PMTiles archive to TAR: the formats are unrelated.
+
+Upload both files to `https://create.web-works.kz/maps/valhalla/`. In the iOS app open **Маршруты → Valhalla → Скачать** or **Импорт TAR** for a locally transferred archive. The app verifies size and SHA-256 of hosted downloads before installation. File-based Valhalla routing is then entirely offline. The app does not currently implement automatic downloads of regional graph subsets or turn-by-turn voice commands.
+
+### Recorded route playback
+
+Every stored GPS track in **Данные → Маршруты** has actions **Показать на карте**, **Воспроизвести: от начала / от конца**, **Пройти от начала / от конца**. MapLibre draws the original recorded points; playback animates a pin across them. Follow mode monitors GPS against the recorded geometry and displays remaining length and off-route deviation. It is a faithful replay of a GPS track, **not** proof that every segment is traversable now or legally accessible.

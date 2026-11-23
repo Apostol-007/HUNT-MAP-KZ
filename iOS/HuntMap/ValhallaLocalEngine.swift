@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import HuntCore
 import Valhalla
 import ValhallaConfigModels
@@ -147,6 +148,7 @@ enum ValhallaPolyline6 {
     @Published private(set) var tilesInstalled = false
     @Published private(set) var status = "Valhalla: тайлы не установлены"
     @Published private(set) var busy = false
+    @Published private(set) var hostedDownloadStatus = ""
     private let engine = ValhallaLocalEngine()
 
     init() {
@@ -169,6 +171,64 @@ enum ValhallaPolyline6 {
             await refresh()
         } catch {
             status = "Ошибка импорта Valhalla: \(error.localizedDescription)"
+        }
+    }
+
+    /// Download full offline graph from the user's own HTTPS hosting with SHA-256 verification.
+    /// The archive is never executed or routed until it is installed locally.
+    func downloadFromHosting() async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        let catalogURL = URL(string: "https://create.web-works.kz/maps/valhalla/catalog.json")!
+        do {
+            var request = URLRequest(url: catalogURL)
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            request.timeoutInterval = 25
+            let (manifestData, reply) = try await URLSession.shared.data(for: request)
+            guard (reply as? HTTPURLResponse)?.statusCode == 200,
+                  manifestData.count < 100_000,
+                  let object = try JSONSerialization.jsonObject(with: manifestData) as? [String: Any],
+                  object["schema"] as? String == "hunt-valhalla-v1",
+                  let file = object["file"] as? [String: Any],
+                  let path = file["url"] as? String,
+                  let remote = URL(string: path),
+                  remote.scheme == "https",
+                  remote.host == catalogURL.host,
+                  remote.path.hasSuffix("/valhalla_tiles.tar"),
+                  let bytes = file["bytes"] as? Int64, bytes > 1024,
+                  let expectedHash = file["sha256"] as? String, expectedHash.count == 64 else {
+                throw NSError(domain: "HuntValhalla", code: 1,
+                              userInfo: [NSLocalizedDescriptionKey: "Каталог Valhalla недоступен или не соответствует схеме hunt-valhalla-v1"])
+            }
+            status = "Valhalla: загружаю навигационные тайлы…"
+            let (temporary, response) = try await URLSession.shared.download(from: remote)
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  let size = (try FileManager.default.attributesOfItem(atPath: temporary.path)[.size] as? NSNumber)?.int64Value,
+                  size == bytes else {
+                throw NSError(domain: "HuntValhalla", code: 2,
+                              userInfo: [NSLocalizedDescriptionKey: "Размер скачанного архива не совпадает"])
+            }
+            let stream = try FileHandle(forReadingFrom: temporary)
+            defer { try? stream.close() }
+            var sha = SHA256()
+            while true {
+                try Task.checkCancellation()
+                let block = try stream.read(upToCount: 1_048_576) ?? Data()
+                if block.isEmpty { break }
+                sha.update(data: block)
+            }
+            let digest = sha.finalize().map { String(format: "%02x", $0) }.joined()
+            guard digest == expectedHash.lowercased() else {
+                throw NSError(domain: "HuntValhalla", code: 3,
+                              userInfo: [NSLocalizedDescriptionKey: "SHA-256 архива Valhalla не совпадает"])
+            }
+            try await engine.importArchive(from: temporary)
+            await refresh()
+            hostedDownloadStatus = "Навигационная сеть Valhalla установлена из хостинга"
+        } catch {
+            status = "Valhalla: \(error.localizedDescription)"
+            hostedDownloadStatus = status
         }
     }
 

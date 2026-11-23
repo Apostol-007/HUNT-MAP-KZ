@@ -837,6 +837,9 @@ struct MainView: View {
                         .accessibilityIdentifier("route_import")
                     Button("Valhalla TAR") { importingValhallaTiles = true }
                         .accessibilityIdentifier("valhalla_import")
+                    Button("Скачать Valhalla") { Task { await valhalla.downloadFromHosting() } }
+                        .disabled(valhalla.busy)
+                        .accessibilityIdentifier("valhalla_download")
                 }
                 .buttonStyle(.bordered)
                 .font(.caption2)
@@ -1049,8 +1052,11 @@ struct MainView: View {
             HStack {
                 Label("Valhalla", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
                 Spacer()
-                Button("Импорт тайлов TAR") { importingValhallaTiles = true }
+                Button("Импорт TAR") { importingValhallaTiles = true }
                     .accessibilityIdentifier("valhalla_import_routes")
+                Button("Скачать") { Task { await valhalla.downloadFromHosting() } }
+                    .disabled(valhalla.busy)
+                    .accessibilityIdentifier("valhalla_download_routes")
             }
             .font(.caption.bold())
             .foregroundStyle(HuntReference.green)
