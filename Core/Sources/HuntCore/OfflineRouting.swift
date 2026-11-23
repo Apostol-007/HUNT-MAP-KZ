@@ -293,6 +293,6 @@ public struct OfflineRouteGraph: Sendable {
             reversed.append(nodes[node])
             node = previous[node]
         }
-        return reversed.reversed()
+        return Array(reversed.reversed())
     }
 }
