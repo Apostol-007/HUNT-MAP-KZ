@@ -5,7 +5,7 @@ import HuntCore
 /// MapLibre receives only a locally generated, source-free style and file-backed MBTiles.
 /// No HTTP style, glyph, sprite or tile endpoint is configured by this view.
 struct OfflineMapView: UIViewRepresentable {
-    @AppStorage("hunt.map.style") private var mapStyle = MapBasemap.bright.rawValue
+    @AppStorage("hunt.map.style") private var mapStyle = (MapTilerConfiguration.isConfigured ? MapBasemap.satellite.rawValue : MapBasemap.outdoors.rawValue)
     private var selectedStyle: URL {
         (MapBasemap(rawValue: mapStyle) ?? .bright).styleURL(apiKey: MapTilerConfiguration.apiKey) ?? MapBasemap.bright.styleURL(apiKey: "")!
     }
@@ -20,6 +20,9 @@ struct OfflineMapView: UIViewRepresentable {
     @Binding var selectedZone: GeoZone?
     let weatherGrid: ForecastGrid?
     let weatherLayer: WeatherMapLayer
+    var centerRequest: Int = 0
+    var zoomCommand: Int = 0
+    var focusCoordinate: GeoPoint? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(selectedZone: $selectedZone) }
 
@@ -59,6 +62,8 @@ struct OfflineMapView: UIViewRepresentable {
         }
         context.coordinator.updateAnnotations(view: view, zones: zones, markers: markers, position: position, track: track,
                                               weatherGrid: weatherGrid, weatherLayer: weatherLayer)
+        context.coordinator.applyCameraCommands(view: view, position: focusCoordinate ?? position,
+                                                centerRequest: centerRequest, zoomCommand: zoomCommand)
     }
 
     final class Coordinator: NSObject, MLNMapViewDelegate {
@@ -80,6 +85,22 @@ struct OfflineMapView: UIViewRepresentable {
         private var latestFiles: [URL] = []
         private var shapes: [MLNAnnotation] = []
         private var centeredOnGPS = false
+        private var appliedCenterRequest = 0
+        private var appliedZoomCommand = 0
+
+        func applyCameraCommands(view: MLNMapView, position: GeoPoint?, centerRequest: Int, zoomCommand: Int) {
+            if centerRequest != appliedCenterRequest, let position {
+                view.setCenter(CLLocationCoordinate2D(latitude: position.latitude, longitude: position.longitude),
+                               zoomLevel: max(view.zoomLevel, 13), animated: true)
+                appliedCenterRequest = centerRequest
+            }
+            if zoomCommand != appliedZoomCommand {
+                let delta = zoomCommand - appliedZoomCommand
+                let nextZoom = max(2, min(20, view.zoomLevel + Double(delta)))
+                view.setZoomLevel(nextZoom, animated: true)
+                appliedZoomCommand = zoomCommand
+            }
+        }
 
         func apply(view: MLNMapView, files: [URL], revision: Int) {
             latestFiles = files

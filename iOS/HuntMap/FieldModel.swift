@@ -107,6 +107,19 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         persist()
     }
     func removeMarkers(at offsets:IndexSet) {markers.remove(atOffsets:offsets);persist()}
+    func saveMarker(_ changed: Marker) {
+        guard let index = markers.firstIndex(where: { $0.id == changed.id }) else { return }
+        markers[index] = changed
+        persist()
+    }
+    func deleteMarker(id: UUID) {
+        markers.removeAll { $0.id == id }
+        persist()
+    }
+    func deleteTrack(id: UUID) {
+        tracks.removeAll { $0.id == id }
+        persist()
+    }
     func setImportedZones(_ imported:[GeoZone]) { zones=imported; lastWarning="Импортированные границы юридически не проверены"; persist() }
     func loadDemoZones() {
         // Illustrative polygon only: NOT an actual hunting ground or legal boundary.

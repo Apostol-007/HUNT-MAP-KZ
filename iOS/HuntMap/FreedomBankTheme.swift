@@ -1,14 +1,14 @@
 import SwiftUI
 
 struct FBTheme {
-    static let background = Color.black
-    static let panel = Color(red: 0.09, green: 0.10, blue: 0.12)
-    static let panel2 = Color(red: 0.13, green: 0.14, blue: 0.17)
+    static let background = HuntReference.background
+    static let panel = HuntReference.card
+    static let panel2 = HuntReference.raised
     static let stroke = Color.white.opacity(0.06)
     static let textPrimary = Color.white
     static let textSecondary = Color.white.opacity(0.72)
-    static let green = Color(red: 0.36, green: 0.90, blue: 0.56)
-    static let mint = Color(red: 0.23, green: 0.82, blue: 0.74)
+    static let green = HuntReference.green
+    static let mint = HuntReference.mint
     static let cyan = Color(red: 0.28, green: 0.78, blue: 0.91)
     static let warning = Color.orange
     static let danger = Color(red: 1.00, green: 0.35, blue: 0.35)
