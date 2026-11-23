@@ -45,7 +45,9 @@ def probe_source(url, opener=urllib.request.urlopen):
                  "Range": "bytes=0-7", "Accept": "application/octet-stream"}
     )
     with opener(request, timeout=12) as response:
-        code = getattr(response, "status", response.getcode())
+        code = getattr(response, "status", None)
+        if code is None:
+            code = response.getcode()
         if code not in (200, 206):
             return False
         return response.read(8) == b"PMTiles" + bytes([3])
