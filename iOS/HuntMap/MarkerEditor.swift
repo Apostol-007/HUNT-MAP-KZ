@@ -82,7 +82,7 @@ struct MarkerEditor: View {
                                     Text(choice.1).font(.system(size: 9)).lineLimit(1)
                                 }
                                 .frame(maxWidth: .infinity, minHeight: 54)
-                                .foregroundStyle((marker.symbol ?? MarkerStyle.defaultSymbol(for: marker.kind)) == choice.0 ? .white : .primary)
+                                .foregroundStyle((marker.symbol ?? MarkerStyle.defaultSymbol(for: marker.kind)) == choice.0 ? Color.white : Color.primary)
                                 .background((marker.symbol ?? MarkerStyle.defaultSymbol(for: marker.kind)) == choice.0 ? Color.accentColor : Color.gray.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
                             }.buttonStyle(.plain)
                         }
@@ -98,7 +98,7 @@ struct MarkerEditor: View {
                                     .overlay {
                                         if (marker.colorHex ?? "#FF9F0A") == hex {
                                             Image(systemName: "checkmark").font(.caption.bold())
-                                                .foregroundStyle(hex == "#FFFFFF" ? .black : .white)
+                                                .foregroundStyle(hex == "#FFFFFF" ? Color.black : Color.white)
                                         }
                                     }
                             }.buttonStyle(.plain)

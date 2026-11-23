@@ -1,9 +1,7 @@
-
 import SwiftUI
 import HuntCore
 
-/// Offline OSM extracts are downloaded from Overpass and displayed immediately.
-/// This is a feature overlay, not a complete raster/vector basemap.
+/// Offline OSM extracts are feature overlays, not a complete basemap.
 struct QuickMapDownloadSheet: View {
     let point: GeoPoint?
     @ObservedObject var osm: NativeOfflineOSM
@@ -16,138 +14,12 @@ struct QuickMapDownloadSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("Скачать дороги и тропы", systemImage: "arrow.down.circle.fill")
-                            .font(.title2.bold())
-                        Text("Нажмите «Скачать». Данные OpenStreetMap сохранятся на iPhone и сразу появятся на карте. Интернет нужен только для загрузки.")
-                            .foregroundStyle(.secondary)
-                        if let point {
-                            Text(String(format: "Центр: %.5f, %.5f", point.latitude, point.longitude))
-                                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                        } else {
-                            Label("Сначала включите GPS или выберите точку на карте", systemImage: "location.slash")
-                                .foregroundStyle(.orange)
-                        }
-                    }
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Площадь загрузки").font(.headline)
-                        Picker("Радиус", selection: $radius) {
-                            Text("500 м").tag(500)
-                            Text("1 км").tag(1000)
-                            Text("1,5 км").tag(1500)
-                            Text("2,5 км").tag(2500)
-                            Text("5 км").tag(5000)
-                            Text("10 км").tag(10000)
-                        }
-                        .pickerStyle(.menu)
-                        TextField("Название района (необязательно)", text: $name)
-                            .textFieldStyle(.roundedBorder)
-                        Button {
-                            guard let point else { return }
-                            let selectedRadius = radius
-                            let selectedName = name
-                            Task { await osm.download(around: point, radiusMeters: selectedRadius, title: selectedName) }
-                        } label: {
-                            HStack {
-                                Spacer()
-                                if osm.busy { ProgressView().tint(.white) }
-                                Image(systemName: "arrow.down.to.line.compact")
-                                Text(osm.busy ? "Загружаем…" : "Скачать и показать на карте")
-                                Spacer()
-                            }
-                            .font(.headline)
-                            .padding(14)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.white)
-                        .background(point == nil || osm.busy ? Color.gray : Color.orange,
-                                    in: RoundedRectangle(cornerRadius: 13))
-                        .disabled(point == nil || osm.busy)
-                        Text(osm.status)
-                            .font(.footnote)
-                            .foregroundStyle(osm.lastDownloadError == nil ? Color.secondary : Color.red)
-                            .textSelection(.enabled)
-                        if let error = osm.lastDownloadError {
-                            Label("Загрузка не удалась", systemImage: "exclamationmark.triangle.fill")
-                                .font(.subheadline.bold()).foregroundStyle(.red)
-                            Text(error).font(.caption).textSelection(.enabled)
-                            if let host = osm.lastServer {
-                                Text("Последний сервер: \(host) · HTTP: \(osm.lastHTTPStatus.map(String.init) ?? "нет ответа")")
-                                    .font(.caption2).textSelection(.enabled)
-                            }
-                            ShareLink(item: "HUNT MAP KZ OSM download error: \(error); server: \(osm.lastServer ?? "unknown"); HTTP: \(osm.lastHTTPStatus.map(String.init) ?? "none")") {
-                                Label("Поделиться диагностикой загрузки", systemImage: "square.and.arrow.up")
-                            }
-                            .font(.caption)
-                        }
-                    }
-                    .padding(16)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
-
-                    VStack(alignment: .leading, spacing: 12) {
-                        Label("Карты с моего хостинга", systemImage: "server.rack")
-                            .font(.headline)
-                        TextField("https://site.kz/maps/catalog.json", text: $tiles.staticCatalogURL)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .textFieldStyle(.roundedBorder)
-                        Button("Получить список карт") {
-                            Task { await tiles.loadStaticCatalog() }
-                        }
-                        .disabled(tiles.busy)
-                        ForEach(tiles.staticPacks) { pack in
-                            HStack {
-                                VStack(alignment: .leading) {
-                                    Text(pack.name).font(.subheadline.bold())
-                                    Text("z\(pack.minzoom)–z\(pack.maxzoom) · \(pack.bytes / 1_048_576) МБ")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Button("Скачать") { Task { await tiles.installStaticPack(pack) } }
-                                    .disabled(tiles.busy)
-                            }
-                        }
-                        if tiles.busy { ProgressView(value: tiles.progress) }
-                        Text(tiles.message).font(.caption).foregroundStyle(.secondary)
-                    }
-                    .padding(16)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("Мои офлайн-районы", systemImage: "internaldrive").font(.headline)
-                        Text("\(osm.regions.count) районов · \(osm.lines.count) объектов OSM")
-                            .font(.subheadline).foregroundStyle(.secondary)
-                        ForEach(osm.regions) { region in
-                            HStack {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(region.title).font(.subheadline.bold())
-                                    Text("\(region.radiusMeters) м · \(region.featureCount) объектов")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Button(role: .destructive) { osm.remove(region) } label: {
-                                    Image(systemName: "trash")
-                                }
-                                .disabled(osm.busy)
-                            }
-                            Divider()
-                        }
-                        Button("Все установленные карты и импорт MBTiles") {
-                            dismiss()
-                            onOpenLibrary()
-                        }
-                        .font(.subheadline.bold())
-                    }
-                    .padding(16)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
-
-                    Text("Источник: © OpenStreetMap contributors, ODbL, через Overpass API. Скачиваются геометрии дорог, троп и водотоков, а не полная подложка. Публичный API ограничивает размер запросов.")
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    locationSection
+                    downloadSection
+                    serverSection
+                    savedSection
+                    Text("Источник: © OpenStreetMap contributors, ODbL. Overpass предоставляет геометрии дорог и троп, но не полную картографическую подложку.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 .padding(16)
@@ -155,8 +27,136 @@ struct QuickMapDownloadSheet: View {
             .background(Color(.systemGroupedBackground))
             .navigationTitle("Офлайн-карта")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Готово") { dismiss() }
+                }
+            }
         }
+    }
+
+    private var locationSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Скачать дороги и тропы", systemImage: "arrow.down.circle.fill")
+                .font(.title2.bold())
+            Text("Данные OpenStreetMap сохраняются на iPhone. Для загрузки нужен интернет.")
+                .font(.subheadline).foregroundStyle(.secondary)
+            if let point {
+                Text(String(format: "Центр: %.5f, %.5f", point.latitude, point.longitude))
+                    .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            } else {
+                Label("Включите GPS или выберите точку на карте", systemImage: "location.slash")
+                    .foregroundStyle(.orange)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    private var downloadSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Площадь загрузки").font(.headline)
+            Picker("Радиус", selection: $radius) {
+                Text("500 м").tag(500)
+                Text("1 км").tag(1000)
+                Text("1,5 км").tag(1500)
+                Text("2,5 км").tag(2500)
+                Text("5 км").tag(5000)
+                Text("10 км").tag(10000)
+            }
+            .pickerStyle(.menu)
+            TextField("Название района (необязательно)", text: $name)
+                .textFieldStyle(.roundedBorder)
+            Button {
+                guard let point else { return }
+                let chosenRadius = radius
+                let chosenName = name
+                Task { await osm.download(around: point, radiusMeters: chosenRadius, title: chosenName) }
+            } label: {
+                HStack(spacing: 8) {
+                    if osm.busy { ProgressView().tint(.white) }
+                    Image(systemName: "arrow.down.to.line.compact")
+                    Text(osm.busy ? "Загружаем…" : "Скачать и показать на карте")
+                }
+                .frame(maxWidth: .infinity).padding(14)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.orange)
+            .disabled(point == nil || osm.busy)
+            Text(osm.status).font(.footnote)
+                .foregroundStyle(osm.lastDownloadError == nil ? Color.secondary : Color.red)
+                .textSelection(.enabled)
+            if let error = osm.lastDownloadError {
+                Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                ShareLink(item: "HUNT MAP KZ OSM: \(error); HTTP: \(osm.lastHTTPStatus.map(String.init) ?? "нет ответа")") {
+                    Label("Поделиться ошибкой загрузки", systemImage: "square.and.arrow.up")
+                }
+            }
+        }
+        .padding(16)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    private var serverSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Карты с сервера", systemImage: "server.rack").font(.headline)
+            TextField("HTTPS-адрес сервера карт", text: $tiles.serviceURL)
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
+                .textFieldStyle(.roundedBorder)
+            Text("Подключается только сервер с API /v1/packs/manifest. Статический catalog.json имеет другой формат и здесь не поддерживается.")
+                .font(.caption).foregroundStyle(.secondary)
+            Button("Найти доступные карты") {
+                Task { await tiles.fetch(scope: "country", id: "KZ") }
+            }
+            .disabled(tiles.busy)
+            ForEach(tiles.available) { pack in
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(pack.pack_id).font(.subheadline.bold())
+                        Text("\(pack.size_bytes / 1_048_576) МБ · \(pack.source_version)")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Скачать") { Task { await tiles.install(pack) } }
+                        .disabled(tiles.busy)
+                }
+            }
+            if tiles.busy { ProgressView(value: tiles.progress) }
+            Text(tiles.message).font(.caption).foregroundStyle(.secondary)
+        }
+        .padding(16)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    private var savedSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Мои офлайн-районы", systemImage: "internaldrive").font(.headline)
+            Text("\(osm.regions.count) районов · \(osm.lines.count) объектов OSM")
+                .font(.subheadline).foregroundStyle(.secondary)
+            ForEach(osm.regions) { region in
+                HStack {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(region.title).font(.subheadline.bold())
+                        Text("\(region.radiusMeters) м · \(region.featureCount) объектов")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button(role: .destructive) { osm.remove(region) } label: {
+                        Image(systemName: "trash")
+                    }
+                    .disabled(osm.busy)
+                }
+            }
+            Button("Все установленные карты и импорт MBTiles") {
+                dismiss()
+                onOpenLibrary()
+            }
+            .font(.subheadline.bold())
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
     }
 }
 

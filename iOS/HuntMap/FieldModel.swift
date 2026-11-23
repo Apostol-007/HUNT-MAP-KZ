@@ -9,6 +9,9 @@ struct Marker: Identifiable, Codable {
     var kind: String
     var coordinate: GeoPoint
     var createdAt: Date = Date()
+    // Optional styling metadata keeps older saved marker JSON compatible.
+    var symbol: String? = nil
+    var colorHex: String? = nil
 }
 struct TrackFix: Codable {
     var point: GeoPoint
