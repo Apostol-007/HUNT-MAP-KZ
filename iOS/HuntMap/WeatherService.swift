@@ -74,18 +74,34 @@ import CoreLocation
                 var request = URLRequest(url: target)
                 request.timeoutInterval = 15
                 let (data, response) = try await URLSession.shared.data(for: request)
-                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { throw URLError(.badServerResponse) }
+                guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+                if http.statusCode != 200 {
+                    AppDiagnosticLog.shared.recordHTTP(subsystem: "Погода",
+                        operation: "Почасовой прогноз", code: http.statusCode,
+                        responseData: data, path: "/v1/forecast", usedCache: self.forecast != nil)
+                    let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+                    let reason = String(((payload?["reason"] as? String) ?? "Неверный ответ сервера").prefix(160))
+                    throw NSError(domain: "OpenMeteoHTTP", code: http.statusCode,
+                        userInfo: [NSLocalizedDescriptionKey: "Open-Meteo HTTP \(http.statusCode): \(reason)"])
+                }
                 guard data.count < 2_000_000 else { throw URLError(.dataLengthExceedsMaximum) }
                 let result = try OpenMeteoDecoder.decode(data)
                 guard !Task.isCancelled else { return }
                 self.forecast = result
                 self.isCached = false
                 self.message = "Прогноз загружен · Open-Meteo"
+                AppDiagnosticLog.shared.record(severity: "info", subsystem: "Погода",
+                    operation: "Обновление точечного прогноза", code: "HTTP 200",
+                    rootCause: "Данные получены", nextAction: "Не требуется",
+                    details: "7 дней прогноза", endpoint: "/v1/forecast")
                 if let encoded = try? JSONEncoder().encode(result) {
                     try? encoded.write(to: self.cacheURL, options: [.atomic])
                 }
             } catch {
                 guard !Task.isCancelled else { return }
+                AppDiagnosticLog.shared.recordError(subsystem: "Погода",
+                    operation: "Точечный прогноз", error: error,
+                    endpoint: "/v1/forecast", usedCache: self.forecast != nil)
                 self.message = "Ошибка обновления: \(error.localizedDescription). \(self.forecast == nil ? "Нет данных" : "Показан кэш")"
                 self.isCached = self.forecast != nil
             }
