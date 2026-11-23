@@ -14,7 +14,9 @@ def test_offline_maplibre_has_no_online_tile_fallback():
     assert 'tileURLTemplates' in map_view
     assert 'URL(string: "mbtiles://' not in map_view
     # Remote style is allowed only behind an explicit user-controlled online flag.
-    assert 'online ? selectedStyle : (nativeOfflineStyleURL ?? OfflineMapStyle.url)' in map_view
+    assert 'protomapsOfflineStyleURL ?? nativeOfflineStyleURL ?? OfflineMapStyle.url' in map_view
+    assert 'protomapsOnlineStyleURL' in map_view
+    assert 'MapBasemap.protomaps.rawValue' in map_view
     assert 'MLNTilePyramidOfflineRegion' in (IOS / 'NativeOfflinePackStore.swift').read_text()
     assert 'HuntOfflineStyleURL' in (IOS / 'NativeOfflinePackStore.swift').read_text()
     sources = (IOS / 'MapSources.swift').read_text()

@@ -6,6 +6,8 @@ on:
     paths:
       - 'iOS/**'
       - 'Core/**'
+      - 'server/tests/**'
+      - 'tools/prepare_protomaps_grid.py'
       - '.github/workflows/ios-unsigned-ipa.yml'
 
 permissions:
