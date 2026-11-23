@@ -25,6 +25,11 @@ struct Track: Identifiable, Codable {
     var createdAt: Date = Date()
     var fixes: [TrackFix] = []
     var distanceMeters: Double { zip(fixes, fixes.dropFirst()).reduce(0) { $0 + GeoMath.meters($1.0.point, $1.1.point) } }
+    /// Elapsed time between first and last accepted fix; does not invent time for empty tracks.
+    var durationSeconds: TimeInterval {
+        guard let start = fixes.first?.timestamp, let finish = fixes.last?.timestamp else { return 0 }
+        return max(0, finish.timeIntervalSince(start))
+    }
 }
 struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var pendingTrack:Track?=nil; var zones:[GeoZone]=[] }
 
@@ -80,6 +85,7 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
             if manager.authorizationStatus == .notDetermined { manager.requestWhenInUseAuthorization() }
             return
         }
+        lastFix=nil // Do not reuse the last fix from a previous recording session.
         currentTrack=Track(name:"Маршрут \(Date.now.formatted(date:.numeric,time:.shortened))")
         recording=true;paused=false
         // Background updates are enabled ONLY after Always authorization; foreground-only
@@ -92,11 +98,18 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         status = manager.authorizationStatus == .authorizedAlways ? "Запись: фон разрешён" : "Запись: только на экране; для фона разрешите «Всегда»"
         persist()
     }
-    func togglePause() { paused.toggle(); persist() }
+    func togglePause() {
+        guard recording else { return }
+        paused.toggle()
+        lastFix = nil // A paused interval must not create a jump when recording resumes.
+        status = paused ? "Запись приостановлена" : "Запись продолжена"
+        persist()
+    }
     func stopTrack() {
         guard recording else {return}
         if let track=currentTrack, !track.fixes.isEmpty {tracks.insert(track,at:0)}
         currentTrack=nil;recording=false;paused=false
+        lastFix=nil
         if manager.allowsBackgroundLocationUpdates { manager.allowsBackgroundLocationUpdates=false }
         manager.pausesLocationUpdatesAutomatically=true
         persist()
@@ -129,13 +142,16 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         persist()
     }
     func locationManager(_ manager:CLLocationManager,didUpdateLocations locations:[CLLocation]) {
-        guard let fix=locations.last,fix.horizontalAccuracy>=0,Date().timeIntervalSince(fix.timestamp)<30 else {return}
+        guard let fix=locations.last,
+              fix.horizontalAccuracy >= 0, fix.horizontalAccuracy <= 100,
+              Date().timeIntervalSince(fix.timestamp) >= -5,
+              Date().timeIntervalSince(fix.timestamp) < 30 else {return}
         let p=GeoPoint(fix.coordinate.latitude,fix.coordinate.longitude)
         guard p.valid else {return}
         coordinate=p;accuracy=fix.horizontalAccuracy
         status="GPS ±\(Int(fix.horizontalAccuracy)) м"
         if recording && !paused {
-            if let last=lastFix, abs(fix.timestamp.timeIntervalSince(last.timestamp))<1 {return}
+            if let last=lastFix, fix.timestamp.timeIntervalSince(last.timestamp)<1 {return}
             if let last=lastFix {
                 let dt=fix.timestamp.timeIntervalSince(last.timestamp)
                 if dt>0 && GeoMath.meters(GeoPoint(last.coordinate.latitude,last.coordinate.longitude),p)/dt>80 {return}
@@ -167,7 +183,16 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
     private func load() {
         guard let bytes=try? Data(contentsOf:documentURL),let obj=try? JSONDecoder().decode(LocalData.self,from:bytes) else {return}
         markers=obj.markers;tracks=obj.tracks;zones=obj.zones
-        if let pending=obj.pendingTrack {tracks.insert(Track(id:pending.id,name:pending.name+" (восстановлен)",createdAt:pending.createdAt,fixes:pending.fixes),at:0)}
+        // An interrupted recording is restored exactly once. Clear pendingTrack on disk
+        // immediately, otherwise every relaunch would duplicate the recovered route.
+        if let pending=obj.pendingTrack {
+            if !pending.fixes.isEmpty && !tracks.contains(where: { $0.id == pending.id }) {
+                tracks.insert(Track(id:pending.id, name:pending.name+" (восстановлен)",
+                                    createdAt:pending.createdAt, fixes:pending.fixes), at:0)
+            }
+            lastWarning = "Запись после закрытия приложения восстановлена"
+            persist()
+        }
     }
     private func persist() {
         guard let encoded=try? JSONEncoder().encode(LocalData(markers:markers,tracks:tracks,pendingTrack:currentTrack,zones:zones)) else {return}
@@ -175,7 +200,12 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
     }
     func exportGPX(_ track:Track)->URL? {
         func xml(_ s:String)->String {s.replacingOccurrences(of:"&",with:"&amp;").replacingOccurrences(of:"<",with:"&lt;").replacingOccurrences(of:">",with:"&gt;").replacingOccurrences(of:"\"",with:"&quot;")}
-        let points=track.fixes.map { f in "<trkpt lat=\"\(f.point.latitude)\" lon=\"\(f.point.longitude)\"><time>\(ISO8601DateFormatter().string(from:f.timestamp))</time></trkpt>" }.joined()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let points = track.fixes.map { fix -> String in
+            let elevation = fix.altitude.isFinite ? "<ele>\(fix.altitude)</ele>" : ""
+            return "<trkpt lat=\"\(fix.point.latitude)\" lon=\"\(fix.point.longitude)\">\(elevation)<time>\(formatter.string(from:fix.timestamp))</time></trkpt>"
+        }.joined()
         let data="<?xml version=\"1.0\" encoding=\"UTF-8\"?><gpx version=\"1.1\" creator=\"HUNT MAP KZ\" xmlns=\"http://www.topografix.com/GPX/1/1\"><trk><name>\(xml(track.name))</name><trkseg>\(points)</trkseg></trk></gpx>"
         let url=FileManager.default.temporaryDirectory.appendingPathComponent("route-\(track.id).gpx")
         do {try data.write(to:url,atomically:true,encoding:.utf8);return url} catch {return nil}

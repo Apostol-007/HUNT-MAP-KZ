@@ -508,6 +508,13 @@ struct MainView: View {
         }
     }
 
+    private func routeDuration(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds))
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        return hours > 0 ? "\(hours) ч \(minutes) мин" : "\(minutes) мин"
+    }
+
     private func routeRow(_ track: Track) -> some View {
         HStack(spacing: 12) {
             Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
@@ -517,7 +524,8 @@ struct MainView: View {
                 .background(HuntReference.green.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
             VStack(alignment: .leading, spacing: 5) {
                 Text(track.name).font(.subheadline.bold())
-                Text(String(format: "%.2f км · %d точек", track.distanceMeters / 1000, track.fixes.count))
+                Text(String(format: "%.2f км · %d точек · %@", track.distanceMeters / 1000,
+                            track.fixes.count, routeDuration(track.durationSeconds)))
                     .font(.caption).foregroundStyle(HuntReference.muted)
                 Text(track.createdAt.formatted(date: .numeric, time: .omitted))
                     .font(.caption2).foregroundStyle(HuntReference.muted)
