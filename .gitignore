@@ -1,0 +1,23 @@
+# Generated local files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.log
+.DS_Store
+Thumbs.db
+.swiftpm/
+.build/
+DerivedData/
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+# Private connection details
+hosting_config.json
+**/hosting_config.json
+.env
+.env.*
+# Temporary files
+*.tmp
+*.part.tmp

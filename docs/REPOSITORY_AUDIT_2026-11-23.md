@@ -1,0 +1,196 @@
+# Аудит и очистка HUNT MAP KZ — 2026-11-23
+
+**База:** `595ddca7d00aeeb79e270b9ed13c60ae8a40be2e` (ветка `main`).
+
+Проанализирован полный рекурсивный Git tree: **316 файлов**. Удалено **177 файлов** только из заведомо неактивных групп, включая:
+
+- `hunt_work/` — 58 файлов исторической копии проекта.
+- `__pycache__/` — 28 файлов Python bytecode.
+- Корень репозитория — 79 устаревших дублей Swift/Python, тестов, архивов, логов, конфигураций и старых скриптов загрузки.
+- `docs/*-test*.log` — 12 исторических логов тестов.
+
+**Сохранены** рабочие `iOS/`, `Core/`, `server/` (кроме кэша), `tools/`, `scripts/`, `maps/`, `hosting_upload/`, `examples/`, `.github/` и версия документации в `docs/` (кроме логов).
+
+В `README.md` актуализированы пути сборки. Добавлен `.gitignore` для предотвращения возврата кэша и локальных секретов. История Git остаётся доступной: удалённые объекты можно восстановить по базовому коммиту.
+
+**Ограничения:** статический аудит структуры не подтверждает успешную компиляцию Xcode, работу MapLibre на устройстве или подключение к хостингу. Осмысленные, но потенциально устаревшие файлы в `docs/` и реальные карты не удалены без функциональной проверки.
+
+## Удалённые пути
+
+- `ABOUT_AUTHOR.md`
+- `APPLY_PATCH_WINDOWS.bat`
+- `APP_ICON.md`
+- `AppIcon.png`
+- `BUILD_CHECK.md`
+- `BoundaryDownloader.swift`
+- `BoundaryEngine.swift`
+- `Contents (1).json`
+- `Contents.json`
+- `DELETE_FILES.txt`
+- `Diagnostics.swift`
+- `FieldModel.swift`
+- `GBIFDiscovery.swift`
+- `GITHUB_IPA_WINDOWS_RU.md`
+- `GITHUB_UPLOAD_STEPS_RU.md`
+- `GeoJSONImport.swift`
+- `Geometry.swift`
+- `GeometryTests.swift`
+- `HUNT_MAP_KZ_v1.4_LAYOUT_FIXED.zip`
+- `HuntMapApp.swift`
+- `IMPLEMENTATION_STATUS.md`
+- `LaunchScreen.storyboard`
+- `MainView.swift`
+- `OfflineMapView.swift`
+- `OfflineTiles.swift`
+- `PATCH_README.md`
+- `PackTransfer.swift`
+- `PackTransferTests.swift`
+- `Package.swift`
+- `README_GITHUB.md`
+- `RELEASE_v0.2.md`
+- `RELEASE_v0.3.md`
+- `RELEASE_v0.4.md`
+- `RELEASE_v0.5.md`
+- `RELEASE_v0.6.md`
+- `RELEASE_v0.7.md`
+- `RELEASE_v0.8.md`
+- `RELEASE_v0.9.md`
+- `RELEASE_v1.0.md`
+- `RELEASE_v1.1_FULLSCREEN_FIX.md`
+- `RELEASE_v1.2_LAUNCH_FIX.md`
+- `RELEASE_v1.3_SIDE_CONTROLS.md`
+- `RELEASE_v1.4_LAYOUT_FIX.md`
+- `TABIGAT_INTEGRATION_RU.md`
+- `Wildlife.swift`
+- `WildlifeStore.swift`
+- `WildlifeTests.swift`
+- `WildlifeUpdater.swift`
+- `__init__.py`
+- `app.py`
+- `boundary_ingest.py`
+- `catalog.json`
+- `docs/server-test-v0.3.log`
+- `docs/server-test-v0.4.log`
+- `docs/server-test-v0.5.log`
+- `docs/server-test-v0.7.log`
+- `docs/server-test-v0.8.log`
+- `docs/server-test.log`
+- `docs/swift-test-v0.3.log`
+- `docs/swift-test-v0.4.log`
+- `docs/swift-test-v0.5.log`
+- `docs/swift-test-v0.7.log`
+- `docs/swift-test-v0.8.log`
+- `docs/swift-test.log`
+- `download`
+- `gbif_etl.py`
+- `hunt_work/Core/Package.swift`
+- `hunt_work/Core/Sources/HuntCore/BoundaryEngine.swift`
+- `hunt_work/Core/Sources/HuntCore/Geometry.swift`
+- `hunt_work/Core/Sources/HuntCore/PackTransfer.swift`
+- `hunt_work/Core/Sources/HuntCore/Wildlife.swift`
+- `hunt_work/Core/Tests/HuntCoreTests/GeometryTests.swift`
+- `hunt_work/Core/Tests/HuntCoreTests/PackTransferTests.swift`
+- `hunt_work/Core/Tests/HuntCoreTests/WildlifeTests.swift`
+- `hunt_work/README.md`
+- `hunt_work/README_GITHUB.md`
+- `hunt_work/docs/ABOUT_AUTHOR.md`
+- `hunt_work/docs/APP_ICON.md`
+- `hunt_work/docs/BUILD_CHECK.md`
+- `hunt_work/docs/GITHUB_IPA_WINDOWS_RU.md`
+- `hunt_work/docs/GITHUB_UPLOAD_STEPS_RU.md`
+- `hunt_work/docs/IMPLEMENTATION_STATUS.md`
+- `hunt_work/docs/RELEASE_v0.2.md`
+- `hunt_work/docs/RELEASE_v0.3.md`
+- `hunt_work/docs/RELEASE_v0.4.md`
+- `hunt_work/docs/RELEASE_v0.5.md`
+- `hunt_work/docs/RELEASE_v0.6.md`
+- `hunt_work/docs/RELEASE_v0.7.md`
+- `hunt_work/docs/RELEASE_v0.8.md`
+- `hunt_work/docs/RELEASE_v0.9.md`
+- `hunt_work/docs/RELEASE_v1.0.md`
+- `hunt_work/docs/RELEASE_v1.1_FULLSCREEN_FIX.md`
+- `hunt_work/docs/RELEASE_v1.2_LAUNCH_FIX.md`
+- `hunt_work/docs/RELEASE_v1.3_SIDE_CONTROLS.md`
+- `hunt_work/docs/TABIGAT_INTEGRATION_RU.md`
+- `hunt_work/docs/server-test-v0.3.log`
+- `hunt_work/docs/server-test-v0.4.log`
+- `hunt_work/docs/server-test-v0.5.log`
+- `hunt_work/docs/server-test-v0.7.log`
+- `hunt_work/docs/server-test-v0.8.log`
+- `hunt_work/docs/server-test.log`
+- `hunt_work/docs/swift-test-v0.3.log`
+- `hunt_work/docs/swift-test-v0.4.log`
+- `hunt_work/docs/swift-test-v0.5.log`
+- `hunt_work/docs/swift-test-v0.7.log`
+- `hunt_work/docs/swift-test-v0.8.log`
+- `hunt_work/docs/swift-test.log`
+- `hunt_work/examples/wildlife-schema-example.json`
+- `hunt_work/iOS/HuntMap/Assets.xcassets/AppIcon.appiconset/AppIcon.png`
+- `hunt_work/iOS/HuntMap/Assets.xcassets/AppIcon.appiconset/Contents.json`
+- `hunt_work/iOS/HuntMap/Assets.xcassets/Contents.json`
+- `hunt_work/iOS/HuntMap/BoundaryDownloader.swift`
+- `hunt_work/iOS/HuntMap/Diagnostics.swift`
+- `hunt_work/iOS/HuntMap/FieldModel.swift`
+- `hunt_work/iOS/HuntMap/GBIFDiscovery.swift`
+- `hunt_work/iOS/HuntMap/GeoJSONImport.swift`
+- `hunt_work/iOS/HuntMap/HuntMapApp.swift`
+- `hunt_work/iOS/HuntMap/LaunchScreen.storyboard`
+- `hunt_work/iOS/HuntMap/MainView.swift`
+- `hunt_work/iOS/HuntMap/OfflineMapView.swift`
+- `hunt_work/iOS/HuntMap/OfflineTiles.swift`
+- `hunt_work/iOS/HuntMap/WildlifeStore.swift`
+- `hunt_work/iOS/HuntMap/WildlifeUpdater.swift`
+- `hunt_work/iOS/project.yml`
+- `ios-unsigned.yml`
+- `project.yml`
+- `publish_mbtiles.py`
+- `quality.yml`
+- `requirements.txt`
+- `server-test-v0.3.log`
+- `server-test-v0.4.log`
+- `server-test-v0.5.log`
+- `server-test-v0.7.log`
+- `server-test-v0.8.log`
+- `server-test.log`
+- `server/__pycache__/__init__.cpython-313.pyc`
+- `server/__pycache__/app.cpython-313.pyc`
+- `server/__pycache__/boundary_ingest.cpython-313.pyc`
+- `server/__pycache__/gbif_etl.cpython-313.pyc`
+- `server/__pycache__/publish_mbtiles.cpython-313.pyc`
+- `server/__pycache__/weather_grid.cpython-313.pyc`
+- `server/__pycache__/wildlife.cpython-313.pyc`
+- `server/tests/__pycache__/test_api.cpython-313-pytest-9.0.2.pyc`
+- `server/tests/__pycache__/test_boundary_ingest.cpython-313-pytest-9.0.2.pyc`
+- `server/tests/__pycache__/test_gbif_etl.cpython-313-pytest-9.0.2.pyc`
+- `server/tests/__pycache__/test_ios_offline_contract.cpython-313-pytest-9.0.2.pyc`
+- `server/tests/__pycache__/test_point_packs.cpython-313-pytest-9.0.2.pyc`
+- `server/tests/__pycache__/test_publish.cpython-313-pytest-9.0.2.pyc`
+- `server/tests/__pycache__/test_weather_grid.cpython-313-pytest-9.0.2.pyc`
+- `server/tests/__pycache__/test_wildlife_delivery.cpython-313-pytest-9.0.2.pyc`
+- `swift-test-v0.3.log`
+- `swift-test-v0.4.log`
+- `swift-test-v0.5.log`
+- `swift-test-v0.7.log`
+- `swift-test-v0.8.log`
+- `swift-test.log`
+- `test_api.py`
+- `test_boundary_ingest.py`
+- `test_ios_offline_contract.py`
+- `test_publish.py`
+- `test_wildlife_delivery.py`
+- `tools/__pycache__/build_from_pbf.cpython-313.pyc`
+- `tools/__pycache__/build_osm_mbtiles.cpython-313.pyc`
+- `tools/__pycache__/download_kazakhstan.cpython-313.pyc`
+- `tools/__pycache__/fetch_osm_region.cpython-313.pyc`
+- `tools/__pycache__/map_catalog_server.cpython-313.pyc`
+- `tools/__pycache__/prepare_offline_map.cpython-313.pyc`
+- `tools/__pycache__/test_build_from_pbf.cpython-313.pyc`
+- `tools/__pycache__/test_build_osm_mbtiles.cpython-313.pyc`
+- `tools/__pycache__/test_download_kazakhstan.cpython-313.pyc`
+- `tools/__pycache__/test_fetch_osm_region.cpython-313-pytest-9.0.2.pyc`
+- `tools/__pycache__/test_fetch_osm_region.cpython-313.pyc`
+- `tools/__pycache__/test_map_catalog_server.cpython-313.pyc`
+- `tools/__pycache__/test_prepare_offline_map.cpython-313.pyc`
+- `verify_iphone_layout.py`
+- `wildlife-schema-example.json`
+- `wildlife.py`
