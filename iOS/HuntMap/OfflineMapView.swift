@@ -402,7 +402,7 @@ struct OfflineMapView: UIViewRepresentable {
             for road in offlineRoadLines where road.points.count >= 2 {
                 var coords = road.points.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
                 let line = MLNPolyline(coordinates: &coords, count: UInt(coords.count))
-                line.title = "OFFLINE|ROAD"
+                line.title = road.isTrail ? "OFFLINE|TRAIL" : "OFFLINE|ROAD"
                 updated.append(line)
             }
             for zone in zones {
@@ -500,6 +500,7 @@ struct OfflineMapView: UIViewRepresentable {
             if annotation.title == "GRID|AVAILABLE" { return UIColor.white.withAlphaComponent(0.65) }
             if annotation.title?.hasPrefix("WX-ISOBAR|") == true { return .white }
             if annotation.title?.hasPrefix("WX-WIND|") == true { return .white }
+            if annotation.title == "OFFLINE|TRAIL" { return .systemOrange }
             if annotation.title == "OFFLINE|ROAD" { return .systemGreen }
             if annotation.title == "NAV|HUNT" { return .systemCyan }
             if annotation.title == "Записанный маршрут" { return .systemGreen }
@@ -510,6 +511,7 @@ struct OfflineMapView: UIViewRepresentable {
             if annotation.title == "GRID|AVAILABLE" { return 1 }
             if annotation.title?.hasPrefix("WX-ISOBAR|") == true { return 1.8 }
             if annotation.title?.hasPrefix("WX-WIND|") == true { return 2.3 }
+            if annotation.title == "OFFLINE|TRAIL" { return 2.5 }
             if annotation.title == "OFFLINE|ROAD" { return 2 }
             if annotation.title == "NAV|HUNT" { return 5 }
             return annotation.title == "Записанный маршрут" ? 4 : 3

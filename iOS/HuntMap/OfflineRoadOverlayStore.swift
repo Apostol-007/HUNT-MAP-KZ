@@ -2,7 +2,10 @@ import Foundation
 import HuntCore
 
 /// Vector road overlay sourced exclusively from downloaded GeoJSON packages.
-struct OfflineRoadLine: Sendable { let points: [GeoPoint] }
+struct OfflineRoadLine: Sendable {
+    let points: [GeoPoint]
+    let isTrail: Bool
+}
 
 @MainActor final class OfflineRoadOverlayStore: ObservableObject {
     @Published private(set) var lines: [OfflineRoadLine] = []
@@ -54,6 +57,10 @@ struct OfflineRoadLine: Sendable { let points: [GeoPoint] }
                 if lines.count >= 1000 || vertices >= 12000 { break }
                 guard let geo = feature["geometry"] as? [String: Any],
                       let type = geo["type"] as? String else { continue }
+                let props = feature["properties"] as? [String: Any] ?? [:]
+                let nested = props["tags"] as? [String: Any] ?? [:]
+                let highway = String(describing: props["highway"] ?? nested["highway"] ?? "").lowercased()
+                let isTrail = ["path", "footway", "track", "steps", "bridleway", "cycleway", "pedestrian"].contains(highway)
                 let chains: [Any]
                 if type == "LineString" { chains = [geo["coordinates"] ?? []] }
                 else if type == "MultiLineString" { chains = geo["coordinates"] as? [Any] ?? [] }
@@ -77,7 +84,7 @@ struct OfflineRoadLine: Sendable { let points: [GeoPoint] }
                           points.contains(where: { $0.longitude >= bounds[0] && $0.longitude <= bounds[2] &&
                                                    $0.latitude >= bounds[1] && $0.latitude <= bounds[3] })
                     else { continue }
-                    lines.append(OfflineRoadLine(points: points))
+                    lines.append(OfflineRoadLine(points: points, isTrail: isTrail))
                     vertices += points.count
                     if lines.count >= 1000 || vertices >= 12000 { break }
                 }
