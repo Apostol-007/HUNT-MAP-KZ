@@ -25,6 +25,16 @@ struct DiagnosticsView: View {
     let wildlifeCount: Int
     let onlineMap: Bool
     @State private var includeApproximatePosition = false
+    @ObservedObject private var diagnostics = AppDiagnosticLog.shared
+    var weatherGridStatus = "unknown"
+    var weatherPointStatus = "unknown"
+    var startupStatus = "unknown"
+    var startupErrors: [String] = []
+    var internetConnected = false
+    var weatherLayer = "none"
+    var navigationStatus = "none"
+    var protomapsStatus = "unknown"
+    var valhallaStatus = "unknown"
 
     private var releaseVersion: String {
         let info = Bundle.main.infoDictionary ?? [:]
@@ -66,27 +76,84 @@ struct DiagnosticsView: View {
         Boundary count: \(model.zones.count)
         Map frame pt: \(UserDefaults.standard.string(forKey: "hunt.diag.mapFrame") ?? "not measured")
         Fullscreen map geometry: \(UserDefaults.standard.object(forKey: "hunt.diag.fullscreenMap") == nil ? "not measured" : String(UserDefaults.standard.bool(forKey: "hunt.diag.fullscreenMap")))
-        Weather: Point forecast Open-Meteo; gridded model overlay supported (requires HTTPS backend); no radar or animated wind particles
+        Network path available: \(internetConnected)
+        Weather point status: \(weatherPointStatus)
+        Weather grid status: \(weatherGridStatus)
+        Weather selected layer: \(weatherLayer)
+        Startup: \(startupStatus)
+        Startup failures: \(startupErrors.joined(separator: " | "))
+        Protomaps: \(protomapsStatus)
+        Valhalla: \(valhallaStatus)
+        Navigation: \(navigationStatus)
+        Weather: Open-Meteo model forecast; cached observations are not live radar.
         Map packs: \(mapCount)
         Wildlife catalogs: \(wildlifeCount)
         Map mode: \(onlineMap ? "online OpenFreeMap" : "strict offline")
         Last GPS error: \(model.lastError)
         Last warning: \(model.lastWarning)
+        ---- LOGGED ERRORS AND ROOT CAUSES (last \(diagnostics.events.count)) ----
+        \(diagnostics.export())
         NOTE: Diagnostic does NOT include exact coordinates, names, tracks, emails, tokens or personal identifiers.
         """
     }
     var body: some View {
         NavigationStack {
             Form {
+                Section("Сводка событий") {
+                    HStack {
+                        Label("Сохранённые события", systemImage: "waveform.path.ecg")
+                        Spacer()
+                        Text("\(diagnostics.events.count)").monospacedDigit()
+                    }
+                    Label(internetConnected ? "Интернет доступен" : "Нет интернет-подключения",
+                          systemImage: internetConnected ? "wifi" : "wifi.slash")
+                    Text("Погода: \(weatherGridStatus)")
+                        .font(.caption)
+                    Text("Прогноз точки: \(weatherPointStatus)")
+                        .font(.caption)
+                    Text("Синхронизация: \(startupStatus)")
+                        .font(.caption)
+                    if !startupErrors.isEmpty {
+                        ForEach(startupErrors.prefix(7), id: \.self) { error in
+                            Text(error).font(.caption).foregroundStyle(.orange)
+                        }
+                    }
+                }
+                Section("Причины ошибок и рекомендации") {
+                    if diagnostics.events.isEmpty {
+                        Text("Ошибок пока не зарегистрировано. При следующем сбое журнал заполнится автоматически.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    ForEach(Array(diagnostics.events.reversed().prefix(35))) { event in
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text("\(event.subsystem) · \(event.operation)")
+                                .font(.subheadline.bold())
+                            Text("\(event.code) · \(event.recordedAt.formatted(date: .numeric, time: .standard))")
+                                .font(.caption.monospacedDigit()).foregroundStyle(.orange)
+                            Text("Причина: \(event.rootCause)").font(.caption)
+                            Text("Что проверить: \(event.nextAction)")
+                                .font(.caption).foregroundStyle(.secondary)
+                            if !event.details.isEmpty {
+                                Text(event.details).font(.caption2.monospaced())
+                                    .foregroundStyle(.secondary).textSelection(.enabled)
+                            }
+                        }.padding(.vertical, 5)
+                    }
+                }
                 Section("Отчёт об ошибках") {
                     Text("Потрясите iPhone, чтобы снова открыть этот экран. Перед отправкой проверьте содержимое.")
                     Toggle("Добавить примерное местоположение (округлено)", isOn: $includeApproximatePosition)
-                    Text(report).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+                    Text("Отчёт включает версию сборки, iOS, GPS, настройки карты, состояние погоды, синхронизацию, историю ошибок, предполагаемые причины и рекомендации.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text(report).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
                 }
                 Section {
                     ShareLink(item: report, subject: Text("HUNT MAP KZ · диагностика"), message: Text("Отчёт для анализа ошибки")) {
                         Label("Поделиться отчётом / ChatGPT", systemImage: "square.and.arrow.up")
                     }
+                    Button {
+                        UIPasteboard.general.string = report
+                    } label: { Label("Скопировать полный отчёт", systemImage: "doc.on.doc") }
                     if let file = reportFile() {
                         ShareLink(item: file) { Label("Сохранить .txt в Файлы", systemImage: "doc.text") }
                     }

@@ -37,6 +37,7 @@ struct MainView: View {
     @State private var showWeather = false
     @State private var showWeatherLayers = false
     @State private var showAbout = false
+    @State private var showLegalLibrary = false
     @State private var showDiagnostics = false
     @State private var showGBIF = false
     @State private var showSearch = false
@@ -300,9 +301,18 @@ struct MainView: View {
         .sheet(item: $zone) { GroundDetailsSheet(zone: $0) }
         .sheet(isPresented: $showDiagnostics) {
             DiagnosticsView(model: model, mapCount: maps.installed.count,
-                            wildlifeCount: animals.packs.count, onlineMap: online)
+                            wildlifeCount: animals.packs.count, onlineMap: online,
+                            weatherGridStatus: weatherGrid.status, weatherPointStatus: weather.message,
+                            startupStatus: startupSync.title + " · " + startupSync.detail,
+                            startupErrors: startupSync.errors,
+                            internetConnected: connectivity.connected,
+                            weatherLayer: weatherLayer.rawValue,
+                            navigationStatus: navigationKind,
+                            protomapsStatus: protomaps.status,
+                            valhallaStatus: valhalla.status)
         }
         .sheet(isPresented: $showAbout) { AboutHuntView() }
+        .sheet(isPresented: $showLegalLibrary) { LegalLibraryView() }
     }
 
     // MARK: - Root layout
@@ -392,6 +402,29 @@ struct MainView: View {
             }
             .buttonStyle(.plain)
 
+            Button { showLegalLibrary = true } label: {
+                HStack(spacing: 14) {
+                    Image(systemName: "books.vertical.fill")
+                        .font(.system(size: 28, weight: .medium))
+                        .foregroundStyle(HuntReference.green)
+                        .frame(width: 54, height: 54)
+                        .background(HuntReference.green.opacity(0.14), in: RoundedRectangle(cornerRadius: 15))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Библиотека охотника").font(.headline.bold()).foregroundStyle(.white)
+                        Text("Законы РК · Правила охоты · Путёвки · Оружие")
+                            .font(.caption).foregroundStyle(HuntReference.muted)
+                        Text("4 документа · 237 страниц · поиск · офлайн")
+                            .font(.caption2.bold()).foregroundStyle(HuntReference.green)
+                    }
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.right").foregroundStyle(HuntReference.green)
+                }
+                .padding(15)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(HuntReference.card, in: RoundedRectangle(cornerRadius: 18))
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("legal_library_home")
             Text("Быстрые действия").font(.headline.bold())
             LazyVGrid(columns: [.init(.flexible()), .init(.flexible())], spacing: 10) {
                 ReferenceActionCard(title: "Карта и угодья", subtitle: "Открыть карту", symbol: "map") { tab = .map }
@@ -1537,6 +1570,8 @@ struct MainView: View {
         VStack(alignment: .leading, spacing: 18) {
             ReferencePageHeader(title: "Ещё")
             VStack(spacing: 0) {
+                ReferenceMenuRow(symbol: "books.vertical", title: "Библиотека охотника") { showLegalLibrary = true }
+                Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "waveform.path.ecg", title: "Диагностика") { showDiagnostics = true }
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "gearshape", title: "Настройки") { showLayers = true }
