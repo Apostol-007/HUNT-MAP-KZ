@@ -49,14 +49,15 @@ struct MainView: View {
         }
     }
 
+    // The map is a persistent, edge-to-edge background. The interface is
+    // restored to the familiar five-section navigation from the early builds.
+    // Controls are safe-area aware, but they NEVER change the map viewport.
     var body: some View {
         ZStack {
-            // Keep the same MapLibre view alive across navigation: avoid re-creating
-            // its viewport when the user briefly opens routes or downloads.
             mapTab
-                .ignoresSafeArea(.container, edges: .all)
                 .opacity(selectedTab == .map ? 1 : 0)
                 .allowsHitTesting(selectedTab == .map)
+
             if selectedTab != .map {
                 Group {
                     switch selectedTab {
@@ -71,17 +72,26 @@ struct MainView: View {
                 .background(Color(uiColor: .systemBackground))
             }
         }
-        // Overlay: does not alter the map's available height.
         .overlay(alignment: .bottom) { floatingNavigation }
-        .background(Color.black.ignoresSafeArea())
+        .background(Color(uiColor: .systemBackground).ignoresSafeArea())
         .background(ShakeDetector().frame(width: 1, height: 1))
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
-        .sheet(isPresented: $showDiagnostics) { DiagnosticsView(model: model, mapCount: tileStore.installed.count, wildlifeCount: wildlifeStore.packs.count, onlineMap: onlineBasemap) }
+        .sheet(isPresented: $showDiagnostics) {
+            DiagnosticsView(model: model, mapCount: tileStore.installed.count,
+                            wildlifeCount: wildlifeStore.packs.count, onlineMap: onlineBasemap)
+        }
         .sheet(isPresented: $showAbout) { AboutHuntView() }
-        .sheet(isPresented: $showWeather) { WeatherPanel(service: weatherService, coordinate: model.coordinate, online: onlineBasemap)
-            .presentationDetents([.medium, .large]).presentationDragIndicator(.visible) }
-        .sheet(isPresented: $showWeatherMap) { WeatherMapSheet(service: weatherGridService, layer: $weatherLayer, coordinate: model.coordinate, online: onlineBasemap)
-            .presentationDetents([.medium, .large]).presentationDragIndicator(.visible) }
+        .sheet(isPresented: $showWeather) {
+            WeatherPanel(service: weatherService, coordinate: model.coordinate, online: onlineBasemap)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showWeatherMap) {
+            WeatherMapSheet(service: weatherGridService, layer: $weatherLayer,
+                            coordinate: model.coordinate, online: onlineBasemap)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
     }
 
     private var floatingNavigation: some View {
@@ -90,74 +100,93 @@ struct MainView: View {
                 Button {
                     selectedTab = tab
                 } label: {
-                    VStack(spacing: 3) {
-                        Image(systemName: tab.symbol).font(.system(size: 19, weight: .semibold))
-                        Text(tab.rawValue).font(.system(size: 9, weight: .medium))
-                            .lineLimit(1).minimumScaleFactor(0.75)
+                    VStack(spacing: 4) {
+                        Image(systemName: tab.symbol)
+                            .font(.system(size: 25, weight: .medium))
+                            .frame(height: 30)
+                        Text(tab.rawValue)
+                            .font(.system(size: 11, weight: .medium))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.85)
                     }
-                    .foregroundStyle(selectedTab == tab ? .orange : .white)
-                    .frame(maxWidth: .infinity).frame(height: 50)
+                    .foregroundStyle(selectedTab == tab ? Color.orange : Color.white.opacity(0.77))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 64)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(tab.rawValue)
             }
         }
-        .padding(.horizontal, 5)
-        .background(.black.opacity(0.70), in: RoundedRectangle(cornerRadius: 20))
-        .padding(.horizontal, 10)
-        .padding(.bottom, 5)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 5)
+        .background(Color.black.opacity(0.83), in: RoundedRectangle(cornerRadius: 18))
+        .padding(.horizontal, 8)
+        .padding(.bottom, 3)
     }
 
     private var mapTab: some View {
         ZStack {
-            // A true edge-to-edge MapLibre UIView, including behind the status bar,
-            // home indicator, and all floating controls. No VStack controls its height.
-            GeometryReader { geometry in
-                OfflineMapView(
-                    zones: model.zones, position: model.coordinate, markers: model.markers,
-                    track: model.currentTrack, tileFiles: tileStore.paths,
-                    tileRevision: tileStore.revision, online: onlineBasemap,
-                    selectedZone: $selectedZone, weatherGrid: weatherLayer == .none ? nil : weatherGridService.grid,
-                    weatherLayer: weatherLayer
-                )
-                .frame(width: geometry.size.width, height: geometry.size.height)
-            }
+            // No GeometryReader, NavigationStack, TabView, vertical padding,
+            // or fixed height around MLNMapView. Only the *map* ignores safe area.
+            OfflineMapView(
+                zones: model.zones, position: model.coordinate, markers: model.markers,
+                track: model.currentTrack, tileFiles: tileStore.paths,
+                tileRevision: tileStore.revision, online: onlineBasemap,
+                selectedZone: $selectedZone,
+                weatherGrid: weatherLayer == .none ? nil : weatherGridService.grid,
+                weatherLayer: weatherLayer
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .ignoresSafeArea(.container, edges: .all)
 
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
                     Image(systemName: "location.fill").foregroundStyle(.orange)
-                    Text(model.status).lineLimit(1)
-                    Spacer(minLength: 4)
+                    Text(model.status).lineLimit(1).minimumScaleFactor(0.8)
+                    Spacer(minLength: 3)
                     Text(onlineBasemap ? "ONLINE" : "OFFLINE")
-                        .foregroundStyle(onlineBasemap ? .green : .orange)
-                    Button { showWeather = true } label: { Label("Погода", systemImage: "cloud.sun.fill") }
-                        .accessibilityIdentifier("weatherButton")
+                        .foregroundStyle(onlineBasemap ? Color.green : Color.orange)
+                    Button { showWeather = true } label: {
+                        Image(systemName: "cloud.sun.fill")
+                            .font(.system(size: 19))
+                            .frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("Погода")
+                    .accessibilityIdentifier("weatherButton")
                     Menu {
                         Toggle("Онлайн-карта", isOn: $onlineBasemap)
                         Button("Погодные слои", systemImage: "cloud.sun") { showWeatherMap = true }
+                        Button("О приложении", systemImage: "info.circle") { showAbout = true }
                         Button("Диагностика", systemImage: "ladybug") { showDiagnostics = true }
-                    } label: { Image(systemName: "square.3.layers.3d").font(.title3) }
+                    } label: {
+                        Image(systemName: "square.3.layers.3d")
+                            .font(.system(size: 20))
+                            .frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("Слои и настройки")
                 }
                 .font(.footnote.weight(.semibold))
-                .padding(.horizontal, 12).padding(.vertical, 10)
                 .foregroundStyle(.white)
-                .background(.black.opacity(0.70), in: Capsule())
-                .padding(.horizontal, 12).padding(.top, 8)
+                .padding(.leading, 14)
+                .padding(.trailing, 4)
+                .background(Color.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 18))
+                .padding(.horizontal, 10)
+                .padding(.top, 6)
 
                 if weatherLayer != .none {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 7) {
                         Image(systemName: "cloud.fill")
                         Text("\(weatherLayer.rawValue) · \(weatherGridService.forecastLabel)")
                         if weatherGridService.cached { Text("КЭШ").foregroundStyle(.orange) }
+                        Spacer(minLength: 2)
                         Button("Изменить") { showWeatherMap = true }
                     }
                     .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .padding(.horizontal, 12).padding(.vertical, 9)
                     .foregroundStyle(.white)
-                    .background(.black.opacity(0.72), in: Capsule())
-                    .padding(.top, 7)
+                    .background(Color.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 15))
+                    .padding(.horizontal, 10).padding(.top, 6)
                 }
                 Spacer(minLength: 0)
 
@@ -165,10 +194,10 @@ struct MainView: View {
                     Text(model.lastWarning)
                         .font(.footnote.bold()).foregroundStyle(.white)
                         .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.orange.opacity(0.92), in: RoundedRectangle(cornerRadius: 12))
-                        .padding(.horizontal, 12).padding(.bottom, 6)
+                        .background(Color.orange.opacity(0.94), in: RoundedRectangle(cornerRadius: 12))
+                        .padding(.horizontal, 10).padding(.bottom, 6)
                 }
-                HStack(spacing: 12) {
+                HStack(spacing: 0) {
                     fieldControl("location.north.fill", "GPS") { model.requestGPS() }
                     fieldControl("mappin.and.ellipse", "Метка") { model.addMarker() }
                     fieldControl(model.recording ? "stop.fill" : "record.circle.fill",
@@ -176,12 +205,12 @@ struct MainView: View {
                         if model.recording { model.stopTrack() } else { model.startTrack() }
                     }
                 }
-                .padding(.horizontal, 8).padding(.vertical, 6)
-                .background(.black.opacity(0.72), in: Capsule())
-                .padding(.horizontal, 28)
-                .padding(.bottom, 70) // keep actions above floating navigation
+                .padding(.vertical, 4)
+                .background(Color.black.opacity(0.82), in: RoundedRectangle(cornerRadius: 17))
+                .padding(.horizontal, 10)
+                // Space for the navigation overlay, not map layout.
+                .padding(.bottom, 83)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .sheet(item: $selectedZone) { zone in
             GroundDetailsSheet(zone: zone)
