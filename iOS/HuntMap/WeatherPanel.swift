@@ -49,10 +49,10 @@ struct WeatherPanel: View {
                                 }
                                 Slider(value: Binding(get: { Double(hourIndex) }, set: { hourIndex = Int($0) }),
                                        in: 0...Double(max(0, forecast.hourly.count - 1)), step: 1)
-                                    .tint(.orange)
+                                    .tint(FBTheme.green)
                                 Text("Это прогноз для одной точки, не карта осадков или поле ветра.")
                                     .font(.caption2).foregroundStyle(.secondary)
-                            }.padding(14).background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+                            }.padding(14).background(FBTheme.panel2, in: RoundedRectangle(cornerRadius: 16, style: .continuous)).overlay(RoundedRectangle(cornerRadius: 16).stroke(FBTheme.stroke, lineWidth: 1))
                             detail(selectedHour(forecast))
                         }
                         Text("Источник: \(forecast.source) · получено \(forecast.retrievedAt.formatted(date: .abbreviated, time: .shortened))")
@@ -72,7 +72,7 @@ struct WeatherPanel: View {
                             Label("Обновить прогноз", systemImage: "arrow.clockwise")
                                 .frame(maxWidth: .infinity)
                         }
-                        .buttonStyle(.borderedProminent).tint(.orange)
+                        .buttonStyle(.borderedProminent).tint(FBTheme.green)
                         .disabled(service.busy || !online)
                     } else {
                         Text("Включите GPS, чтобы получить прогноз для своей позиции.")
@@ -83,7 +83,7 @@ struct WeatherPanel: View {
                 }
                 .padding(16)
             }
-            .background(Color(uiColor: .systemGroupedBackground))
+            .fbScreenBackground()
             .navigationTitle("Погода")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Готово") { dismiss() } } }
@@ -113,7 +113,7 @@ struct WeatherPanel: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .background(FBTheme.panel, in: RoundedRectangle(cornerRadius: 20, style: .continuous)).overlay(RoundedRectangle(cornerRadius: 20).stroke(FBTheme.stroke, lineWidth: 1))
     }
     private func detail(_ hour: WeatherHour) -> some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -141,7 +141,7 @@ struct WeatherPanel: View {
             }
         }
         .padding(18).frame(maxWidth: .infinity, alignment: .leading)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .background(FBTheme.panel, in: RoundedRectangle(cornerRadius: 20, style: .continuous)).overlay(RoundedRectangle(cornerRadius: 20).stroke(FBTheme.stroke, lineWidth: 1))
     }
     private func metric(_ title: String, value: String) -> some View {
         HStack { Text(title).foregroundStyle(.secondary); Spacer(); Text(value).fontWeight(.semibold) }

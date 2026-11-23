@@ -69,11 +69,11 @@ struct MainView: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(uiColor: .systemBackground))
+                .fbScreenBackground()
             }
         }
         .overlay(alignment: .bottom) { floatingNavigation }
-        .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+        .fbScreenBackground()
         .background(ShakeDetector().frame(width: 1, height: 1))
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
         .sheet(isPresented: $showDiagnostics) {
@@ -100,35 +100,24 @@ struct MainView: View {
                 Button {
                     selectedTab = tab
                 } label: {
-                    VStack(spacing: 4) {
-                        Image(systemName: tab.symbol)
-                            .font(.system(size: 25, weight: .medium))
-                            .frame(height: 30)
-                        Text(tab.rawValue)
-                            .font(.system(size: 11, weight: .medium))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.85)
-                    }
-                    .foregroundStyle(selectedTab == tab ? Color.orange : Color.white.opacity(0.77))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 64)
-                    .contentShape(Rectangle())
+                    FBTabButton(title: tab.rawValue, systemImage: tab.symbol, active: selectedTab == tab)
+                        .frame(height: 62)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(tab.rawValue)
             }
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 5)
-        .background(Color.black.opacity(0.83), in: RoundedRectangle(cornerRadius: 18))
-        .padding(.horizontal, 8)
-        .padding(.bottom, 3)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(FBTheme.panel.opacity(0.96), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 24).stroke(FBTheme.stroke, lineWidth: 1))
+        .shadow(color: .black.opacity(0.35), radius: 18, y: 6)
+        .padding(.horizontal, 10)
+        .padding(.bottom, 6)
     }
 
     private var mapTab: some View {
         ZStack {
-            // No GeometryReader, NavigationStack, TabView, vertical padding,
-            // or fixed height around MLNMapView. Only the *map* ignores safe area.
             OfflineMapView(
                 zones: model.zones, position: model.coordinate, markers: model.markers,
                 track: model.currentTrack, tileFiles: tileStore.paths,
@@ -140,76 +129,125 @@ struct MainView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .ignoresSafeArea(.container, edges: .all)
 
+            LinearGradient(colors: [.black.opacity(0.58), .clear, .black.opacity(0.78)],
+                           startPoint: .top, endPoint: .bottom)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+
             VStack(spacing: 0) {
-                HStack(spacing: 8) {
-                    Image(systemName: "location.fill").foregroundStyle(.orange)
-                    Text(model.status).lineLimit(1).minimumScaleFactor(0.8)
-                    Spacer(minLength: 3)
-                    Text(onlineBasemap ? "ONLINE" : "OFFLINE")
-                        .foregroundStyle(onlineBasemap ? Color.green : Color.orange)
-                    Button { showWeather = true } label: {
-                        Image(systemName: "cloud.sun.fill")
-                            .font(.system(size: 19))
-                            .frame(width: 44, height: 44)
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("HUNT MAP KZ")
+                            .font(.system(size: 31, weight: .heavy, design: .rounded))
+                            .foregroundStyle(FBTheme.textPrimary)
+                        HStack(spacing: 8) {
+                            Label(model.status, systemImage: "location.fill")
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                            Spacer(minLength: 0)
+                            Text(onlineBasemap ? "ONLINE" : "OFFLINE")
+                                .foregroundStyle(onlineBasemap ? FBTheme.green : FBTheme.warning)
+                                .fontWeight(.bold)
+                        }
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(FBTheme.textPrimary)
                     }
-                    .accessibilityLabel("Погода")
-                    .accessibilityIdentifier("weatherButton")
-                    Menu {
-                        Toggle("Онлайн-карта", isOn: $onlineBasemap)
-                        Button("Погодные слои", systemImage: "cloud.sun") { showWeatherMap = true }
-                        Button("О приложении", systemImage: "info.circle") { showAbout = true }
-                        Button("Диагностика", systemImage: "ladybug") { showDiagnostics = true }
-                    } label: {
-                        Image(systemName: "square.3.layers.3d")
-                            .font(.system(size: 20))
-                            .frame(width: 44, height: 44)
+                    Spacer(minLength: 8)
+                    VStack(spacing: 10) {
+                        Button { showWeather = true } label: {
+                            Image(systemName: "cloud.sun.fill")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundStyle(FBTheme.green)
+                                .frame(width: 46, height: 46)
+                                .background(FBTheme.panel.opacity(0.92), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .overlay(RoundedRectangle(cornerRadius: 16).stroke(FBTheme.stroke, lineWidth: 1))
+                        }
+                        .accessibilityLabel("Погода")
+                        .accessibilityIdentifier("weatherButton")
+                        Menu {
+                            Toggle("Онлайн-карта", isOn: $onlineBasemap)
+                            Button("Погодные слои", systemImage: "cloud.sun") { showWeatherMap = true }
+                            Button("О приложении", systemImage: "info.circle") { showAbout = true }
+                            Button("Диагностика", systemImage: "ladybug") { showDiagnostics = true }
+                        } label: {
+                            Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                                .font(.system(size: 20, weight: .semibold))
+                                .foregroundStyle(FBTheme.mint)
+                                .frame(width: 46, height: 46)
+                                .background(FBTheme.panel.opacity(0.92), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .overlay(RoundedRectangle(cornerRadius: 16).stroke(FBTheme.stroke, lineWidth: 1))
+                        }
+                        .accessibilityLabel("Слои и настройки")
                     }
-                    .accessibilityLabel("Слои и настройки")
                 }
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(.white)
-                .padding(.leading, 14)
-                .padding(.trailing, 4)
-                .background(Color.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 18))
-                .padding(.horizontal, 10)
-                .padding(.top, 6)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 14)
+                .background(FBTheme.panel.opacity(0.90), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 26).stroke(FBTheme.stroke, lineWidth: 1))
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
 
                 if weatherLayer != .none {
-                    HStack(spacing: 7) {
-                        Image(systemName: "cloud.fill")
-                        Text("\(weatherLayer.rawValue) · \(weatherGridService.forecastLabel)")
-                        if weatherGridService.cached { Text("КЭШ").foregroundStyle(.orange) }
-                        Spacer(minLength: 2)
+                    HStack(spacing: 10) {
+                        Image(systemName: "wind")
+                            .foregroundStyle(FBTheme.green)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(weatherLayer.rawValue)
+                                .font(.subheadline.bold())
+                            Text(weatherGridService.forecastLabel)
+                                .font(.caption)
+                                .foregroundStyle(FBTheme.textSecondary)
+                        }
+                        if weatherGridService.cached {
+                            Text("КЭШ")
+                                .font(.caption2.bold())
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(FBTheme.warning.opacity(0.18), in: Capsule())
+                                .foregroundStyle(FBTheme.warning)
+                        }
+                        Spacer(minLength: 0)
                         Button("Изменить") { showWeatherMap = true }
+                            .font(.caption.bold())
+                            .foregroundStyle(FBTheme.green)
                     }
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 12).padding(.vertical, 9)
-                    .foregroundStyle(.white)
-                    .background(Color.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 15))
-                    .padding(.horizontal, 10).padding(.top, 6)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(FBTheme.panel.opacity(0.90), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 20).stroke(FBTheme.stroke, lineWidth: 1))
+                    .padding(.horizontal, 12)
+                    .padding(.top, 10)
                 }
+
                 Spacer(minLength: 0)
 
                 if !model.lastWarning.isEmpty && model.lastWarning != "Границы не загружены" {
-                    Text(model.lastWarning)
-                        .font(.footnote.bold()).foregroundStyle(.white)
-                        .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.orange.opacity(0.94), in: RoundedRectangle(cornerRadius: 12))
-                        .padding(.horizontal, 10).padding(.bottom, 6)
+                    HStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                        Text(model.lastWarning)
+                            .font(.footnote.bold())
+                            .multilineTextAlignment(.leading)
+                    }
+                    .foregroundStyle(FBTheme.textPrimary)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(FBTheme.warning.opacity(0.94), in: RoundedRectangle(cornerRadius: 18))
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
                 }
-                HStack(spacing: 0) {
-                    fieldControl("location.north.fill", "GPS") { model.requestGPS() }
-                    fieldControl("mappin.and.ellipse", "Метка") { model.addMarker() }
+
+                HStack(spacing: 10) {
+                    fieldControl("location.north.fill", "GPS", subtitle: "Позиция", tint: FBTheme.cyan) { model.requestGPS() }
+                    fieldControl("mappin.and.ellipse", "Метка", subtitle: "Точка", tint: FBTheme.green) { model.addMarker() }
                     fieldControl(model.recording ? "stop.fill" : "record.circle.fill",
-                                 model.recording ? "Стоп" : "Запись") {
+                                 model.recording ? "Стоп" : "Запись",
+                                 subtitle: model.recording ? "Маршрут" : "Трек",
+                                 tint: model.recording ? FBTheme.danger : FBTheme.mint) {
                         if model.recording { model.stopTrack() } else { model.startTrack() }
                     }
                 }
-                .padding(.vertical, 4)
-                .background(Color.black.opacity(0.82), in: RoundedRectangle(cornerRadius: 17))
-                .padding(.horizontal, 10)
-                // Space for the navigation overlay, not map layout.
-                .padding(.bottom, 83)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 86)
             }
         }
         .sheet(item: $selectedZone) { zone in
@@ -219,15 +257,11 @@ struct MainView: View {
         }
     }
 
-    private func fieldControl(_ symbol: String, _ title: String, action: @escaping () -> Void) -> some View {
+    private func fieldControl(_ symbol: String, _ title: String, subtitle: String, tint: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(spacing: 4) {
-                Image(systemName: symbol).font(.title3)
-                Text(title).font(.caption2.weight(.semibold))
-            }
-            .frame(maxWidth: .infinity).frame(minHeight: 44)
+            FBActionPill(title: title, subtitle: subtitle, icon: symbol, tint: tint)
         }
-        .buttonStyle(.plain).foregroundStyle(.white)
+        .buttonStyle(.plain)
         .accessibilityLabel(title)
     }
 
@@ -236,7 +270,11 @@ struct MainView: View {
             List {
                 if let current=model.currentTrack {Section("Активный маршрут") {trackRow(current);Button(model.paused ? "Продолжить":"Пауза") {model.togglePause()}}}
                 Section("История") {ForEach(model.tracks) {trackRow($0)}}
-            }.overlay {if model.tracks.isEmpty && model.currentTrack == nil {ContentUnavailableView("Маршрутов пока нет",systemImage:"figure.hiking",description:Text("Начните запись на вкладке Карта"))}}.navigationTitle("Маршруты")
+            }
+            .scrollContentBackground(.hidden)
+            .background(FBTheme.background)
+            .overlay {if model.tracks.isEmpty && model.currentTrack == nil {ContentUnavailableView("Маршрутов пока нет",systemImage:"figure.hiking",description:Text("Начните запись на вкладке Карта"))}}
+            .navigationTitle("Маршруты")
         }
     }
     private func trackRow(_ track:Track)->some View {
@@ -246,7 +284,10 @@ struct MainView: View {
         NavigationStack {
             List {ForEach(model.markers) {m in HStack {Image(systemName:"mappin.circle.fill").foregroundStyle(.orange);VStack(alignment:.leading){Text(m.title);Text("\(m.coordinate.latitude.formatted(.number.precision(.fractionLength(5)))), \(m.coordinate.longitude.formatted(.number.precision(.fractionLength(5))))").font(.caption).foregroundStyle(.secondary)};Spacer();ShareLink(item:"geo:\(m.coordinate.latitude),\(m.coordinate.longitude)"){Image(systemName:"square.and.arrow.up")}}}.onDelete(perform:model.removeMarkers)}
             .toolbar {Button("Добавить",systemImage:"plus") {model.addMarker()}}
-            .overlay {if model.markers.isEmpty {ContentUnavailableView("Маркеров пока нет",systemImage:"mappin",description:Text("Добавьте метку по GPS"))}}.navigationTitle("Маркеры")
+            .scrollContentBackground(.hidden)
+            .background(FBTheme.background)
+            .overlay {if model.markers.isEmpty {ContentUnavailableView("Маркеров пока нет",systemImage:"mappin",description:Text("Добавьте метку по GPS"))}}
+            .navigationTitle("Маркеры")
         }
     }
     private var wildlifeTab:some View {
@@ -331,6 +372,8 @@ struct MainView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(FBTheme.background)
             .searchable(text: $wildlifeSearch, prompt: "Русское, казахское или научное название")
             .navigationTitle("Животные")
             .fileImporter(isPresented: $wildlifeImportShown, allowedContentTypes: [.json]) { result in
@@ -449,7 +492,10 @@ struct MainView: View {
                     Text("MapLibre использует локальный стиль без интернет-источников и файлы MBTiles. Отсутствие сетевых запросов необходимо подтвердить сетевым тестом на физическом iPhone.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-            }.navigationTitle("Загрузки").fileImporter(isPresented: $tileImportShown, allowedContentTypes: [.item]) { result in
+            }
+            .scrollContentBackground(.hidden)
+            .background(FBTheme.background)
+            .navigationTitle("Загрузки").fileImporter(isPresented: $tileImportShown, allowedContentTypes: [.item]) { result in
                 switch result {
                 case .success(let url): Task { await tileStore.importLocal(url) }
                 case .failure(let error): importError = error.localizedDescription
@@ -530,6 +576,8 @@ private struct GroundDetailsSheet: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(FBTheme.background)
             .navigationTitle(zone.name).navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Закрыть") { dismiss() } } }
         }

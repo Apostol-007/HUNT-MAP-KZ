@@ -91,7 +91,10 @@ struct DiagnosticsView: View {
                         ShareLink(item: file) { Label("Сохранить .txt в Файлы", systemImage: "doc.text") }
                     }
                 }
-            }.navigationTitle("Диагностика")
+            }
+            .scrollContentBackground(.hidden)
+            .background(FBTheme.background)
+            .navigationTitle("Диагностика")
                 .toolbar { Button("Готово") { dismiss() } }
         }
     }
@@ -126,7 +129,10 @@ struct AboutHuntView: View {
                 Section("Конфиденциальность") {
                     Text("Точные координаты, сохранённые маршруты и личные метки остаются локальными, пока пользователь самостоятельно не поделится ими. Диагностика скрывает координаты по умолчанию.")
                 }
-            }.navigationTitle("О приложении")
+            }
+            .scrollContentBackground(.hidden)
+            .background(FBTheme.background)
+            .navigationTitle("О приложении")
                 .toolbar { Button("Готово") { dismiss() } }
         }
     }

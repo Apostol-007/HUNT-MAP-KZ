@@ -115,6 +115,8 @@ struct MarkerEditor: View {
                     Button("Удалить метку", role: .destructive) { confirmDelete = true }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(FBTheme.background)
             .navigationTitle("Редактор метки")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() } }

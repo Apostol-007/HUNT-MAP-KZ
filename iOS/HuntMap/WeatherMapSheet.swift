@@ -46,7 +46,7 @@ struct WeatherMapSheet: View {
                                 Button { hoursAhead = max(0, hoursAhead - 1) } label: {
                                     Image(systemName: "minus").frame(width: 44, height: 44)
                                 }.disabled(hoursAhead == 0)
-                                Slider(value: $hoursAhead, in: 0...48, step: 1).tint(.orange)
+                                Slider(value: $hoursAhead, in: 0...48, step: 1).tint(FBTheme.green)
                                     .accessibilityLabel("Час прогноза")
                                 Button { hoursAhead = min(48, hoursAhead + 1) } label: {
                                     Image(systemName: "plus").frame(width: 44, height: 44)
@@ -91,7 +91,7 @@ struct WeatherMapSheet: View {
                                 Label(service.loading ? "Получение данных…" : "Загрузить прогноз на карту", systemImage: "arrow.down.circle.fill")
                                     .font(.headline).frame(maxWidth: .infinity).frame(minHeight: 46)
                             }
-                            .buttonStyle(.borderedProminent).tint(.orange)
+                            .buttonStyle(.borderedProminent).tint(FBTheme.green)
                             .disabled(layer == .none || service.loading || !online)
                         } else {
                             Label("Для центрирования сетки сначала включите GPS", systemImage: "location.slash")
@@ -120,7 +120,7 @@ struct WeatherMapSheet: View {
                 }
                 .padding(16)
             }
-            .background(Color(uiColor: .systemGroupedBackground))
+            .fbScreenBackground()
             .navigationTitle("Погодные слои")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Готово") { dismiss() } } }

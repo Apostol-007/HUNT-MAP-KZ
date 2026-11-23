@@ -24,7 +24,7 @@ struct QuickMapDownloadSheet: View {
                 }
                 .padding(16)
             }
-            .background(Color(.systemGroupedBackground))
+            .fbScreenBackground()
             .navigationTitle("Офлайн-карта")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -82,7 +82,7 @@ struct QuickMapDownloadSheet: View {
                 .frame(maxWidth: .infinity).padding(14)
             }
             .buttonStyle(.borderedProminent)
-            .tint(.orange)
+            .tint(FBTheme.green)
             .disabled(point == nil || osm.busy)
             Text(osm.status).font(.footnote)
                 .foregroundStyle(osm.lastDownloadError == nil ? Color.secondary : Color.red)
@@ -217,7 +217,7 @@ struct MapLayersSheet: View {
                             Label("Скачать район", systemImage: "arrow.down.circle")
                                 .frame(maxWidth: .infinity).padding(13)
                         }
-                        .buttonStyle(.borderedProminent).tint(.orange)
+                        .buttonStyle(.borderedProminent).tint(FBTheme.green)
                         Button {
                             dismiss()
                             onLibrary()
@@ -230,7 +230,7 @@ struct MapLayersSheet: View {
                 }
                 .padding(16)
             }
-            .background(Color(.systemGroupedBackground))
+            .fbScreenBackground()
             .navigationTitle("Карта и слои")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { dismiss() } } }
