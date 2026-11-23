@@ -31,6 +31,7 @@ struct OfflineMapView: UIViewRepresentable {
     let weatherLayer: WeatherMapLayer
     var centerRequest: Int = 0
     var zoomCommand: Int = 0
+    var overviewCommand: Int = 0
     var focusCoordinate: GeoPoint? = nil
     var onMapTap: (GeoPoint) -> Void = { _ in }
     var onMarkerTap: (UUID) -> Void = { _ in }
@@ -46,6 +47,11 @@ struct OfflineMapView: UIViewRepresentable {
         let styleURL = online ? (mapStyle == MapBasemap.protomaps.rawValue ? (protomapsOnlineStyleURL ?? selectedStyle) : selectedStyle)
                               : (mapStyle == MapBasemap.hybrid.rawValue && !tileFiles.isEmpty ? (protomapsHybridStyleURL ?? protomapsOfflineStyleURL ?? OfflineMapStyle.url) : (protomapsOfflineStyleURL ?? OfflineMapStyle.url))
         let view = MLNMapView(frame: .zero, styleURL: styleURL)
+        view.showsScale = true
+        view.scaleBarUsesMetricSystem = true
+        view.scaleBarShouldShowDarkStyles = true
+        view.scaleBarPosition = .bottomLeft
+        view.scaleBarMargins = CGPoint(x: 16, y: 108)
         view.delegate = context.coordinator
         context.coordinator.zones = zones
         context.coordinator.onMapTap = onMapTap
@@ -138,6 +144,7 @@ struct OfflineMapView: UIViewRepresentable {
                                               offlineRoadLines: online ? [] : offlineRoadLines, offlineRoadRevision: offlineRoadRevision)
         context.coordinator.applyCameraCommands(view: view, position: focusCoordinate ?? position,
                                                 centerRequest: centerRequest, zoomCommand: zoomCommand)
+        context.coordinator.fitCountryIfNeeded(view: view, command: overviewCommand)
     }
 
     final class Coordinator: NSObject, MLNMapViewDelegate, UIGestureRecognizerDelegate {
@@ -243,6 +250,13 @@ struct OfflineMapView: UIViewRepresentable {
         private var centeredOnGPS = false
         private var appliedCenterRequest = 0
         private var appliedZoomCommand = 0
+        private var appliedOverviewCommand = 0
+        func fitCountryIfNeeded(view: MLNMapView, command: Int) {
+            guard command != appliedOverviewCommand else { return }
+            appliedOverviewCommand = command
+            view.setCenter(CLLocationCoordinate2D(latitude: 48.6, longitude: 67.0),
+                           zoomLevel: 3.25, animated: true)
+        }
 
         func applyCameraCommands(view: MLNMapView, position: GeoPoint?, centerRequest: Int, zoomCommand: Int) {
             if centerRequest != appliedCenterRequest, let position {

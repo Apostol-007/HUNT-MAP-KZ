@@ -7,9 +7,11 @@ struct WeatherMapSheet: View {
     @Binding var layer: WeatherMapLayer
     let coordinate: GeoPoint?
     let online: Bool
+    var onShowKazakhstan: () -> Void = {}
     @State private var hoursAhead = 0.0
     @State private var forecastMode = 0
     @State private var selectedDay = 0
+    @State private var selectionTask: Task<Void, Never>?
     @Environment(\.dismiss) private var dismiss
 
     private var maximumHour: Double { 167 }
@@ -110,24 +112,17 @@ struct WeatherMapSheet: View {
                     }
 
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Источник прогноза: Open-Meteo").font(.headline)
-                        Text("Сервер выбирать не нужно. При наличии интернета прогноз обновляется автоматически, без связи берётся сохранённый кеш.")
+                        Label("Прогноз · Open-Meteo", systemImage: "cloud.sun.fill").font(.headline)
+                        Text("Слой появляется автоматически при выборе, а при изменении часа и масштаба данные обновляются без кнопок. Без интернета доступен сохранённый кеш.")
                             .font(.caption).foregroundStyle(.secondary)
-                        if let coordinate {
-                            Button {
-                                service.load(latitude: coordinate.latitude, longitude: coordinate.longitude,
-                                             hourOffset: Int(hoursAhead))
-                            } label: {
-                                Label(service.loading ? "Получение данных…" : "Загрузить прогноз на карту", systemImage: "arrow.down.circle.fill")
-                                    .font(.headline).frame(maxWidth: .infinity).frame(minHeight: 46)
-                            }
-                            .buttonStyle(.borderedProminent).tint(FBTheme.green)
-                            .disabled(layer == .none || service.loading)
-                        } else {
-                            Label("Для центрирования сетки сначала включите GPS", systemImage: "location.slash")
-                                .foregroundStyle(.orange).font(.footnote)
+                        Button {
+                            onShowKazakhstan()
+                            dismiss()
+                        } label: {
+                            Label("Весь Казахстан на карте", systemImage: "globe.europe.africa.fill")
+                                .font(.headline).frame(maxWidth: .infinity).frame(minHeight: 46)
                         }
-
+                        .buttonStyle(.borderedProminent).tint(FBTheme.green)
                         if service.loading { ProgressView() }
                         Text(service.status).font(.footnote)
                         if service.grid != nil {
@@ -157,11 +152,22 @@ struct WeatherMapSheet: View {
             .onAppear {
                 hoursAhead = Double(service.chosenOffset)
                 selectedDay = service.chosenOffset / 24
-                if let coordinate, layer != .none {
-                    service.load(latitude: coordinate.latitude, longitude: coordinate.longitude,
-                                 hourOffset: service.chosenOffset)
+                if layer != .none { service.load(hourOffset: service.chosenOffset) }
+            }
+            .onChange(of: layer) { _, value in
+                selectionTask?.cancel()
+                if value != .none { service.load(hourOffset: Int(hoursAhead)) }
+            }
+            .onChange(of: hoursAhead) { _, value in
+                guard layer != .none else { return }
+                selectionTask?.cancel()
+                selectionTask = Task {
+                    try? await Task.sleep(for: .milliseconds(350))
+                    guard !Task.isCancelled else { return }
+                    service.load(hourOffset: Int(value))
                 }
             }
+            .onDisappear { selectionTask?.cancel() }
         }
     }
 

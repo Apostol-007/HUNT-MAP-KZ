@@ -47,6 +47,7 @@ struct MainView: View {
     @State private var selectedWildlifeMode = "По угодьям"
     @State private var centerRequest = 0
     @State private var zoomCommand = 0
+    @State private var overviewCommand = 0
     @AppStorage("hunt.showGrounds") private var showGrounds = true
     @AppStorage("hunt.showMarkers") private var showMarkersOnMap = true
     @AppStorage("hunt.showGPS") private var showGPSOnMap = true
@@ -125,6 +126,9 @@ struct MainView: View {
         }
         .onChange(of: connectivity.connected) { _, connected in
             if connected { refreshWeatherOnLaunch() }
+        }
+        .onChange(of: weatherLayer) { _, value in
+            if value != .none { weatherGrid.load(hourOffset: weatherGrid.chosenOffset) }
         }
         .onDisappear { playbackTask?.cancel() }
         .onChange(of: online) { _, enabled in if enabled { offlineRoads.clear() } }
@@ -261,7 +265,8 @@ struct MainView: View {
         }
         .sheet(isPresented: $showWeatherLayers) {
             WeatherMapSheet(service: weatherGrid, layer: $weatherLayer,
-                            coordinate: model.coordinate, online: online)
+                            coordinate: model.coordinate, online: online,
+                            onShowKazakhstan: { tab = .map; overviewCommand += 1 })
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
@@ -413,6 +418,7 @@ struct MainView: View {
                            weatherLayer: weatherLayer,
                            centerRequest: centerRequest,
                            zoomCommand: zoomCommand,
+                           overviewCommand: overviewCommand,
                            focusCoordinate: mapFocus,
                            onMapTap: { point in
                                if let id = movingMarkerID {
@@ -441,6 +447,7 @@ struct MainView: View {
                                else if selectedGridCells.count < 100 { selectedGridCells.insert(id) }
                            },
                            onViewportChanged: { bounds in
+                               weatherGrid.updateViewport(bounds, active: weatherLayer != .none)
                                if !online {
                                    offlineRoads.load(bounds: bounds, files: hosting.installedRoadFiles(in: bounds))
                                }
@@ -790,14 +797,14 @@ struct MainView: View {
             while !Task.isCancelled && recordedRoutePlay,
                   let current = recordedRoute, recordedRoutePreviewIndex < current.points.count - 1 {
                 try? await Task.sleep(nanoseconds: 230_000_000)
-                if Task.isCancelled || !recordedRoutePlay { break }
-                recordedRoutePreviewIndex += 1
+                if Task.isCancelled || !recordedRoutePlay { break }                recordedRoutePreviewIndex += 1
                 if recordedRoutePreviewIndex % 8 == 0 || recordedRoutePreviewIndex == current.points.count - 1 {
                     mapFocus = current.points[recordedRoutePreviewIndex]
                     centerRequest += 1
                 }
             }
-            recordedRoutePlay = false        }
+            recordedRoutePlay = false
+        }
     }
 
     private var recordedTrackPanel: some View {
