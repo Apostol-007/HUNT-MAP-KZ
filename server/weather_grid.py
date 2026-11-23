@@ -28,7 +28,7 @@ def validate_request(west: float, south: float, east: float, north: float, steps
     if when.tzinfo is None:
         raise WeatherGridError("Forecast time must be timezone-aware")
     now = datetime.now(timezone.utc)
-    if not now - timedelta(hours=1) <= when <= now + timedelta(days=4):
+    if not now - timedelta(hours=1) <= when <= now + timedelta(days=7):
         raise WeatherGridError("Forecast time outside supported horizon")
 
 
@@ -52,7 +52,7 @@ def sample_grid(west: float, south: float, east: float, north: float, steps: int
         "latitude": ",".join(f"{lat:.5f}" for lat, _ in points),
         "longitude": ",".join(f"{lon:.5f}" for _, lon in points),
         "hourly": ",".join(VARIABLES),
-        "timezone": "UTC", "forecast_days": "5", "wind_speed_unit": "kmh",
+        "timezone": "UTC", "forecast_days": "8", "wind_speed_unit": "kmh",
     }
     url = "https://api.open-meteo.com/v1/forecast?" + urlencode(params)
     try:
