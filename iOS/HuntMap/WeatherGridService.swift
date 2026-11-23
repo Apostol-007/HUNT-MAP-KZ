@@ -108,7 +108,7 @@ struct ForecastGrid: Codable {
         var width: Int = 12
         var height: Int = 8
         var bbox: ForecastGrid.Bounds { .init(west: west, south: south, east: east, north: north) }
-        var key: String { "\(Int(west * 100))_\(Int(south * 100))_\(Int(east * 100))_\(Int(north * 100))" }
+        var key: String { "\(Int(west * 100))_\(Int(south * 100))_\(Int(east * 100))_\(Int(north * 100))_\(width)x\(height)" }
     }
     init() { try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true) }
 
@@ -171,111 +171,135 @@ struct ForecastGrid: Codable {
     func load(latitude: Double = 48, longitude: Double = 70, hourOffset: Int, allowNetwork: Bool = true) {
         load(hourOffset: hourOffset, allowNetwork: allowNetwork)
     }
+    /// Starts with one lightweight request (6x4), then refines to 12x8 asynchronously.
+    /// A forecast is model data, not real-time sensor measurements.
+    private func fetchGrid(region: Region, at date: Date) async throws -> ForecastGrid {
+        var points: [(Double, Double)] = []
+        points.reserveCapacity(region.width * region.height)
+        let latStep = (region.north - region.south) / Double(region.height - 1)
+        let lonStep = (region.east - region.west) / Double(region.width - 1)
+        for row in 0..<region.height {
+            for column in 0..<region.width {
+                points.append((region.south + Double(row) * latStep,
+                               region.west + Double(column) * lonStep))
+            }
+        }
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime]
+        let timestamp = iso.string(from: date)
+        let targetHour = String(timestamp.prefix(13)) + ":00"
+        let slices = stride(from: 0, to: points.count, by: 24).map {
+            Array(points[$0..<min($0 + 24, points.count)])
+        }
+        let arrays = try await withThrowingTaskGroup(of: (Int, [OpenMeteoGridPoint]).self) { group in
+            for (index, batch) in slices.enumerated() {
+                group.addTask {
+                    try Task.checkCancellation()
+                    var url = URLComponents(string: "https://api.open-meteo.com/v1/forecast")!
+                    url.queryItems = [
+                        URLQueryItem(name: "latitude", value: batch.map { String(format: "%.5f", $0.0) }.joined(separator: ",")),
+                        URLQueryItem(name: "longitude", value: batch.map { String(format: "%.5f", $0.1) }.joined(separator: ",")),
+                        URLQueryItem(name: "hourly", value: "wind_speed_10m,wind_direction_10m,pressure_msl,precipitation"),
+                        URLQueryItem(name: "timezone", value: "UTC"),
+                        URLQueryItem(name: "wind_speed_unit", value: "kmh"),
+                        URLQueryItem(name: "forecast_days", value: "8"),
+                        URLQueryItem(name: "start_hour", value: targetHour),
+                        URLQueryItem(name: "end_hour", value: targetHour)
+                    ]
+                    guard let endpoint = url.url else { throw URLError(.badURL) }
+                    var request = URLRequest(url: endpoint)
+                    request.timeoutInterval = 16
+                    let (data, response) = try await URLSession.shared.data(for: request)
+                    guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                          data.count < 500_000 else { throw URLError(.badServerResponse) }
+                    let result = try JSONDecoder().decode([OpenMeteoGridPoint].self, from: data)
+                    guard result.count == batch.count else { throw URLError(.cannotParseResponse) }
+                    return (index, result)
+                }
+            }
+            var ordered = Array(repeating: [OpenMeteoGridPoint](), count: slices.count)
+            for try await (index, result) in group { ordered[index] = result }
+            return ordered.flatMap { $0 }
+        }
+        var samples: [ForecastGrid.Point] = []
+        samples.reserveCapacity(points.count)
+        for index in points.indices {
+            let hour = arrays[index].hourly
+            guard let hourIndex = hour.time.firstIndex(of: targetHour),
+                  hour.wind_speed_10m.indices.contains(hourIndex),
+                  hour.wind_direction_10m.indices.contains(hourIndex),
+                  hour.pressure_msl.indices.contains(hourIndex),
+                  hour.precipitation.indices.contains(hourIndex) else { throw URLError(.cannotParseResponse) }
+            samples.append(ForecastGrid.Point(latitude: points[index].0, longitude: points[index].1,
+                windSpeed: hour.wind_speed_10m[hourIndex], direction: hour.wind_direction_10m[hourIndex],
+                pressure: hour.pressure_msl[hourIndex], precipitation: hour.precipitation[hourIndex]))
+        }
+        let value = ForecastGrid(schema: "hunt-weather-grid-v1", kind: "model_forecast_not_radar",
+                                 forecastTimeUTC: timestamp, gridWidth: region.width,
+                                 gridHeight: region.height, bounds: region.bbox, points: samples)
+        guard value.validated() else { throw URLError(.cannotParseResponse) }
+        return value
+    }
+
     func load(hourOffset: Int, allowNetwork: Bool = true) {
         guard (0...167).contains(hourOffset) else { return }
         chosenOffset = hourOffset
         let date = Date(timeIntervalSince1970: floor(Date().timeIntervalSince1970 / 3600) * 3600)
             .addingTimeInterval(TimeInterval(hourOffset * 3600))
-        let region = regionForViewport()
-        let key = region.key + ":" + String(Int(date.timeIntervalSince1970 / 3600))
-        // Avoid restarting an identical in-flight request due to SwiftUI rerenders.
+        let detailed = regionForViewport()
+        var coarse = detailed
+        coarse.width = 6
+        coarse.height = 4
+        let key = detailed.key + ":" + String(Int(date.timeIntervalSince1970 / 3600))
         if loading && lastRequestedKey == key { return }
         if !loading && lastRequestedKey == key && !cached &&
-            Date().timeIntervalSince(lastSuccessfulRefresh) < 900 { return }
+           Date().timeIntervalSince(lastSuccessfulRefresh) < 900 { return }
         stop()
         lastRequestedKey = key
-        if let saved = cachedGrid(region: region, date: date) {
-            grid = saved; cached = true
-            status = "Кеш прогноза: \(saved.forecastTimeUTC)"
+        if let detailedCache = cachedGrid(region: detailed, date: date) {
+            grid = detailedCache
+            cached = true
+            status = "Кеш подробного прогноза · обновляем в сети"
+        } else if let coarseCache = cachedGrid(region: coarse, date: date) {
+            grid = coarseCache
+            cached = true
+            status = "Кеш быстрого прогноза · уточняем"
         } else {
-            grid = nil; cached = false
+            grid = nil
+            cached = false
         }
         guard allowNetwork else {
-            status = cached ? "Офлайн · сохранённая погодная карта" : "Нет сохранённой сетки для этого времени и масштаба"
+            status = cached ? "Офлайн · сохранённый прогноз" : "Нет прогноза для этого района и часа"
             return
         }
-        var points: [(Double, Double)] = []
-        points.reserveCapacity(region.width * region.height)
-        let latitudeStep = (region.north - region.south) / Double(region.height - 1)
-        let longitudeStep = (region.east - region.west) / Double(region.width - 1)
-        for row in 0..<region.height {
-            let latitude = region.south + Double(row) * latitudeStep
-            for column in 0..<region.width {
-                let longitude = region.west + Double(column) * longitudeStep
-                points.append((latitude, longitude))
-            }
-        }
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime]
-        let targetHour = String(iso.string(from: date).prefix(13)) + ":00"
-        let timestamp = iso.string(from: date)
         task = Task { [weak self] in
             guard let self else { return }
             self.loading = true
-            self.status = self.cached ? "Обновление погодной карты… показан кеш" : "Загружаю ветер по всей видимой области…"
             defer { self.loading = false }
             do {
-                // Only the chosen forecast hour is downloaded. Batches keep URL/request sizes small.
-                let slices = stride(from: 0, to: points.count, by: 24).map {
-                    Array(points[$0..<min($0 + 24, points.count)])
+                // One request before anything else, unless a cached grid is already visible.
+                if self.grid == nil {
+                    let value = try await self.fetchGrid(region: coarse, at: date)
+                    guard !Task.isCancelled, self.lastRequestedKey == key else { return }
+                    self.grid = value
+                    self.cached = false
+                    self.status = "Ветер отображается · уточняем детализацию…"
+                    try? JSONEncoder().encode(value).write(to: self.cachePath(region: coarse, date: date), options: .atomic)
                 }
-                let arrays = try await withThrowingTaskGroup(of: (Int, [OpenMeteoGridPoint]).self) { group in
-                    for (i, batch) in slices.enumerated() {
-                        group.addTask {
-                            var url = URLComponents(string: "https://api.open-meteo.com/v1/forecast")!
-                            url.queryItems = [
-                                URLQueryItem(name: "latitude", value: batch.map { String(format: "%.5f", $0.0) }.joined(separator: ",")),
-                                URLQueryItem(name: "longitude", value: batch.map { String(format: "%.5f", $0.1) }.joined(separator: ",")),
-                                URLQueryItem(name: "hourly", value: "wind_speed_10m,wind_direction_10m,pressure_msl,precipitation"),
-                                URLQueryItem(name: "timezone", value: "UTC"),
-                                URLQueryItem(name: "wind_speed_unit", value: "kmh"),
-                                URLQueryItem(name: "forecast_days", value: "8"),
-                                URLQueryItem(name: "start_hour", value: targetHour),
-                                URLQueryItem(name: "end_hour", value: targetHour)
-                            ]
-                            guard let endpoint = url.url else { throw URLError(.badURL) }
-                            var request = URLRequest(url: endpoint)
-                            request.timeoutInterval = 22
-                            let (data, response) = try await URLSession.shared.data(for: request)
-                            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
-                                  data.count < 500_000 else { throw URLError(.badServerResponse) }
-                            let result = try JSONDecoder().decode([OpenMeteoGridPoint].self, from: data)
-                            guard result.count == batch.count else { throw URLError(.cannotParseResponse) }
-                            return (i, result)
-                        }
-                    }
-                    var all = Array(repeating: [OpenMeteoGridPoint](), count: slices.count)
-                    for try await (index, result) in group { all[index] = result }
-                    return all.flatMap { $0 }
-                }
-                let samples: [ForecastGrid.Point] = try arrays.enumerated().map { index, response in
-                    let hour = response.hourly
-                    guard let hourIndex = hour.time.firstIndex(of: targetHour),
-                          hour.wind_speed_10m.indices.contains(hourIndex),
-                          hour.wind_direction_10m.indices.contains(hourIndex),
-                          hour.pressure_msl.indices.contains(hourIndex),
-                          hour.precipitation.indices.contains(hourIndex) else { throw URLError(.cannotParseResponse) }
-                    return ForecastGrid.Point(latitude: points[index].0, longitude: points[index].1,
-                        windSpeed: hour.wind_speed_10m[hourIndex],
-                        direction: hour.wind_direction_10m[hourIndex],
-                        pressure: hour.pressure_msl[hourIndex],
-                        precipitation: hour.precipitation[hourIndex])
-                }
-                let value = ForecastGrid(schema: "hunt-weather-grid-v1", kind: "model_forecast_not_radar",
-                    forecastTimeUTC: timestamp, gridWidth: region.width, gridHeight: region.height,
-                    bounds: region.bbox, points: samples)
-                guard value.validated(), !Task.isCancelled, self.lastRequestedKey == key else { return }
+                let value = try await self.fetchGrid(region: detailed, at: date)
+                guard !Task.isCancelled, self.lastRequestedKey == key else { return }
                 self.grid = value
                 self.cached = false
                 self.lastSuccessfulRefresh = Date()
-                self.status = "Прогноз Open-Meteo · вся видимая область · \(targetHour) UTC"
-                try? JSONEncoder().encode(value).write(to: self.cachePath(region: region, date: date), options: .atomic)
+                self.status = "Прогноз обновлён · Open-Meteo · \(value.forecastTimeUTC)"
+                try? JSONEncoder().encode(value).write(to: self.cachePath(region: detailed, date: date), options: .atomic)
             } catch {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, self.lastRequestedKey == key else { return }
                 self.cached = self.grid != nil
-                self.status = self.cached ? "Сеть недоступна: сохранённый прогноз" : "Не удалось загрузить погодную сетку: \(error.localizedDescription)"
+                self.status = self.grid == nil
+                    ? "Прогноз недоступен: \(error.localizedDescription)"
+                    : "Отображается полученный прогноз · подробная сетка недоступна"
             }
         }
     }
-
 }
