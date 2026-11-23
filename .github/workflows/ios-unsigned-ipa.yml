@@ -84,6 +84,13 @@ jobs:
           test -f "$APP/Info.plist" || { echo "Info.plist missing"; exit 1; }
           EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$APP/Info.plist")
           test -f "$APP/$EXECUTABLE" || { echo "App executable missing"; exit 1; }
+          # Prevent a green IPA build when the library UI exists but PDF assets are missing.
+          for document in wildlife-protection.pdf rules-civil-service-weapons.pdf approval-voucher-form-rules.pdf approval-hunting-rules.pdf; do
+            if ! find "$APP" -type f -name "$document" | grep -q .; then
+              echo "Required legal-library PDF not embedded: $document"
+              exit 1
+            fi
+          done
           /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Info.plist"
           OUT="$RUNNER_TEMP/unsigned-output"
           mkdir -p "$OUT/Payload"
