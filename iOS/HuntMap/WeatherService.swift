@@ -41,7 +41,7 @@ import HuntCore
                     URLQueryItem(name: "latitude", value: String(latitude)),
                     URLQueryItem(name: "longitude", value: String(longitude)),
                     URLQueryItem(name: "timezone", value: "UTC"),
-                    URLQueryItem(name: "forecast_days", value: "5"),
+                    URLQueryItem(name: "forecast_days", value: "7"),
                     URLQueryItem(name: "wind_speed_unit", value: "kmh"),
                     URLQueryItem(name: "current", value: "temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,pressure_msl,surface_pressure,precipitation"),
                     URLQueryItem(name: "hourly", value: "wind_speed_10m,wind_direction_10m,wind_gusts_10m,pressure_msl,surface_pressure,precipitation,precipitation_probability")
