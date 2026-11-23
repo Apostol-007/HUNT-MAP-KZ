@@ -195,3 +195,12 @@ def test_wind_prefetches_on_launch_and_progressively_refines():
     assert 'coarse.width = 6' in wind and 'coarse.height = 4' in wind
     assert 'self.fetchGrid(region: coarse' in wind
     assert 'self.fetchGrid(region: detailed' in wind
+
+
+def test_weather_grid_hourly_query_has_no_conflicting_forecast_days():
+    source = (IOS / "WeatherGridService.swift").read_text()
+    assert 'URLQueryItem(name: "start_hour", value: targetHour)' in source
+    assert 'URLQueryItem(name: "end_hour", value: targetHour)' in source
+    # Open-Meteo rejects forecast_days together with an explicit hour window (HTTP 400).
+    assert 'URLQueryItem(name: "forecast_days"' not in source
+    assert 'http.statusCode != 200' in source
