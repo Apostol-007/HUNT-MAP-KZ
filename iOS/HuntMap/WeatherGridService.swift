@@ -89,6 +89,8 @@ struct ForecastGrid: Codable {
     private var visibleBounds: [Double] = [46, 40, 88, 56]
     private var lastRequestedKey = ""
     private var lastSuccessfulRefresh = Date.distantPast
+    private var lastFailedKey = ""
+    private var lastFailedAt = Date.distantPast
     private let cacheDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("HuntWeatherGrids", isDirectory: true)
 
@@ -269,6 +271,8 @@ struct ForecastGrid: Codable {
         coarse.height = 4
         let key = detailed.key + ":" + String(Int(date.timeIntervalSince1970 / 3600))
         if loading && lastRequestedKey == key { return }
+        // Avoid hammering the provider on every SwiftUI redraw after a temporary error.
+        if lastFailedKey == key && Date().timeIntervalSince(lastFailedAt) < 40 { return }
         if !loading && lastRequestedKey == key && !cached &&
            Date().timeIntervalSince(lastSuccessfulRefresh) < 900 { return }
         stop()
@@ -281,6 +285,15 @@ struct ForecastGrid: Codable {
             grid = coarseCache
             cached = true
             status = "Кеш быстрого прогноза · уточняем"
+        } else if let previous = grid, let previousTime = previous.forecastDate,
+                  abs(previousTime.timeIntervalSince(date)) < 60,
+                  previous.bounds.west < detailed.east,
+                  previous.bounds.east > detailed.west,
+                  previous.bounds.south < detailed.north,
+                  previous.bounds.north > detailed.south {
+            // Show the overlapping previous region while new viewport data arrives.
+            cached = true
+            status = "Предыдущий участок виден · обновляем новую область"
         } else {
             grid = nil
             cached = false
@@ -308,6 +321,7 @@ struct ForecastGrid: Codable {
                 self.grid = value
                 self.cached = false
                 self.lastSuccessfulRefresh = Date()
+                self.lastFailedKey = ""
                 AppDiagnosticLog.shared.record(severity: "info", subsystem: "Погода",
                     operation: "Обновление погодной сетки", code: "HTTP 200",
                     rootCause: "Прогноз получен и сохранён",
@@ -319,6 +333,8 @@ struct ForecastGrid: Codable {
             } catch {
                 guard !Task.isCancelled, self.lastRequestedKey == key else { return }
                 self.cached = self.grid != nil
+                self.lastFailedKey = key
+                self.lastFailedAt = Date()
                 AppDiagnosticLog.shared.recordError(subsystem: "Погода",
                     operation: "Загрузка карты ветра", error: error,
                     endpoint: "/v1/forecast", usedCache: self.grid != nil)
