@@ -16,15 +16,66 @@ from pathlib import Path
 HOST = "https://create.web-works.kz/maps/protomaps"
 SCHEMA = "hunt-protomaps-v1"
 
-def latest_source():
-    req = urllib.request.Request("https://maps.protomaps.com/builds/",
-                                 headers={"User-Agent": "HUNT-MAP-KZ-map-preparer/5.4"})
-    with urllib.request.urlopen(req, timeout=25) as response:
-        html = response.read(5_000_000).decode("utf-8", "replace")
-    dates = re.findall(r"(?<![0-9])20[0-9]{6}\.pmtiles", html)
-    if not dates:
-        raise ValueError("Cannot detect daily Protomaps build. Specify --source https://...pmtiles")
-    return "https://build.protomaps.com/" + max(dates)
+# The official build list is a JavaScript-powered page: its initial HTML may
+# contain NO archive filenames. Reading the HTML alone is not a reliable resolver.
+# Last build verified in the public official Protomaps build list on 2026-11-23.
+KNOWN_BUILD = "20261116"
+BUILD_LIST = "https://maps.protomaps.com/builds/"
+ARCHIVE_ROOT = "https://build.protomaps.com/"
+
+
+def source_candidates(html, today=None):
+    """Newest published-looking candidates first; no whole-planet downloads."""
+    import datetime
+    today = today or datetime.datetime.now(datetime.timezone.utc).date()
+    names = set(re.findall(r"(?<![0-9])(20[0-9]{6})\\.pmtiles", html))
+    # Try recent daily uploads. Builds are not guaranteed every day.
+    for delta in range(0, 15):
+        names.add((today - datetime.timedelta(days=delta)).strftime("%Y%m%d"))
+    names.add(KNOWN_BUILD)
+    return [ARCHIVE_ROOT + name + ".pmtiles" for name in sorted(names, reverse=True)
+            if name <= today.strftime("%Y%m%d")]
+
+
+def probe_source(url, opener=urllib.request.urlopen):
+    """Validate a remote PMTiles header using Range; never download the planet."""
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "HUNT-MAP-KZ-Protomaps/5.5",
+                 "Range": "bytes=0-7", "Accept": "application/octet-stream"}
+    )
+    with opener(request, timeout=12) as response:
+        code = getattr(response, "status", response.getcode())
+        if code not in (200, 206):
+            return False
+        return response.read(8) == b"PMTiles" + bytes([3])
+
+
+def latest_source(opener=urllib.request.urlopen, today=None):
+    """Find latest working v4 daily PMTiles, even if official site renders with JS."""
+    import datetime
+    today = today or datetime.datetime.now(datetime.timezone.utc).date()
+    html = ""
+    try:
+        request = urllib.request.Request(BUILD_LIST,
+                     headers={"User-Agent": "Mozilla/5.0 (HUNT-MAP-KZ/5.5)"})
+        with opener(request, timeout=12) as response:
+            html = response.read(3_000_000).decode("utf-8", "replace")
+    except (OSError, ValueError) as exc:
+        print("Build list unavailable; probing official dated archives:", exc, flush=True)
+    for candidate in source_candidates(html, today):
+        try:
+            if probe_source(candidate, opener=opener):
+                print("Verified Protomaps source:", candidate, flush=True)
+                return candidate
+        except (OSError, ValueError) as exc:
+            print("Skipped unavailable build:", candidate.rsplit("/", 1)[-1],
+                  str(exc)[:100], flush=True)
+    raise ValueError(
+        "No official Protomaps daily PMTiles could be verified via HTTPS Range. "
+        "Check internet/proxy access to build.protomaps.com or use --source "
+        "https://build.protomaps.com/" + KNOWN_BUILD + ".pmtiles"
+    )
 
 def parse_bbox(value):
     numbers = [float(v.strip()) for v in value.split(",")]
@@ -75,6 +126,7 @@ def run(args):
         parser.error("--step must be 0.01..1.0 and --maxzoom 0..15")
     try:
         source = latest_source() if args.source == "auto" else args.source
+        print("PMTiles source:", source, flush=True)
         if not (source.startswith("https://") or Path(source).is_file()):
             raise ValueError("Source must be HTTPS URL or existing local PMTiles")
         if not args.base_url.startswith("https://"):

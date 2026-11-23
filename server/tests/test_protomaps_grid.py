@@ -38,3 +38,30 @@ def test_publisher_uses_real_region_extraction():
     assert 'subprocess.run([args.pmtiles, "extract"' in code
     assert '"verify"' in code
     assert 'hashlib.sha256()' in code
+
+def test_source_discovery_without_html_build_rows():
+    import datetime
+    names = MODULE.source_candidates("<html><script src='app.js'></script></html>",
+                                     datetime.date(2026, 11, 23))
+    assert "https://build.protomaps.com/20261116.pmtiles" in names
+    assert names[0].endswith("20261123.pmtiles")
+
+def test_source_discovery_from_official_dates():
+    import datetime
+    names = MODULE.source_candidates("published: 20261115.pmtiles and 20261116.pmtiles",
+                                     datetime.date(2026, 11, 23))
+    assert names.index("https://build.protomaps.com/20261116.pmtiles") < names.index(
+        "https://build.protomaps.com/20261115.pmtiles")
+
+def test_remote_probe_reads_only_eight_header_bytes():
+    class Response:
+        status = 206
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def read(self, n):
+            assert n == 8
+            return b"PMTiles" + bytes([3])
+    def opener(req, timeout):
+        assert req.get_header("Range") == "bytes=0-7"
+        return Response()
+    assert MODULE.probe_source("https://build.protomaps.com/20261116.pmtiles", opener)

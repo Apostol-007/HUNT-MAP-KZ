@@ -22,12 +22,13 @@ if not exist "%PMT%" (
 echo.
 echo HUNT MAP KZ - Protomaps regional PMTiles builder.
 echo Default area: Almaty and nearby mountains [76.7,43.1,77.2,43.5].
-echo Source: latest official Protomaps daily build.
+echo Source: latest verified official Protomaps daily build.
 echo.
 set /p REGION=Bounding box west,south,east,north [76.7,43.1,77.2,43.5]:
 if "%REGION%"=="" set "REGION=76.7,43.1,77.2,43.5"
 set /p SRC=Source PMTiles URL [auto]:
 if "%SRC%"=="" set "SRC=auto"
+echo Auto mode probes PMTiles headers with HTTP Range without downloading the planet.
 py tools\prepare_protomaps_grid.py --pmtiles "%PMT%" --source "%SRC%" --bbox "%REGION%" --step 0.1 --maxzoom 15
 if errorlevel 1 (
  echo ERROR. Existing downloaded archives are kept.
