@@ -35,7 +35,7 @@ def test_catalog_is_empty_until_pmtiles_files_exist():
 
 def test_publisher_uses_real_region_extraction():
     code = SCRIPT.read_text(encoding="utf-8")
-    assert 'subprocess.run(command, check=True, timeout=1800)' in code
+    assert 'subprocess.run(command, check=True, timeout=1800,' in code
     assert 'pmtiles, "extract"' in code
     assert '"verify"' in code
     assert 'hashlib.sha256()' in code
@@ -105,3 +105,17 @@ def test_windows_batch_has_no_region_prompt_and_never_autocloses():
     assert "46.49,40.56,87.31,55.44" in batch
     assert "pause" in batch.lower()
     assert "set /p REGION" not in batch
+
+
+def test_stale_different_grid_is_replaced_not_reindexed():
+    code = SCRIPT.read_text(encoding="utf-8")
+    assert 'previous.get("bounds") == bbox' in code
+    assert 'previous.get("maxzoom") == args.maxzoom' in code
+    assert 'Replace stale/different-grid file' in code
+
+
+def test_pmtiles_output_is_saved_in_progress_log():
+    code = SCRIPT.read_text(encoding="utf-8")
+    assert 'stdout=subprocess.PIPE' in code
+    assert 'stderr=subprocess.STDOUT' in code
+    assert 'prepare_protomaps.log' in code
