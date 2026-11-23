@@ -92,6 +92,11 @@ struct ForecastGrid: Codable {
     private let cacheDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("HuntWeatherGrids", isDirectory: true)
 
+    private struct ProviderFailure: LocalizedError {
+        let code: Int
+        let reason: String
+        var errorDescription: String? { "Open-Meteo HTTP \(code): \(reason)" }
+    }
     private struct OpenMeteoHour: Decodable {
         let time: [String]
         let wind_speed_10m: [Double?]
@@ -210,8 +215,21 @@ struct ForecastGrid: Codable {
                     var request = URLRequest(url: endpoint)
                     request.timeoutInterval = 16
                     let (data, response) = try await URLSession.shared.data(for: request)
-                    guard let http = response as? HTTPURLResponse, http.statusCode == 200,
-                          data.count < 500_000 else { throw URLError(.badServerResponse) }
+                    guard let http = response as? HTTPURLResponse else {
+                        throw URLError(.badServerResponse)
+                    }
+                    if http.statusCode != 200 {
+                        await AppDiagnosticLog.shared.recordHTTP(
+                            subsystem: "Погода", operation: "Сетка Open-Meteo",
+                            code: http.statusCode, responseData: data,
+                            path: "/v1/forecast", usedCache: false)
+                        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+                        let reason = String(((json?["reason"] as? String) ?? "Ответ провайдера отклонён").prefix(180))
+                        throw ProviderFailure(code: http.statusCode, reason: reason)
+                    }
+                    guard data.count < 500_000 else {
+                        throw URLError(.dataLengthExceedsMaximum)
+                    }
                     let result = try JSONDecoder().decode([OpenMeteoGridPoint].self, from: data)
                     guard result.count == batch.count else { throw URLError(.cannotParseResponse) }
                     return (index, result)
@@ -291,11 +309,20 @@ struct ForecastGrid: Codable {
                 self.grid = value
                 self.cached = false
                 self.lastSuccessfulRefresh = Date()
+                AppDiagnosticLog.shared.record(severity: "info", subsystem: "Погода",
+                    operation: "Обновление погодной сетки", code: "HTTP 200",
+                    rootCause: "Прогноз получен и сохранён",
+                    nextAction: "Не требуется",
+                    details: "Detailed grid: \(detailed.width)x\(detailed.height); time: \(value.forecastTimeUTC)",
+                    endpoint: "/v1/forecast")
                 self.status = "Прогноз обновлён · Open-Meteo · \(value.forecastTimeUTC)"
                 try? JSONEncoder().encode(value).write(to: self.cachePath(region: detailed, date: date), options: .atomic)
             } catch {
                 guard !Task.isCancelled, self.lastRequestedKey == key else { return }
                 self.cached = self.grid != nil
+                AppDiagnosticLog.shared.recordError(subsystem: "Погода",
+                    operation: "Загрузка карты ветра", error: error,
+                    endpoint: "/v1/forecast", usedCache: self.grid != nil)
                 self.status = self.grid == nil
                     ? "Прогноз недоступен: \(error.localizedDescription)"
                     : "Отображается полученный прогноз · подробная сетка недоступна"
