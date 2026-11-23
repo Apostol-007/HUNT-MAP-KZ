@@ -26,6 +26,10 @@ struct OfflineMapView: UIViewRepresentable {
     var focusCoordinate: GeoPoint? = nil
     var onMapTap: (GeoPoint) -> Void = { _ in }
     var onMarkerTap: (UUID) -> Void = { _ in }
+    var gridEnabled = false
+    var gridStep = 0.1
+    var selectedGridCells: Set<String> = []
+    var onGridTap: (String) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator(selectedZone: $selectedZone) }
 
@@ -36,6 +40,10 @@ struct OfflineMapView: UIViewRepresentable {
         context.coordinator.zones = zones
         context.coordinator.onMapTap = onMapTap
         context.coordinator.onMarkerTap = onMarkerTap
+        context.coordinator.gridEnabled = gridEnabled
+        context.coordinator.gridStep = gridStep
+        context.coordinator.selectedGridCells = selectedGridCells
+        context.coordinator.onGridTap = onGridTap
         let longPress = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleLongPress(_:)))
         longPress.minimumPressDuration = 0.55
         longPress.cancelsTouchesInView = false
@@ -55,6 +63,7 @@ struct OfflineMapView: UIViewRepresentable {
         }
         view.setCenter(CLLocationCoordinate2D(latitude: 43.24, longitude: 76.91), zoomLevel: 11, animated: false)
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
+        context.coordinator.renderGrid(in: view)
         return view
     }
 
@@ -67,6 +76,14 @@ struct OfflineMapView: UIViewRepresentable {
         context.coordinator.zones = zones
         context.coordinator.onMapTap = onMapTap
         context.coordinator.onMarkerTap = onMarkerTap
+        let changedGrid = context.coordinator.gridEnabled != gridEnabled ||
+                          context.coordinator.gridStep != gridStep ||
+                          context.coordinator.selectedGridCells != selectedGridCells
+        context.coordinator.gridEnabled = gridEnabled
+        context.coordinator.gridStep = gridStep
+        context.coordinator.selectedGridCells = selectedGridCells
+        context.coordinator.onGridTap = onGridTap
+        if changedGrid { context.coordinator.renderGrid(in: view) }
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
         // Diagnostic-only window geometry check. Read after UIKit finishes layout.
         DispatchQueue.main.async { [weak view] in
@@ -96,6 +113,11 @@ struct OfflineMapView: UIViewRepresentable {
         var zones: [GeoZone] = []
         var onMapTap: (GeoPoint) -> Void = { _ in }
         var onMarkerTap: (UUID) -> Void = { _ in }
+        var gridEnabled = false
+        var gridStep = 0.1
+        var selectedGridCells: Set<String> = []
+        var onGridTap: (String) -> Void = { _ in }
+        private var gridAnnotations: [MLNShape] = []
         private var markerAnnotations: [ObjectIdentifier: UUID] = [:]
         private var markerAppearance: [ObjectIdentifier: Marker] = [:]
         private var markerSignatures: [UUID: String] = [:]
@@ -125,6 +147,13 @@ struct OfflineMapView: UIViewRepresentable {
         @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
             guard recognizer.state == .ended, let map else { return }
             let screenPoint = recognizer.location(in: map)
+            if gridEnabled {
+                let coordinate = map.convert(screenPoint, toCoordinateFrom: map)
+                if let cell = OfflineGridCell(latitude: coordinate.latitude, longitude: coordinate.longitude, step: gridStep) {
+                    onGridTap(cell.id)
+                }
+                return
+            }
             // MapLibre can also dispatch didSelect for markers. Only handle it once.
             if let nearby = markerCoordinates.first(where: { _, coordinate in
                 let markerPoint = map.convert(coordinate, toPointTo: map)
@@ -225,6 +254,49 @@ struct OfflineMapView: UIViewRepresentable {
                 style.addSource(source)
                 style.addLayer(MLNRasterStyleLayer(identifier: id, source: source))
             }
+        }
+
+        func mapView(_ mapView: MLNMapView, regionDidChangeAnimated animated: Bool) {
+            if gridEnabled { renderGrid(in: mapView) }
+        }
+
+        func renderGrid(in view: MLNMapView) {
+            if !gridAnnotations.isEmpty {
+                view.removeAnnotations(gridAnnotations)
+                gridAnnotations.removeAll()
+            }
+            guard gridEnabled, (0.01...1).contains(gridStep) else { return }
+            let area = view.visibleCoordinateBounds
+            let south = max(-90, min(area.sw.latitude, area.ne.latitude))
+            let north = min(90, max(area.sw.latitude, area.ne.latitude))
+            let west = max(-180, min(area.sw.longitude, area.ne.longitude))
+            let east = min(180, max(area.sw.longitude, area.ne.longitude))
+            guard south.isFinite, north.isFinite, west.isFinite, east.isFinite else { return }
+            let minX = Int(floor(west / gridStep))
+            let maxX = Int(floor(east / gridStep))
+            let minY = Int(floor(south / gridStep))
+            let maxY = Int(floor(north / gridStep))
+            guard maxX >= minX, maxY >= minY,
+                  (maxX - minX + 1) * (maxY - minY + 1) <= 144 else { return }
+            var shapes: [MLNShape] = []
+            for x in minX...maxX {
+                for y in minY...maxY {
+                    let key = "\(x)_\(y)"
+                    let a = Double(x) * gridStep, b = Double(y) * gridStep
+                    var coords = [
+                        CLLocationCoordinate2D(latitude: b, longitude: a),
+                        CLLocationCoordinate2D(latitude: b, longitude: a + gridStep),
+                        CLLocationCoordinate2D(latitude: b + gridStep, longitude: a + gridStep),
+                        CLLocationCoordinate2D(latitude: b + gridStep, longitude: a),
+                        CLLocationCoordinate2D(latitude: b, longitude: a)
+                    ]
+                    let boundary = MLNPolyline(coordinates: &coords, count: UInt(coords.count))
+                    boundary.title = selectedGridCells.contains(key) ? "GRID|SELECTED" : "GRID|AVAILABLE"
+                    shapes.append(boundary)
+                }
+            }
+            gridAnnotations = shapes
+            view.addAnnotations(shapes)
         }
 
         func updateAnnotations(view: MLNMapView, zones: [GeoZone], markers: [Marker], position: GeoPoint?, track: Track?, navigationPath: [GeoPoint],
@@ -381,6 +453,8 @@ struct OfflineMapView: UIViewRepresentable {
             }
         }
         func mapView(_ mapView: MLNMapView, strokeColorForShapeAnnotation annotation: MLNShape) -> UIColor {
+            if annotation.title == "GRID|SELECTED" { return .systemGreen }
+            if annotation.title == "GRID|AVAILABLE" { return UIColor.white.withAlphaComponent(0.65) }
             if annotation.title?.hasPrefix("WX-ISOBAR|") == true { return .white }
             if annotation.title?.hasPrefix("WX-WIND|") == true { return .white }
             if annotation.title == "NAV|HUNT" { return .systemCyan }
@@ -388,6 +462,8 @@ struct OfflineMapView: UIViewRepresentable {
             return annotation.title?.hasPrefix("НЕ ПРОВЕРЕНО") == true ? .systemYellow : .systemOrange
         }
         func mapView(_ mapView: MLNMapView, lineWidthForPolylineAnnotation annotation: MLNPolyline) -> CGFloat {
+            if annotation.title == "GRID|SELECTED" { return 3 }
+            if annotation.title == "GRID|AVAILABLE" { return 1 }
             if annotation.title?.hasPrefix("WX-ISOBAR|") == true { return 1.8 }
             if annotation.title?.hasPrefix("WX-WIND|") == true { return 2.3 }
             if annotation.title == "NAV|HUNT" { return 5 }

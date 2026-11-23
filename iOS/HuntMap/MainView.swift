@@ -9,6 +9,10 @@ struct MainView: View {
     @StateObject private var maps = OfflineTileStore()
     @StateObject private var hosting = HostingOfflineDownloads()
     @State private var showHostingDownloads = false
+    @State private var gridMode = false
+    @State private var gridStep = 0.1
+    @State private var selectedGridCells: Set<String> = []
+    @State private var showGridDownloads = false
     @StateObject private var animals = WildlifeStore()
     @StateObject private var weather = WeatherService()
     @StateObject private var weatherGrid = WeatherGridService()
@@ -115,6 +119,10 @@ struct MainView: View {
             Button("Понятно") { routingError = nil }
         } message: { Text(routingError ?? "") }
         .sheet(isPresented: $showLayers) { layerSheet }
+        .sheet(isPresented: $showGridDownloads) {
+            OfflineGridDownloadSheet(hosting: hosting, tiles: maps,
+                                     selected: $selectedGridCells, step: gridStep)
+        }
         .sheet(isPresented: $showSearch) { mapSearchSheet }
         .sheet(item: $selectedMapMarker) { selection in
             MapMarkerDetails(markerID: selection.id, model: model,
@@ -357,6 +365,13 @@ struct MainView: View {
                                if movingMarkerID == nil {
                                    selectedMapMarker = MapMarkerSelection(id: id)
                                }
+                           },
+                           gridEnabled: gridMode,
+                           gridStep: gridStep,
+                           selectedGridCells: selectedGridCells,
+                           onGridTap: { id in
+                               if selectedGridCells.contains(id) { selectedGridCells.remove(id) }
+                               else if selectedGridCells.count < 100 { selectedGridCells.insert(id) }
                            })
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea(.container, edges: .all)
@@ -395,6 +410,9 @@ struct MainView: View {
                     Spacer()
                     VStack(spacing: 9) {
                         circleMapButton("square.3.layers.3d", label: "Слои") { showLayers = true }
+                        circleMapButton(gridMode ? "square.grid.3x3.fill" : "square.grid.3x3", label: "Выбор сетки") {
+                            gridMode.toggle()
+                        }
                         circleMapButton("cloud.sun.fill", label: "Погода") { showWeatherLayers = true }
                         circleMapButton("location.fill", label: "Моё местоположение") {
                             mapFocus = nil
@@ -409,6 +427,11 @@ struct MainView: View {
                 .padding(.top, 16)
                 .padding(.horizontal, 13)
                 Spacer(minLength: 0)
+                if gridMode {
+                    gridSelectionBar
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 8)
+                }
                 if let movingMarkerID {
                     HStack(spacing: 8) {
                         Image(systemName: "hand.point.up.left.fill")
@@ -469,6 +492,44 @@ struct MainView: View {
                 .padding(.bottom, 84)
             }
         }
+    }
+
+    private var gridSelectionBar: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            HStack {
+                Image(systemName: "square.grid.3x3.fill").foregroundStyle(HuntReference.green)
+                Text("Сетка · \(selectedGridCells.count) ячеек").font(.caption.bold())
+                Spacer()
+                Button("Закрыть") { gridMode = false }.font(.caption)
+            }
+            HStack(spacing: 8) {
+                ForEach([0.05, 0.1, 0.25, 0.5], id: \.self) { step in
+                    Button(String(format: "%.2f°", step)) {
+                        gridStep = step
+                        selectedGridCells.removeAll()
+                    }
+                    .font(.caption2.bold())
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(gridStep == step ? HuntReference.green.opacity(0.22) : Color.white.opacity(0.08),
+                                in: Capsule())
+                }
+            }
+            Text("Коснитесь ячеек на карте. Выделено до 100 участков.")
+                .font(.caption2).foregroundStyle(.secondary)
+            HStack {
+                Button("Очистить") { selectedGridCells.removeAll() }
+                    .disabled(selectedGridCells.isEmpty)
+                Spacer()
+                Button("Найти и скачать пакеты") { showGridDownloads = true }
+                    .disabled(selectedGridCells.isEmpty)
+                    .fontWeight(.semibold)
+            }
+            .font(.caption)
+        }
+        .foregroundStyle(.white)
+        .padding(12)
+        .background(HuntReference.card.opacity(0.97), in: RoundedRectangle(cornerRadius: 14))
     }
 
     // MARK: - In-app offline guidance / routing
