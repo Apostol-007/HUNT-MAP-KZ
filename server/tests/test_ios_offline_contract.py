@@ -39,7 +39,9 @@ def test_maplibre_package_declared_and_local_import_available():
     # Legacy screens have been removed, not merely hidden.
     assert not (IOS / 'LegacyMainView.swift').exists()
     assert 'LegacyMainView' not in ui
-    assert 'HostingOfflineSheet' in ui
+    assert 'startupSync.begin(' in ui
+    assert 'StartupSyncScreen(' in ui
+    assert 'HostingOfflineSheet' not in ui  # manual download screen is intentionally unreachable
     assert 'MapKit' not in tiles
 
 
@@ -136,7 +138,8 @@ def test_valhalla_local_cpp_route_engine_integration():
     assert '"pedestrian" : "auto"' in engine
     assert "ValhallaPolyline6.decode" in engine
     assert "calculateLegacyRoute" in ui
-    assert "valhalla_import" in ui
+    assert "planRoute(to:" in ui
+    assert "route_start_guidance" in ui
 
 
 def test_valhalla_download_and_windows_builder_contract():
@@ -145,7 +148,8 @@ def test_valhalla_download_and_windows_builder_contract():
     builder = (ROOT / "tools/PREPARE_VALHALLA_WINDOWS.bat").read_text()
     assert "hunt-valhalla-v1" in engine
     assert "SHA256()" in engine
-    assert "downloadFromHosting()" in ui
+    startup = (IOS / "StartupSync.swift").read_text()
+    assert "downloadFromHosting()" in startup  # automatic startup update, not a download button
     assert "ghcr.io/valhalla/valhalla-scripted:latest" in builder
     assert "serve_tiles=False" in builder
     assert "valhalla_tiles.tar" in builder
@@ -170,3 +174,24 @@ def test_valhalla_turn_by_turn_russian_directions():
     assert 'ValhallaManeuver' in engine
     assert 'refreshNextTurn(at:' in main
     assert 'Следующий манёвр' in main
+
+
+def test_user_can_plan_and_follow_without_manual_download_buttons():
+    ui = (IOS / "MainView.swift").read_text()
+    startup = (IOS / "StartupSync.swift").read_text()
+    assert 'Button("Построить маршрут")' in ui
+    assert 'Label("В путь"' in ui
+    assert 'Label("Авто"' in ui and 'Label("Пешком"' in ui
+    assert 'Скачать Valhalla' not in ui
+    assert 'Загрузить карты' not in ui
+    assert 'Скачать карту по сетке' not in ui
+    assert 'startupSync.begin(' in ui and 'await protomaps.downloadAllAvailable()' in startup
+
+
+def test_wind_prefetches_on_launch_and_progressively_refines():
+    ui = (IOS / "MainView.swift").read_text()
+    wind = (IOS / "WeatherGridService.swift").read_text()
+    assert 'weatherGrid.load(hourOffset: 0)' in ui
+    assert 'coarse.width = 6' in wind and 'coarse.height = 4' in wind
+    assert 'self.fetchGrid(region: coarse' in wind
+    assert 'self.fetchGrid(region: detailed' in wind
