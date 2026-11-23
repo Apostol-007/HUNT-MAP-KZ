@@ -75,6 +75,8 @@ struct OfflineMapView: UIViewRepresentable {
         tap.delegate = context.coordinator
         view.addGestureRecognizer(tap)
         context.coordinator.map = view
+        context.coordinator.fieldOverlay = WeatherFieldOverlay(mapView: view)
+        context.coordinator.fieldOverlay?.configure(grid: weatherGrid, layer: weatherLayer)
         context.coordinator.windOverlay = WindParticlesOverlay(mapView: view)
         context.coordinator.windOverlay?.configure(grid: weatherGrid, enabled: weatherLayer == .wind)
         context.coordinator.tilesReadyObserver = NotificationCenter.default.addObserver(
@@ -126,6 +128,7 @@ struct OfflineMapView: UIViewRepresentable {
         }
         if changedGrid { context.coordinator.renderGrid(in: view) }
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
+        context.coordinator.fieldOverlay?.configure(grid: weatherGrid, layer: weatherLayer)
         context.coordinator.windOverlay?.configure(grid: weatherGrid, enabled: weatherLayer == .wind)
         // Diagnostic-only window geometry check. Read after UIKit finishes layout.
         DispatchQueue.main.async { [weak view] in
@@ -155,6 +158,7 @@ struct OfflineMapView: UIViewRepresentable {
         }
         weak var map: MLNMapView?
         var windOverlay: WindParticlesOverlay?
+        var fieldOverlay: WeatherFieldOverlay?
         var zones: [GeoZone] = []
         var onMapTap: (GeoPoint) -> Void = { _ in }
         var onMarkerTap: (UUID) -> Void = { _ in }
@@ -328,6 +332,7 @@ struct OfflineMapView: UIViewRepresentable {
         }
 
         func mapView(_ mapView: MLNMapView, regionDidChangeAnimated animated: Bool) {
+            fieldOverlay?.setNeedsDisplay()
             if gridEnabled { renderGrid(in: mapView) }
             reportViewport(in: mapView)
         }
@@ -386,7 +391,7 @@ struct OfflineMapView: UIViewRepresentable {
                                offlineRoadLines: [OfflineRoadLine], offlineRoadRevision: Int) {
             // Persistent MLNPointAnnotation identity is critical for tapping. Recreating
             // every marker on each GPS/SwiftUI update used to cancel selection gestures.
-            let transientKey = String(describing: zones) + "|" + String(describing: track) + "|" + String(describing: navigationPath) + "|" + String(describing: replayPosition) + "|" + String(describing: weatherLayer) + "|" + String(describing: weatherGrid) + "|" + String(offlineRoadRevision)
+            let transientKey = String(describing: zones) + "|" + String(describing: track) + "|" + String(describing: navigationPath) + "|" + String(describing: replayPosition) + "|" + String(offlineRoadRevision)
             if transientKey != lastTransientKey {
                 if !transientAnnotations.isEmpty { view.removeAnnotations(transientAnnotations) }
                 transientAnnotations.removeAll()
@@ -395,56 +400,8 @@ struct OfflineMapView: UIViewRepresentable {
             var updated: [MLNAnnotation] = []
             // Hold transient annotation building behind a change check; GPS is refreshed separately.
             if transientAnnotations.isEmpty && transientKey == lastTransientKey {
-            if weatherLayer != .none, let weatherGrid, weatherGrid.validated() {
-                let w = weatherGrid.gridWidth, h = weatherGrid.gridHeight
-                let samples = weatherGrid.points.map { point in
-                    let value: Double?
-                    switch weatherLayer {
-                    case .wind: value = point.windSpeed
-                    case .pressure: value = point.pressure
-                    case .precipitation: value = point.precipitation
-                    case .none: value = nil
-                    }
-                    return WeatherGeometry.Sample(latitude: point.latitude, longitude: point.longitude, value: value)
-                }
-                // Bilinearly interpolated subcells, only inside verified 4-corner model cells.
-                let subdivisions = weatherLayer == .precipitation ? 4 : 3
-                for cell in WeatherGeometry.shade(samples: samples, width: w, height: h, subdivisions: subdivisions) {
-                    var coords = cell.corners.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
-                    let polygon = MLNPolygon(coordinates: &coords, count: UInt(coords.count))
-                    polygon.title = "WX|\(weatherLayer.rawValue)|\(cell.value)"
-                    updated.append(polygon)
-                }
-                if weatherLayer == .pressure {
-                    let values = samples.compactMap { $0.value }
-                    if let low = values.min(), let high = values.max() {
-                        let first = Int(ceil(low / 5) * 5), last = Int(floor(high / 5) * 5)
-                        if first <= last {
-                            let levels = stride(from: first, through: last, by: 5).map(Double.init)
-                            for segment in WeatherGeometry.isolines(samples: samples, width: w, height: h, levels: levels) {
-                                var coords = [segment.a, segment.b].map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
-                                let line = MLNPolyline(coordinates: &coords, count: UInt(coords.count))
-                                line.title = "WX-ISOBAR|\(Int(segment.level))"
-                                updated.append(line)
-                            }
-                        }
-                    }
-                } else if weatherLayer == .wind {
-                    let spacing = min((weatherGrid.bounds.north-weatherGrid.bounds.south)/Double(max(1,h-1)),
-                                      (weatherGrid.bounds.east-weatherGrid.bounds.west)/Double(max(1,w-1)))
-                    for point in weatherGrid.points {
-                        guard let angle = point.direction, let speed = point.windSpeed else { continue }
-                        let segments = WeatherGeometry.windArrow(latitude: point.latitude, longitude: point.longitude,
-                                                                fromDegrees: angle, speedKmh: speed, lengthDegrees: spacing * 0.30)
-                        for segment in segments {
-                            var coords = [segment.a, segment.b].map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
-                            let line = MLNPolyline(coordinates: &coords, count: UInt(coords.count))
-                            line.title = "WX-WIND|\(segment.level)"
-                            updated.append(line)
-                        }
-                    }
-                }
-            }
+            // Weather shades are drawn by WeatherFieldOverlay in a lightweight canvas.
+            // Never add hundreds of weather polygons/arrow annotations to MapLibre.
             for road in offlineRoadLines where road.points.count >= 2 {
                 var coords = road.points.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
                 let line = MLNPolyline(coordinates: &coords, count: UInt(coords.count))

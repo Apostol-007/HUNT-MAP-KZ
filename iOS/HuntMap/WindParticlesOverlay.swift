@@ -23,8 +23,8 @@ final class WindParticlesOverlay: UIView {
     private var displayLink: CADisplayLink?
     private var previousFrame: CFTimeInterval = 0
     private var forecastSignature = ""
-    private let maximumTrail = 13
-    private let particleCount = 175
+    private let maximumTrail = 9
+    private let particleCount = 85
 
     init(mapView: MLNMapView) {
         self.mapView = mapView
@@ -51,7 +51,7 @@ final class WindParticlesOverlay: UIView {
         }
         isHidden = false
         let b = grid.bounds
-        let signature = "\(grid.forecastTimeUTC)|\(b.west)|\(b.south)|\(b.east)|\(b.north)"
+        let signature = "\(grid.forecastTimeUTC)|\(b.west)|\(b.south)|\(b.east)|\(b.north)|\(grid.gridWidth)x\(grid.gridHeight)|\(grid.points.first?.windSpeed ?? -1)|\(grid.points.last?.direction ?? -1)"
         if signature != forecastSignature {
             forecast = grid
             forecastSignature = signature
@@ -60,7 +60,7 @@ final class WindParticlesOverlay: UIView {
         }
         if displayLink == nil {
             let link = CADisplayLink(target: self, selector: #selector(tick(_:)))
-            link.preferredFramesPerSecond = 24
+            link.preferredFramesPerSecond = 15
             link.add(to: .main, forMode: .common)
             displayLink = link
         }
@@ -108,7 +108,7 @@ final class WindParticlesOverlay: UIView {
 
     @objc private func tick(_ link: CADisplayLink) {
         guard let mapView, forecast != nil, window != nil else { return }
-        if link.timestamp - previousFrame < 0.035 { return }
+        if link.timestamp - previousFrame < 0.064 { return }
         previousFrame = link.timestamp
         for index in particles.indices {
             var particle = particles[index]

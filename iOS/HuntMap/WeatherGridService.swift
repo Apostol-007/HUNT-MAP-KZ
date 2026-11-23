@@ -110,8 +110,8 @@ struct ForecastGrid: Codable {
         var south: Double
         var east: Double
         var north: Double
-        var width: Int = 12
-        var height: Int = 8
+        var width: Int = 8
+        var height: Int = 6
         var bbox: ForecastGrid.Bounds { .init(west: west, south: south, east: east, north: north) }
         var key: String { "\(Int(west * 100))_\(Int(south * 100))_\(Int(east * 100))_\(Int(north * 100))_\(width)x\(height)" }
     }
@@ -294,7 +294,7 @@ struct ForecastGrid: Codable {
             self.loading = true
             defer { self.loading = false }
             do {
-                // One request before anything else, unless a cached grid is already visible.
+                // Show a low-cost grid first, then refine without blanking the map.
                 if self.grid == nil {
                     let value = try await self.fetchGrid(region: coarse, at: date)
                     guard !Task.isCancelled, self.lastRequestedKey == key else { return }
