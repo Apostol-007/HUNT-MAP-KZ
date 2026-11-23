@@ -21,7 +21,24 @@ final class WeatherFieldOverlay: UIView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
+    /// MLNMapView starts with a zero-sized frame in UIViewRepresentable.
+    /// Keep the canvas exactly aligned after UIKit completes actual layout.
+    func syncMapGeometry() {
+        guard let mapView, mapView.bounds.width > 0, mapView.bounds.height > 0 else { return }
+        if frame != mapView.bounds {
+            frame = mapView.bounds
+            setNeedsDisplay()
+        }
+        mapView.bringSubviewToFront(self)
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        DispatchQueue.main.async { [weak self] in self?.syncMapGeometry() }
+    }
+
     func configure(grid: ForecastGrid?, layer: WeatherMapLayer) {
+        syncMapGeometry()
         guard layer != .none, let grid, grid.validated() else {
             if !isHidden {
                 forecast = nil
@@ -35,9 +52,10 @@ final class WeatherFieldOverlay: UIView {
         let first = grid.points.first
         let last = grid.points.last
         let signature = "\(layer.rawValue)|\(grid.forecastTimeUTC)|\(grid.bounds.west)|\(grid.bounds.south)|\(grid.bounds.east)|\(grid.bounds.north)|\(grid.gridWidth)x\(grid.gridHeight)|\(first?.windSpeed ?? -1)|\(first?.pressure ?? -1)|\(last?.precipitation ?? -1)"
+        // Assign every time: a refreshed provider field can share the same bounds/time.
+        forecast = grid
+        selectedLayer = layer
         if signature != lastSignature {
-            forecast = grid
-            selectedLayer = layer
             lastSignature = signature
             setNeedsDisplay()
         }

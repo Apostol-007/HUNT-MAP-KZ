@@ -36,9 +36,24 @@ final class WindParticlesOverlay: UIView {
         mapView.addSubview(self)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+    func syncMapGeometry() {
+        guard let mapView, mapView.bounds.width > 0, mapView.bounds.height > 0 else { return }
+        if frame != mapView.bounds {
+            frame = mapView.bounds
+            setNeedsDisplay()
+        }
+        mapView.bringSubviewToFront(self)
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        DispatchQueue.main.async { [weak self] in self?.syncMapGeometry() }
+    }
     deinit { displayLink?.invalidate() }
 
     func configure(grid: ForecastGrid?, enabled: Bool) {
+        syncMapGeometry()
         guard enabled, let grid, grid.validated() else {
             forecast = nil
             forecastSignature = ""

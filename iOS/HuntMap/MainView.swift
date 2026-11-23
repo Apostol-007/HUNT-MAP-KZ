@@ -610,7 +610,27 @@ struct MainView: View {
                             .padding(10)
                             .background(HuntReference.card.opacity(0.94), in: Capsule())
                     }
-                    .padding(.bottom, 8)
+                    .padding(.bottom, 4)
+                    if weatherGrid.grid == nil {
+                        HStack(spacing: 7) {
+                            if weatherGrid.loading { ProgressView().tint(.white) }
+                            Image(systemName: "cloud.slash").foregroundStyle(.orange)
+                            Text(weatherGrid.status)
+                                .lineLimit(2).font(.caption2)
+                        }
+                        .foregroundStyle(.white)
+                        .padding(9)
+                        .background(HuntReference.card.opacity(0.96), in: RoundedRectangle(cornerRadius: 10))
+                        .padding(.horizontal, 12)
+                    } else {
+                        Text("Прогноз загружен · \(weatherLayer.rawValue)")
+                            .font(.caption2.bold())
+                            .foregroundStyle(.white)
+                            .padding(7)
+                            .background(HuntReference.card.opacity(0.86), in: Capsule())
+                            .padding(.horizontal, 12)
+                    }
+                    Spacer().frame(height: 3)
                 }
                 if recordedRoute != nil {
                     recordedTrackPanel

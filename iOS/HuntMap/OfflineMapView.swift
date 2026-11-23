@@ -130,6 +130,9 @@ struct OfflineMapView: UIViewRepresentable {
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
         context.coordinator.fieldOverlay?.configure(grid: weatherGrid, layer: weatherLayer)
         context.coordinator.windOverlay?.configure(grid: weatherGrid, enabled: weatherLayer == .wind)
+        // Native MapLibre may add/reorder its own GL subviews after style reload.
+        context.coordinator.fieldOverlay?.syncMapGeometry()
+        context.coordinator.windOverlay?.syncMapGeometry()
         // Diagnostic-only window geometry check. Read after UIKit finishes layout.
         DispatchQueue.main.async { [weak view] in
             guard let view, let window = view.window else { return }
@@ -292,6 +295,8 @@ struct OfflineMapView: UIViewRepresentable {
         func mapView(_ mapView: MLNMapView, didFinishLoading style: MLNStyle) {
             configure(style: style, files: latestFiles)
             lastStyle = style
+            fieldOverlay?.syncMapGeometry()
+            windOverlay?.syncMapGeometry()
         }
 
         func refreshOfflineTiles(style: MLNStyle) {
@@ -332,6 +337,8 @@ struct OfflineMapView: UIViewRepresentable {
         }
 
         func mapView(_ mapView: MLNMapView, regionDidChangeAnimated animated: Bool) {
+            fieldOverlay?.syncMapGeometry()
+            windOverlay?.syncMapGeometry()
             fieldOverlay?.setNeedsDisplay()
             if gridEnabled { renderGrid(in: mapView) }
             reportViewport(in: mapView)

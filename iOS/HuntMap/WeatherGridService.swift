@@ -112,8 +112,8 @@ struct ForecastGrid: Codable {
         var south: Double
         var east: Double
         var north: Double
-        var width: Int = 8
-        var height: Int = 6
+        var width: Int = 6
+        var height: Int = 4
         var bbox: ForecastGrid.Bounds { .init(west: west, south: south, east: east, north: north) }
         var key: String { "\(Int(west * 100))_\(Int(south * 100))_\(Int(east * 100))_\(Int(north * 100))_\(width)x\(height)" }
     }
@@ -267,8 +267,8 @@ struct ForecastGrid: Codable {
             .addingTimeInterval(TimeInterval(hourOffset * 3600))
         let detailed = regionForViewport()
         var coarse = detailed
-        coarse.width = 6
-        coarse.height = 4
+        coarse.width = 3
+        coarse.height = 3
         let key = detailed.key + ":" + String(Int(date.timeIntervalSince1970 / 3600))
         if loading && lastRequestedKey == key { return }
         // Avoid hammering the provider on every SwiftUI redraw after a temporary error.
