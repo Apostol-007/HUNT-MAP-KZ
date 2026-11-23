@@ -89,59 +89,63 @@ final class WeatherFieldOverlay: UIView {
         }
     }
 
+    /// Draw only the visible screen. Geographic model cells can span millions of
+    /// display pixels at street zoom; projecting whole-cell polygons is expensive
+    /// and can fail to rasterize. Screen sampling is bounded at every zoom.
     override func draw(_ rect: CGRect) {
-        guard let forecast, let mapView, let context = UIGraphicsGetCurrentContext() else {
-            UserDefaults.standard.set("no canvas / forecast", forKey: "hunt.diag.weatherPaint")
+        guard let forecast, let mapView, let context = UIGraphicsGetCurrentContext(),
+              bounds.width > 0, bounds.height > 0 else {
+            UserDefaults.standard.set("Canvas or forecast not ready", forKey: "hunt.diag.weatherPaint")
             return
         }
-        UserDefaults.standard.set("paint started: \(Int(bounds.width))x\(Int(bounds.height)), layer \(selectedLayer.rawValue), \(forecast.gridWidth)x\(forecast.gridHeight)", forKey: "hunt.diag.weatherPaint")
-        var drawnTiles = 0
-        let countX = forecast.gridWidth - 1
-        let countY = forecast.gridHeight - 1
-        guard countX > 0, countY > 0 else { return }
-        let latStep = (forecast.bounds.north - forecast.bounds.south) / Double(countY)
-        let lonStep = (forecast.bounds.east - forecast.bounds.west) / Double(countX)
+        let width = forecast.gridWidth, height = forecast.gridHeight
+        guard width >= 2, height >= 2 else { return }
+        let west = forecast.bounds.west, east = forecast.bounds.east
+        let south = forecast.bounds.south, north = forecast.bounds.north
 
-        func bilinear(_ a: Double, _ b: Double, _ c: Double, _ d: Double,
-                      _ u: Double, _ v: Double) -> Double {
-            a * (1 - u) * (1 - v) + b * u * (1 - v) + c * (1 - u) * v + d * u * v
+        func sample(latitude: Double, longitude: Double) -> Double? {
+            guard longitude >= west, longitude <= east,
+                  latitude >= south, latitude <= north else { return nil }
+            let x = (longitude - west) * Double(width - 1) / (east - west)
+            let y = (latitude - south) * Double(height - 1) / (north - south)
+            let column = min(max(Int(x), 0), width - 2)
+            let row = min(max(Int(y), 0), height - 2)
+            let u = min(1.0, max(0.0, x - Double(column)))
+            let v = min(1.0, max(0.0, y - Double(row)))
+            let a = forecast.points[row * width + column]
+            let b = forecast.points[row * width + column + 1]
+            let c = forecast.points[(row + 1) * width + column]
+            let d = forecast.points[(row + 1) * width + column + 1]
+            guard let av = value(a), let bv = value(b),
+                  let cv = value(c), let dv = value(d) else { return nil }
+            return (1-u)*(1-v)*av + u*(1-v)*bv + (1-u)*v*cv + u*v*dv
         }
-        // Four small tiles per model cell provide a readable field with a bounded
-        // draw cost (at 8x6 nodes: 140 tiles total, rather than thousands).
-        for row in 0..<countY {
-            for column in 0..<countX {
-                let a = forecast.points[row * forecast.gridWidth + column]
-                let b = forecast.points[row * forecast.gridWidth + column + 1]
-                let c = forecast.points[(row + 1) * forecast.gridWidth + column]
-                let d = forecast.points[(row + 1) * forecast.gridWidth + column + 1]
-                guard let av = value(a), let bv = value(b),
-                      let cv = value(c), let dv = value(d) else { continue }
-                for subY in 0..<2 {
-                    for subX in 0..<2 {
-                        let u0 = Double(subX) / 2, u1 = Double(subX + 1) / 2
-                        let v0 = Double(subY) / 2, v1 = Double(subY + 1) / 2
-                        let average = bilinear(av, bv, cv, dv,
-                                               (u0 + u1) / 2, (v0 + v1) / 2)
-                        let fill = color(average)
-                        if fill.cgColor.alpha < 0.01 { continue }
-                        let corners = [(u0,v0),(u1,v0),(u1,v1),(u0,v1)]
-                        let points: [CGPoint] = corners.map { pair in
-                            let u = pair.0, v = pair.1
-                            let location = CLLocationCoordinate2D(
-                                latitude: forecast.bounds.south + (Double(row) + v) * latStep,
-                                longitude: forecast.bounds.west + (Double(column) + u) * lonStep)
-                            return mapView.convert(location, toPointTo: self)
-                        }
-                        context.move(to: points[0])
-                        for p in points.dropFirst() { context.addLine(to: p) }
-                        context.closePath()
-                        context.setFillColor(fill.cgColor)
-                        context.fillPath()
-                        drawnTiles += 1
-                    }
-                }
+
+        let pixelStep: CGFloat = 20
+        let columns = Int(ceil(bounds.width / pixelStep))
+        let rows = Int(ceil(bounds.height / pixelStep))
+        var paintedCells = 0
+        var populatedCells = 0
+        for row in 0..<rows {
+            let y = CGFloat(row) * pixelStep
+            for column in 0..<columns {
+                let x = CGFloat(column) * pixelStep
+                let screenPoint = CGPoint(x: min(bounds.width - 1, x + pixelStep / 2),
+                                          y: min(bounds.height - 1, y + pixelStep / 2))
+                let geo = mapView.convert(screenPoint, toCoordinateFrom: self)
+                guard let reading = sample(latitude: geo.latitude, longitude: geo.longitude) else { continue }
+                populatedCells += 1
+                let fill = color(reading)
+                guard fill.cgColor.alpha > 0.001 else { continue }
+                let tile = CGRect(x: x, y: y,
+                                  width: min(pixelStep + 0.5, bounds.width - x),
+                                  height: min(pixelStep + 0.5, bounds.height - y))
+                context.setFillColor(fill.cgColor)
+                context.fill(tile)
+                paintedCells += 1
             }
         }
-        UserDefaults.standard.set("rendered tiles: \(drawnTiles), layer: \(selectedLayer.rawValue), canvas: \(Int(bounds.width))x\(Int(bounds.height))", forKey: "hunt.diag.weatherPaint")
+        let detail = "layer: \(selectedLayer.rawValue); painted: \(paintedCells)/\(populatedCells); screen: \(Int(bounds.width))x\(Int(bounds.height)); grid: \(width)x\(height)"
+        UserDefaults.standard.set(detail, forKey: "hunt.diag.weatherPaint")
     }
 }
