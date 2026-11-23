@@ -27,8 +27,14 @@ echo.
 set /p REGION=Bounding box west,south,east,north [76.7,43.1,77.2,43.5]:
 if "%REGION%"=="" set "REGION=76.7,43.1,77.2,43.5"
 set "SRC=auto"
-echo Source selection: automatic (no URL input required).
-echo Auto mode probes PMTiles headers with HTTP Range without downloading the planet.
+if exist "%CD%\kazakhstan.pmtiles" set "SRC=%CD%\kazakhstan.pmtiles"
+if exist "%~dp0kazakhstan.pmtiles" set "SRC=%~dp0kazakhstan.pmtiles"
+if /i "%SRC%"=="auto" (
+ echo Source: official Protomaps dated PMTiles (HTTP Range extract).
+) else (
+ echo Source: local kazakhstan.pmtiles. The country archive stays unchanged.
+)
+echo Region packages will be extracted from this source.
 py tools\prepare_protomaps_grid.py --pmtiles "%PMT%" --source "%SRC%" --bbox "%REGION%" --step 0.1 --maxzoom 15
 if errorlevel 1 (
  echo ERROR. Existing downloaded archives are kept.
