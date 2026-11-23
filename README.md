@@ -30,3 +30,16 @@ python -m pytest -q server/tests
 Аудит и удалённые файлы: [отчёт об очистке](docs/REPOSITORY_AUDIT_2026-11-23.md).
 
 Интеграция статических карт и маршрутов: `https://create.web-works.kz/maps/` (для опубликованных пакетов требуется реальное наличие файлов). Генерация IPA и тесты на iPhone должны проверяться по фактическому результату GitHub Actions.
+
+## Protomaps (HUNT MAP KZ v5.4)
+
+Primary vector basemap is **Protomaps Basemap v4 / PMTiles**. The app reads regional `.pmtiles` directly with MapLibre Native, without any raster conversion. Previously imported MBTiles, downloaded GeoJSON routing graphs and map markers remain supported.
+
+1. On Windows run `tools/PREPARE_PROTOMAPS_WINDOWS.bat`. It uses the official `pmtiles extract` CLI to create Almaty grid archives and SHA-256 catalog.
+2. Upload **all** output files from `hosting_upload/protomaps/` to `https://create.web-works.kz/maps/protomaps/` (same filenames and paths).
+3. Confirm `https://create.web-works.kz/maps/protomaps/catalog.json` returns JSON and individual archives return HTTPS 200.
+4. Open the app, select map → grid → download Protomaps; choose offline mode after install. No arbitrary public tile scraping.
+
+The generated style currently displays **geometric basemap features** (roads, tracks, trails, water, forests, buildings) offline; it does **not yet package Protomaps glyphs/sprites for offline text labels and POI icons**. The PMTiles basemap is **not a routable graph**: road navigation still uses separately downloaded, OSM-tagged GeoJSON.
+
+Source data: [Protomaps downloads](https://docs.protomaps.com/basemaps/downloads); [PMTiles CLI](https://docs.protomaps.com/pmtiles/cli). Keep © OpenStreetMap attribution. Satellite imagery is a separate source, not part of Protomaps Basemap.
