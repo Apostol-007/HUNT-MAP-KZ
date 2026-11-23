@@ -40,6 +40,7 @@ struct MainView: View {
     @State private var showAnimalsLayer = false
     @State private var editingMarker: Marker?
     @State private var selectedMapMarker: MapMarkerSelection?
+    @State private var creatingMapMarker: Marker?
     @State private var pendingMapPoint: GeoPoint?
     @State private var pendingMapZone: GeoZone?
     @State private var movingMarkerID: UUID?
@@ -99,9 +100,8 @@ struct MainView: View {
         }
         .confirmationDialog("Точка на карте", isPresented: $showMapPointActions, titleVisibility: .visible) {
             Button("Поставить метку") {
-                if let point = pendingMapPoint, let marker = model.addMarker(at: point) {
-                    showMarkersOnMap = true
-                    selectedMapMarker = MapMarkerSelection(id: marker.id)
+                if let point = pendingMapPoint {
+                    creatingMapMarker = Marker(title: "Моя метка", kind: "Точка", coordinate: point)
                 }
                 pendingMapPoint = nil
                 pendingMapZone = nil
@@ -118,6 +118,14 @@ struct MainView: View {
             if let point = pendingMapPoint {
                 Text(String(format: "Широта %.6f, долгота %.6f", point.latitude, point.longitude))
             }
+        }
+        .sheet(item: $creatingMapMarker) { marker in
+            MarkerEditor(marker: marker, isNew: true,
+                         onSave: { changed in
+                             model.insertMarker(changed)
+                             showMarkersOnMap = true
+                         },
+                         onDelete: { _ in })
         }
         .sheet(item: $editingMarker) { marker in
             MarkerEditor(marker: marker,
@@ -402,7 +410,13 @@ struct MainView: View {
                 }
                 HStack(spacing: 10) {
                     miniMapAction("location.north.fill", title: "GPS") { mapFocus = nil; model.requestGPS(); centerRequest += 1 }
-                    miniMapAction("mappin.circle.fill", title: "Метка") { model.addMarker() }
+                    miniMapAction("mappin.circle.fill", title: "Метка") {
+                        if let point = mapFocus ?? model.coordinate {
+                            creatingMapMarker = Marker(title: "Моя метка", kind: "Точка", coordinate: point)
+                        } else {
+                            model.status = "Нажмите на карту, чтобы выбрать место метки"
+                        }
+                    }
                     miniMapAction(model.recording ? "stop.fill" : "record.circle.fill",
                                   title: model.recording ? "Стоп" : "Запись") {
                         if model.recording { model.stopTrack() } else { model.startTrack() }

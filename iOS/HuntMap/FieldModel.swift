@@ -128,6 +128,12 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         return marker
     }
     func removeMarkers(at offsets:IndexSet) {markers.remove(atOffsets:offsets);persist()}
+    func insertMarker(_ marker: Marker) {
+        guard marker.coordinate.valid else { status = "Недопустимые координаты метки"; return }
+        guard !markers.contains(where: { $0.id == marker.id }) else { return }
+        markers.insert(marker, at: 0)
+        persist()
+    }
     func saveMarker(_ changed: Marker) {
         guard let index = markers.firstIndex(where: { $0.id == changed.id }) else { return }
         markers[index] = changed

@@ -38,10 +38,12 @@ struct OfflineMapView: UIViewRepresentable {
         let longPress = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleLongPress(_:)))
         longPress.minimumPressDuration = 0.55
         longPress.cancelsTouchesInView = false
+        longPress.delegate = context.coordinator
         view.addGestureRecognizer(longPress)
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
         tap.cancelsTouchesInView = false
         tap.require(toFail: longPress)
+        tap.delegate = context.coordinator
         view.addGestureRecognizer(tap)
         context.coordinator.map = view
         view.setCenter(CLLocationCoordinate2D(latitude: 43.24, longitude: 76.91), zoomLevel: 11, animated: false)
@@ -77,7 +79,7 @@ struct OfflineMapView: UIViewRepresentable {
                                                 centerRequest: centerRequest, zoomCommand: zoomCommand)
     }
 
-    final class Coordinator: NSObject, MLNMapViewDelegate {
+    final class Coordinator: NSObject, MLNMapViewDelegate, UIGestureRecognizerDelegate {
         var selectedZone: Binding<GeoZone?>
         weak var map: MLNMapView?
         var zones: [GeoZone] = []
@@ -85,8 +87,23 @@ struct OfflineMapView: UIViewRepresentable {
         var onMarkerTap: (UUID) -> Void = { _ in }
         private var markerAnnotations: [ObjectIdentifier: UUID] = [:]
         private var markerAppearance: [ObjectIdentifier: Marker] = [:]
+        private var markerSignatures: [UUID: String] = [:]
+        private var stableMarkers: [UUID: MLNPointAnnotation] = [:]
+        private var gpsAnnotation: MLNPointAnnotation?
+        private var transientAnnotations: [MLNAnnotation] = []
+        private var lastTransientKey: String?
         private var markerCoordinates: [(UUID, CLLocationCoordinate2D)] = []
         init(selectedZone: Binding<GeoZone?>) { self.selectedZone = selectedZone }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            // MapLibre owns pan/pinch/double tap. Our single tap must not block them.
+            return true
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            // Ignore taps on MapLibre controls; only canvas taps reach the handler.
+            return touch.view is MLNMapView || touch.view?.isDescendant(of: map ?? UIView()) == true
+        }
+
         @objc func handleLongPress(_ recognizer: UILongPressGestureRecognizer) {
             guard recognizer.state == .began, let map else { return }
             let coordinate = map.convert(recognizer.location(in: map), toCoordinateFrom: map)
@@ -112,36 +129,27 @@ struct OfflineMapView: UIViewRepresentable {
         }
 
         func mapView(_ mapView: MLNMapView, didSelect annotation: MLNAnnotation) {
-            if let id = markerAnnotations[ObjectIdentifier(annotation as AnyObject)] {
-                onMarkerTap(id)
-                mapView.deselectAnnotation(annotation, animated: false)
-            }
+            // Selection is handled by hit testing in handleTap; prevent a duplicate sheet.
+            mapView.deselectAnnotation(annotation, animated: false)
         }
 
         func mapView(_ mapView: MLNMapView, imageFor annotation: MLNAnnotation) -> MLNAnnotationImage? {
             guard let marker = markerAppearance[ObjectIdentifier(annotation as AnyObject)] else { return nil }
             let symbol = marker.symbol ?? MarkerStyle.defaultSymbol(for: marker.kind)
             let color = UIColor(hex: marker.colorHex ?? "#24DA66")
-            let size = CGSize(width: 42, height: 48)
+            let size = CGSize(width: 52, height: 52)
             let image = UIGraphicsImageRenderer(size: size).image { _ in
-                let circle = CGRect(x: 3, y: 2, width: 36, height: 36)
+                let background = CGRect(x: 4, y: 4, width: 44, height: 44)
                 color.setFill()
-                UIBezierPath(ovalIn: circle).fill()
-                UIColor.black.withAlphaComponent(0.35).setStroke()
-                let border = UIBezierPath(ovalIn: circle)
+                UIBezierPath(roundedRect: background, cornerRadius: 13).fill()
+                UIColor.white.withAlphaComponent(0.65).setStroke()
+                let border = UIBezierPath(roundedRect: background.insetBy(dx: 1, dy: 1), cornerRadius: 12)
                 border.lineWidth = 1.5
                 border.stroke()
-                let triangle = UIBezierPath()
-                triangle.move(to: CGPoint(x: 14, y: 33))
-                triangle.addLine(to: CGPoint(x: 21, y: 46))
-                triangle.addLine(to: CGPoint(x: 28, y: 33))
-                triangle.close()
-                color.setFill()
-                triangle.fill()
-                let glyph = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold))
+                let glyph = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 24, weight: .semibold))
                     ?? UIImage(systemName: "mappin")
                 glyph?.withTintColor(.white, renderingMode: .alwaysOriginal)
-                    .draw(in: CGRect(x: 12, y: 11, width: 18, height: 18))
+                    .draw(in: CGRect(x: 13, y: 13, width: 26, height: 26))
             }
             return MLNAnnotationImage(image: image, reuseIdentifier: "hunt-marker-\(marker.id.uuidString)-\(symbol)-\(marker.colorHex ?? "green")")
         }
@@ -149,7 +157,6 @@ struct OfflineMapView: UIViewRepresentable {
         private var lastRevision = -1
         private var lastStyle: MLNStyle?
         private var latestFiles: [URL] = []
-        private var shapes: [MLNAnnotation] = []
         private var centeredOnGPS = false
         private var appliedCenterRequest = 0
         private var appliedZoomCommand = 0
@@ -205,11 +212,17 @@ struct OfflineMapView: UIViewRepresentable {
 
         func updateAnnotations(view: MLNMapView, zones: [GeoZone], markers: [Marker], position: GeoPoint?, track: Track?,
                                weatherGrid: ForecastGrid?, weatherLayer: WeatherMapLayer) {
-            if !shapes.isEmpty { view.removeAnnotations(shapes) }
+            // Persistent MLNPointAnnotation identity is critical for tapping. Recreating
+            // every marker on each GPS/SwiftUI update used to cancel selection gestures.
+            let transientKey = String(describing: zones) + "|" + String(describing: track) + "|" + String(describing: weatherLayer) + "|" + String(describing: weatherGrid)
+            if transientKey != lastTransientKey {
+                if !transientAnnotations.isEmpty { view.removeAnnotations(transientAnnotations) }
+                transientAnnotations.removeAll()
+                lastTransientKey = transientKey
+            }
             var updated: [MLNAnnotation] = []
-            markerAnnotations.removeAll()
-            markerAppearance.removeAll()
-            markerCoordinates.removeAll()
+            // Hold transient annotation building behind a change check; GPS is refreshed separately.
+            if transientAnnotations.isEmpty && transientKey == lastTransientKey {
             if weatherLayer != .none, let weatherGrid, weatherGrid.validated() {
                 let w = weatherGrid.gridWidth, h = weatherGrid.gridHeight
                 let samples = weatherGrid.points.map { point in
@@ -276,24 +289,55 @@ struct OfflineMapView: UIViewRepresentable {
                 line.title = "Записанный маршрут"
                 updated.append(line)
             }
-            for marker in markers {
-                let point = MLNPointAnnotation()
-                point.title = marker.title
-                point.coordinate = CLLocationCoordinate2D(latitude: marker.coordinate.latitude, longitude: marker.coordinate.longitude)
-                updated.append(point)
-                markerAnnotations[ObjectIdentifier(point)] = marker.id
-                markerAppearance[ObjectIdentifier(point)] = marker
-                markerCoordinates.append((marker.id, point.coordinate))
+            transientAnnotations = updated
+            if !updated.isEmpty { view.addAnnotations(updated) }
             }
-            if let position {
+            let incoming = Set(markers.map(\.id))
+            for (id, annotation) in stableMarkers where !incoming.contains(id) {
+                view.removeAnnotation(annotation)
+                stableMarkers.removeValue(forKey: id)
+                markerAnnotations.removeValue(forKey: ObjectIdentifier(annotation))
+                markerAppearance.removeValue(forKey: ObjectIdentifier(annotation))
+                markerSignatures.removeValue(forKey: id)
+            }
+            markerCoordinates.removeAll(keepingCapacity: true)
+            for marker in markers where marker.coordinate.valid {
+                let signature = "\(marker.title)|\(marker.kind)|\(marker.symbol ?? "")|\(marker.colorHex ?? "")|\(marker.coordinate.latitude)|\(marker.coordinate.longitude)"
+                let annotation: MLNPointAnnotation
+                if let existing = stableMarkers[marker.id], markerSignatures[marker.id] == signature {
+                    annotation = existing
+                } else {
+                    if let existing = stableMarkers.removeValue(forKey: marker.id) {
+                        view.removeAnnotation(existing)
+                        markerAnnotations.removeValue(forKey: ObjectIdentifier(existing))
+                        markerAppearance.removeValue(forKey: ObjectIdentifier(existing))
+                    }
+                    let fresh = MLNPointAnnotation()
+                    fresh.coordinate = CLLocationCoordinate2D(latitude: marker.coordinate.latitude, longitude: marker.coordinate.longitude)
+                    fresh.title = marker.title
+                    annotation = fresh
+                    stableMarkers[marker.id] = fresh
+                    // Register appearance BEFORE addAnnotation so delegate imageFor receives it.
+                    markerAnnotations[ObjectIdentifier(fresh)] = marker.id
+                    markerAppearance[ObjectIdentifier(fresh)] = marker
+                    view.addAnnotation(fresh)
+                    markerSignatures[marker.id] = signature
+                }
+                markerCoordinates.append((marker.id, annotation.coordinate))
+            }
+            // Keep GPS independent from editable markers (never assign a marker UUID).
+            if let position, position.valid {
+                if let gpsAnnotation { view.removeAnnotation(gpsAnnotation) }
                 let gps = MLNPointAnnotation()
                 gps.title = "GPS · текущая позиция"
                 gps.coordinate = CLLocationCoordinate2D(latitude: position.latitude, longitude: position.longitude)
-                updated.append(gps)
+                gpsAnnotation = gps
+                view.addAnnotation(gps)
                 if !centeredOnGPS { view.setCenter(gps.coordinate, animated: false); centeredOnGPS = true }
+            } else if let gpsAnnotation {
+                view.removeAnnotation(gpsAnnotation)
+                self.gpsAnnotation = nil
             }
-            shapes = updated
-            view.addAnnotations(updated)
         }
 
         func mapView(_ mapView: MLNMapView, alphaForShapeAnnotation annotation: MLNShape) -> CGFloat {

@@ -14,7 +14,7 @@ checks = {
     'No native TabView constraining map': 'TabView {' not in main,
     'MapLibre is full bleed': 'OfflineMapView(' in map_code and '.ignoresSafeArea(.container, edges: .all)' in map_code,
     'Map no fixed viewport height': '.frame(height:' not in map_code.split('LinearGradient(colors:', 1)[0],
-    'GPS and tracking actions retained': all(name in main for name in ['model.requestGPS()', 'model.addMarker()', 'model.startTrack()', 'model.stopTrack()']),
+    'GPS and tracking actions retained': all(name in main for name in ['model.requestGPS()', 'model.insertMarker(', 'model.startTrack()', 'model.stopTrack()']),
     'Map controls are interactive': all(name in main for name in ['showSearch = true', 'zoomCommand += 1', 'zoomCommand -= 1', 'centerRequest += 1']),
     'Layers real state': all(name in main for name in ['showGrounds ?', 'satelliteBinding', 'weatherEnabledBinding']),
     'Disabled unavailable wildlife map overlay': 'available: false' in main,
