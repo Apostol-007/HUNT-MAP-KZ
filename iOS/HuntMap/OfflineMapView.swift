@@ -280,6 +280,11 @@ struct OfflineMapView: UIViewRepresentable {
             }
         }
 
+        func mapView(_ mapView: MLNMapView, didFailLoadingMapWithError error: Error) {
+            AppDiagnosticLog.shared.recordError(subsystem: "Карта",
+                operation: "MapLibre загрузка стиля или карты", error: error)
+        }
+
         func mapView(_ mapView: MLNMapView, didFinishLoading style: MLNStyle) {
             configure(style: style, files: latestFiles)
             lastStyle = style
