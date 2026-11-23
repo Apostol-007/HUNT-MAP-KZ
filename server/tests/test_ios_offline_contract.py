@@ -67,3 +67,13 @@ def test_protomaps_native_pmtiles_integration():
     assert 'PMTiles' in code and 'SHA256' in code
     assert 'protomapsOfflineStyleURL' in view
     assert 'ProtomapsOfflineStore()' in ui
+
+
+def test_protomaps_local_glyphs_and_sprites_are_downloaded():
+    source = (IOS / 'ProtomapsAssets.swift').read_text()
+    style = (IOS / 'ProtomapsVectorStyle.swift').read_text()
+    assert 'Noto Sans Regular' in source
+    assert '1024-1279' in source and '1280-1535' in source
+    assert 'sprites/v4' in source
+    assert 'ProtomapsAssets.ready(in: folder)' in style
+    assert 'place_names_' in style

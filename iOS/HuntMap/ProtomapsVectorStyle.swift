@@ -50,8 +50,32 @@ enum ProtomapsVectorStyle {
                  dash:[2,2])
         }
         guard !sources.isEmpty else { return nil }
-        let style: [String: Any] = ["version":8,"name":"HUNT MAP KZ Protomaps",
-                                    "sources":sources,"layers":layers]
+        let canLabel = !local || ProtomapsAssets.ready(in: folder)
+        if canLabel {
+            for (i, _) in regions.enumerated() {
+                let id = "protomaps_\(i)"
+                let label: [String: Any] = [
+                    "id": "place_names_\(i)", "type": "symbol",
+                    "source": id, "source-layer": "places",
+                    "layout": [
+                        "text-field": ["coalesce", ["get", "name:ru"], ["get", "name:kk"], ["get", "name"]],
+                        "text-font": ["Noto Sans Regular"],
+                        "text-size": ["interpolate", ["linear"], ["zoom"], 5, 10, 14, 15],
+                        "text-max-width": 10
+                    ],
+                    "paint": ["text-color": "#263e36", "text-halo-color": "#f5f6f0", "text-halo-width": 1.5]
+                ]
+                layers.append(label)
+            }
+        }
+        var style: [String: Any] = ["version":8,"name":"HUNT MAP KZ Protomaps",
+                                   "sources":sources,"layers":layers]
+        if canLabel {
+            style["glyphs"] = local ? ProtomapsAssets.glyphs(in: folder) :
+                "https://protomaps.github.io/basemaps-assets/fonts/{fontstack}/{range}.pbf"
+            style["sprite"] = local ? ProtomapsAssets.sprite(in: folder) :
+                "https://protomaps.github.io/basemaps-assets/sprites/v4/light"
+        }
         guard let data = try? JSONSerialization.data(withJSONObject:style,options:[.sortedKeys]) else { return nil }
         let url = folder.appendingPathComponent(local ? "protomaps-offline-style.json" : "protomaps-online-style.json")
         do { try data.write(to:url,options:.atomic); return url }

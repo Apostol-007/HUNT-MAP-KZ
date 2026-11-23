@@ -43,3 +43,7 @@ Primary vector basemap is **Protomaps Basemap v4 / PMTiles**. The app reads regi
 The generated style currently displays **geometric basemap features** (roads, tracks, trails, water, forests, buildings) offline; it does **not yet package Protomaps glyphs/sprites for offline text labels and POI icons**. The PMTiles basemap is **not a routable graph**: road navigation still uses separately downloaded, OSM-tagged GeoJSON.
 
 Source data: [Protomaps downloads](https://docs.protomaps.com/basemaps/downloads); [PMTiles CLI](https://docs.protomaps.com/pmtiles/cli). Keep © OpenStreetMap attribution. Satellite imagery is a separate source, not part of Protomaps Basemap.
+
+### Offline Protomaps labels
+
+v5.4.1 includes a separate install operation for local Protomaps label glyph ranges (Latin, Russian and Kazakh Cyrillic) and sprite resources from the public Protomaps basemaps-assets repository. Tap **Скачать подписи и значки** in the grid download manager. This data is saved locally and the Protomaps style switches to local glyph/sprite URLs only when the expected asset set is present. Other scripts/languages and the full upstream Protomaps cartographic style have not yet been packaged; test actual labels on device.

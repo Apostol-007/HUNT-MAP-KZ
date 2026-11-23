@@ -30,6 +30,7 @@ private struct ProtomapsCatalog: Codable { let schema: String; let packs: [Proto
     @Published private(set) var offlineStyleURL: URL?
     @Published private(set) var busy = false
     @Published private(set) var progress = 0.0
+    @Published private(set) var assetsReady = false
     @Published private(set) var status = "Protomaps: обновите каталог"
     private var folder: URL {
         let url = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -41,6 +42,7 @@ private struct ProtomapsCatalog: Codable { let schema: String; let packs: [Proto
     init() { restore() }
     func file(_ item: ProtomapsPack) -> URL { folder.appendingPathComponent(item.id + ".pmtiles") }
     private func restore() {
+        assetsReady = ProtomapsAssets.ready(in: folder)
         guard let data = try? Data(contentsOf: registry),
               let saved = try? JSONDecoder().decode([ProtomapsPack].self, from: data) else { return }
         installed = saved.filter { $0.valid && FileManager.default.fileExists(atPath: file($0).path) }
@@ -62,13 +64,34 @@ private struct ProtomapsCatalog: Codable { let schema: String; let packs: [Proto
             status = "Protomaps: \(available.count) регионов, скачано \(installed.count)"
         } catch { status = "Protomaps: \(error.localizedDescription). Локальные карты сохранены." }
     }
+    func downloadAssets() async {
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        await installAssets()
+    }
+
+    private func installAssets() async {
+        do {
+            status = "Protomaps: скачивание подписей и значков"
+            try await ProtomapsAssets.download(into: folder)
+            assetsReady = ProtomapsAssets.ready(in: folder)
+            offlineStyleURL = ProtomapsVectorStyle.write(installed, folder: folder, local: true)
+            status = "Protomaps: подписи RU/KZ и значки сохранены для офлайна"
+        } catch { status = "Геометрия карты доступна; подписи: \(error.localizedDescription)" }
+    }
+
     func download(cells: [OfflineGridCell]) async {
         guard !busy, !cells.isEmpty else { return }
         let missing = available.filter { pack in
             cells.contains(where: { $0.intersects(pack.bounds) }) &&
             !installed.contains(where: { $0.id == pack.id && $0.sha256.lowercased() == pack.sha256.lowercased() })
         }
-        guard !missing.isEmpty else { status = "Нет новых PMTiles для выбранной сетки"; return }
+        guard !missing.isEmpty else {
+            status = "Нет новых PMTiles для выбранной сетки"
+            if !assetsReady { await downloadAssets() }
+            return
+        }
         busy = true; defer { busy = false }
         for (index, item) in missing.enumerated() {
             if Task.isCancelled { status = "Скачивание прервано, готовые PMTiles сохранены"; break }
@@ -121,6 +144,7 @@ private struct ProtomapsCatalog: Codable { let schema: String; let packs: [Proto
                 status = "Protomaps: установлено \(installed.count) регионов"
             } catch { status = "Ошибка \(item.name): \(error.localizedDescription)" }
         }
+        if !installed.isEmpty && !assetsReady { await installAssets() }
     }
     func delete(_ item: ProtomapsPack) {
         guard !busy else { return }

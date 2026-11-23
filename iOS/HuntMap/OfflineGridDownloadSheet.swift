@@ -43,7 +43,10 @@ struct OfflineGridDownloadSheet: View {
                             .disabled(protomaps.busy)
                         }
                     }
-                    Text("Подписи и значки требуют локальных fontstack/sprite-ресурсов; геометрия дорог и троп работает офлайн.")
+                    Text(protomaps.assetsReady ? "Подписи RU/KZ и значки сохранены" : "Подписи RU/KZ пока не установлены")
+                        .font(.caption2).foregroundStyle(protomaps.assetsReady ? .green : .orange)
+                    Button("Скачать подписи и значки") { Task { await protomaps.downloadAssets() } }
+                        .disabled(protomaps.busy || protomaps.assetsReady)
                         .font(.caption2).foregroundStyle(.secondary)
                 }
                 Section("Другие источники (совместимость)") {
