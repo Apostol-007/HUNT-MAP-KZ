@@ -17,13 +17,64 @@ struct ProtomapsPack: Codable, Identifiable {
         bytes > 127 && bytes <= 4_000_000_000 &&
         sha256.range(of: "^[0-9a-fA-F]{64}$", options: .regularExpression) != nil &&
         (0...15).contains(minzoom) && (minzoom...15).contains(maxzoom) &&
-        URL(string: url)?.scheme == "https"
+        !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 private struct ProtomapsCatalog: Codable { let schema: String; let packs: [ProtomapsPack] }
 
 @MainActor final class ProtomapsOfflineStore: ObservableObject {
-    static let catalog = URL(string: "https://create.web-works.kz/maps/protomaps/catalog.json")!
+    static let defaultCatalogURL = "https://create.web-works.kz/maps/protomaps/catalog.json"
+    @Published private(set) var catalogAddress: String =
+        UserDefaults.standard.string(forKey: "hunt.protomaps.catalogURL") ?? defaultCatalogURL
+    @Published private(set) var loadedCatalogURL = ""
+    @Published private(set) var diagnostic = "Каталог ещё не проверен"
+    @Published private(set) var rejectedPacks = 0
+
+    private var activeCatalog: URL? { Self.catalogCandidates(catalogAddress).first }
+
+    /// Supports a concrete catalog URL or a hosting directory.
+    /// A directory such as /maps/ is searched both at /maps/protomaps/catalog.json
+    /// and /maps/catalog.json. The selected location is persisted.
+    static func catalogCandidates(_ raw: String) -> [URL] {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var components = URLComponents(string: text),
+              components.scheme?.lowercased() == "https",
+              let host = components.host, !host.isEmpty,
+              components.user == nil, components.password == nil,
+              components.query == nil, components.fragment == nil else { return [] }
+        let path = components.path
+        if path.lowercased().hasSuffix(".json") {
+            return components.url.map { [$0] } ?? []
+        }
+        let prefix = path.hasSuffix("/") ? path : path + "/"
+        let suffixes = prefix.lowercased().hasSuffix("/protomaps/") ?
+            ["catalog.json"] : ["protomaps/catalog.json", "catalog.json"]
+        return suffixes.compactMap { suffix in
+            components.path = prefix + suffix
+            return components.url
+        }
+    }
+
+    func setCatalogAddress(_ newValue: String) {
+        catalogAddress = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        UserDefaults.standard.set(catalogAddress, forKey: "hunt.protomaps.catalogURL")
+        loadedCatalogURL = ""
+        diagnostic = "Адрес изменён. Нажмите «Проверить хостинг»."
+        available = []
+        onlineStyleURL = nil
+    }
+
+    private func downloadableURL(_ raw: String, catalog: URL) -> URL? {
+        // Relative files are resolved from catalog.json, not the hosting root.
+        guard let result = URL(string: raw, relativeTo: catalog)?.absoluteURL,
+              let c = URLComponents(url: result, resolvingAgainstBaseURL: false),
+              c.scheme == "https",
+              c.host?.lowercased() == catalog.host?.lowercased(),
+              c.user == nil, c.password == nil, c.fragment == nil,
+              c.path.lowercased().hasSuffix(".pmtiles"),
+              !c.path.split(separator: "/").contains("..") else { return nil }
+        return result
+    }
     @Published private(set) var available: [ProtomapsPack] = []
     @Published private(set) var installed: [ProtomapsPack] = []
     @Published private(set) var onlineStyleURL: URL?
@@ -49,20 +100,69 @@ private struct ProtomapsCatalog: Codable { let schema: String; let packs: [Proto
         offlineStyleURL = ProtomapsVectorStyle.write(installed, folder: folder, local: true)
     }
     func refresh() async {
-        guard !busy else { return }; busy = true; defer { busy = false }
-        do {
-            let (data, response) = try await URLSession.shared.data(from: Self.catalog)
-            guard (response as? HTTPURLResponse)?.statusCode == 200, data.count <= 2_000_000 else {
-                throw NSError(domain: "Protomaps", code: 1, userInfo: [NSLocalizedDescriptionKey:"Каталог Protomaps не опубликован"])
+        guard !busy else { return }
+        busy = true
+        defer { busy = false }
+        available = []
+        onlineStyleURL = nil
+        loadedCatalogURL = ""
+        rejectedPacks = 0
+        let candidates = Self.catalogCandidates(catalogAddress)
+        guard !candidates.isEmpty else {
+            diagnostic = "Неверный HTTPS-адрес. Укажите полный catalog.json или каталог /maps/."
+            status = diagnostic
+            return
+        }
+        var failures: [String] = []
+        for catalog in candidates {
+            do {
+                var request = URLRequest(url: catalog)
+                request.cachePolicy = .reloadIgnoringLocalCacheData
+                request.timeoutInterval = 20
+                request.setValue("application/json", forHTTPHeaderField: "Accept")
+                let (data, response) = try await URLSession.shared.data(for: request)
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                guard statusCode == 200 else {
+                    failures.append("\(catalog.absoluteString): HTTP \(statusCode)")
+                    continue
+                }
+                guard data.count <= 2_000_000 else {
+                    failures.append("\(catalog.absoluteString): файл каталога слишком большой")
+                    continue
+                }
+                guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                    failures.append("\(catalog.absoluteString): вместо JSON получен другой документ")
+                    continue
+                }
+                let schema = root["schema"] as? String ?? "не указана"
+                guard schema == "hunt-protomaps-v1" else {
+                    failures.append("\(catalog.absoluteString): схема «\(schema)» вместо hunt-protomaps-v1")
+                    continue
+                }
+                let manifest = try JSONDecoder().decode(ProtomapsCatalog.self, from: data)
+                let validated = manifest.packs.compactMap { item -> ProtomapsPack? in
+                    guard item.valid, let url = downloadableURL(item.url, catalog: catalog)
+                    else { return nil }
+                    return ProtomapsPack(id: item.id, name: item.name, url: url.absoluteString,
+                                         bounds: item.bounds, bytes: item.bytes,
+                                         sha256: item.sha256, minzoom: item.minzoom,
+                                         maxzoom: item.maxzoom)
+                }
+                rejectedPacks = manifest.packs.count - validated.count
+                available = validated
+                loadedCatalogURL = catalog.absoluteString
+                onlineStyleURL = ProtomapsVectorStyle.write(validated, folder: folder, local: false)
+                diagnostic = "HTTP 200 · \(catalog.absoluteString) · в каталоге \(manifest.packs.count), принято \(validated.count), отклонено \(rejectedPacks)"
+                status = validated.isEmpty
+                    ? "Каталог прочитан, но доступных PMTiles нет. Проверьте packs и поля файлов."
+                    : "Protomaps: найдено \(validated.count), установлено \(installed.count)"
+                return
+            } catch {
+                failures.append("\(catalog.absoluteString): \(error.localizedDescription)")
             }
-            let manifest = try JSONDecoder().decode(ProtomapsCatalog.self, from: data)
-            guard manifest.schema == "hunt-protomaps-v1" else {
-                throw NSError(domain: "Protomaps", code: 2, userInfo: [NSLocalizedDescriptionKey:"Неподдерживаемый каталог"])
-            }
-            available = manifest.packs.filter { $0.valid && URL(string:$0.url)?.host == Self.catalog.host }
-            onlineStyleURL = ProtomapsVectorStyle.write(available, folder: folder, local: false)
-            status = "Protomaps: \(available.count) регионов, скачано \(installed.count)"
-        } catch { status = "Protomaps: \(error.localizedDescription). Локальные карты сохранены." }
+        }
+        diagnostic = failures.joined(separator: "\n")
+        status = "Не удалось прочитать каталог Protomaps. Сохранённые карты на iPhone не удалены."
     }
     func downloadAssets() async {
         guard !busy else { return }
@@ -98,7 +198,8 @@ private struct ProtomapsCatalog: Codable { let schema: String; let packs: [Proto
             status = "PMTiles \(index+1)/\(missing.count): \(item.name)"
             progress = 0
             do {
-                guard let url = URL(string: item.url), url.host == Self.catalog.host else {
+                guard let catalog = URL(string: loadedCatalogURL),
+                      let url = downloadableURL(item.url, catalog: catalog) else {
                     throw NSError(domain: "Protomaps", code: 3, userInfo:[NSLocalizedDescriptionKey:"Небезопасный URL"])
                 }
                 let (temp, response) = try await URLSession.shared.download(from: url)
