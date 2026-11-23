@@ -9,6 +9,7 @@ struct MainView: View {
     @EnvironmentObject private var model: FieldModel
     @StateObject private var maps = OfflineTileStore()
     @StateObject private var hosting = HostingOfflineDownloads()
+    @StateObject private var startupSync = StartupSync()
     @StateObject private var offlineRoads = OfflineRoadOverlayStore()
     @StateObject private var nativePacks = NativeOfflinePackStore()
     @StateObject private var protomaps = ProtomapsOfflineStore()
@@ -112,13 +113,20 @@ struct MainView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .bottom) { navigation }
+        .overlay {
+            if startupSync.presented {
+                StartupSyncScreen(sync: startupSync, hosting: hosting, protomaps: protomaps)
+                    .transition(.opacity)
+            }
+        }
         .background(HuntReference.background.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .background(ShakeDetector().frame(width: 1, height: 1))
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
         .onAppear {
             loadRoutingNetwork()
-            Task { await protomaps.refresh() }
+            startupSync.begin(hosting: hosting, tiles: maps, protomaps: protomaps,
+                              model: model, valhalla: valhalla)
             refreshWeatherOnLaunch()
         }
         .onChange(of: scenePhase) { _, phase in

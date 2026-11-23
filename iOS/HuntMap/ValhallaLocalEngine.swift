@@ -225,8 +225,22 @@ enum ValhallaPolyline6 {
                 throw NSError(domain: "HuntValhalla", code: 1,
                               userInfo: [NSLocalizedDescriptionKey: "Каталог Valhalla недоступен или не соответствует схеме hunt-valhalla-v1"])
             }
+            let stored = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Valhalla/valhalla_tiles.tar")
+            let manifestPath = stored.deletingLastPathComponent().appendingPathComponent("installed-sha256.txt")
+            if FileManager.default.fileExists(atPath: stored.path),
+               let current = try? String(contentsOf: manifestPath, encoding: .utf8),
+               current.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == expectedHash.lowercased(),
+               let existingSize = (try? stored.resourceValues(forKeys: [.fileSizeKey]).fileSize),
+               Int64(existingSize) == bytes {
+                tilesInstalled = true
+                status = "Valhalla: навигационные тайлы актуальны"
+                return
+            }
             status = "Valhalla: загружаю навигационные тайлы…"
-            let (temporary, response) = try await URLSession.shared.download(from: remote)
+            var downloadRequest = URLRequest(url: remote)
+            downloadRequest.timeoutInterval = 120
+            let (temporary, response) = try await URLSession.shared.download(for: downloadRequest)
             guard (response as? HTTPURLResponse)?.statusCode == 200,
                   let size = (try FileManager.default.attributesOfItem(atPath: temporary.path)[.size] as? NSNumber)?.int64Value,
                   size == bytes else {
@@ -248,6 +262,7 @@ enum ValhallaPolyline6 {
                               userInfo: [NSLocalizedDescriptionKey: "SHA-256 архива Valhalla не совпадает"])
             }
             try await engine.importArchive(from: temporary)
+            try expectedHash.lowercased().write(to: manifestPath, atomically: true, encoding: .utf8)
             await refresh()
             hostedDownloadStatus = "Навигационная сеть Valhalla установлена из хостинга"
         } catch {

@@ -130,6 +130,7 @@ struct HostingZonePack: Decodable, Identifiable {
     private func fetchData(_ path: String) async throws -> Data {
         var request = URLRequest(url: try remote(path))
         request.cachePolicy = .reloadIgnoringLocalCacheData
+        request.timeoutInterval = 8
         let (data, reply) = try await URLSession.shared.data(for: request)
         guard (reply as? HTTPURLResponse)?.statusCode == 200 else { throw HostingError.invalidCatalog }
         return data
@@ -187,7 +188,9 @@ struct HostingZonePack: Decodable, Identifiable {
         if FileManager.default.fileExists(atPath: destination.path),
            (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) == bytes,
            (try? digest(destination).lowercased()) == hash.lowercased() { return }
-        let (temporary, response) = try await URLSession.shared.download(from: url)
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 60
+        let (temporary, response) = try await URLSession.shared.download(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200,
               (try? temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) == bytes,
               try digest(temporary).lowercased() == hash.lowercased() else { throw HostingError.corrupt }
@@ -201,13 +204,26 @@ struct HostingZonePack: Decodable, Identifiable {
             try FileManager.default.moveItem(at: staged, to: destination)
         }
     }
+    func needsRouteUpdate(_ pack: HostingRoutingPack) -> Bool {
+        let file = folder.appendingPathComponent(pack.id + ".geojson")
+        guard FileManager.default.fileExists(atPath: file.path),
+              let found = try? digest(file) else { return true }
+        return found.lowercased() != pack.sha256.lowercased()
+    }
+    func needsZoneUpdate(_ pack: HostingZonePack) -> Bool {
+        let file = folder.appendingPathComponent("zones/" + pack.id + ".geojson")
+        guard FileManager.default.fileExists(atPath: file.path),
+              let found = try? digest(file) else { return true }
+        return found.lowercased() != pack.sha256.lowercased()
+    }
     func installRoute(_ pack: HostingRoutingPack) async {
         guard !busy else { return }; busy = true; progress = 0; activePack = pack.name
         defer { busy = false; activePack = "" }
         do {
             guard pack.id.range(of: "^[A-Za-z0-9_-]{1,100}$", options: .regularExpression) != nil else { throw HostingError.invalidPath }
-            if installedRoutes.contains(pack.id) {
-                status = "Дорожная сеть уже установлена: \(pack.name)"; progress = 1; return
+            if !needsRouteUpdate(pack) {
+                installedRoutes.insert(pack.id)
+                status = "Дорожная сеть актуальна: \(pack.name)"; progress = 1; return
             }
             try checkCapacity(pack.bytes)
             let target = folder.appendingPathComponent(pack.id + ".geojson")
@@ -267,8 +283,9 @@ struct HostingZonePack: Decodable, Identifiable {
         defer { busy = false; activePack = "" }
         do {
             guard pack.id.range(of: "^[A-Za-z0-9_-]{1,100}$", options: .regularExpression) != nil else { throw HostingError.invalidPath }
-            if installedZones.contains(pack.id) {
-                status = "Границы уже установлены: \(pack.name)"; progress = 1; return
+            if !needsZoneUpdate(pack) {
+                installedZones.insert(pack.id)
+                status = "Границы актуальны: \(pack.name)"; progress = 1; return
             }
             try checkCapacity(pack.bytes)
             let target = folder.appendingPathComponent("zones/" + pack.id + ".geojson")

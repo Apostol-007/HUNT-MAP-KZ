@@ -184,6 +184,17 @@ private struct ProtomapsCatalog: Codable { let schema: String; let packs: [Proto
         } catch { status = "Геометрия карты доступна; подписи: \(error.localizedDescription)" }
     }
 
+    /// Automatically download all newly published packs. The existing installer
+    /// performs size, PMTiles v3 magic and SHA-256 verification before replacement.
+    func downloadAllAvailable() async {
+        let cells = available.compactMap { pack -> OfflineGridCell? in
+            guard pack.bounds.count == 4 else { return nil }
+            return OfflineGridCell(latitude: (pack.bounds[1] + pack.bounds[3]) / 2,
+                                   longitude: (pack.bounds[0] + pack.bounds[2]) / 2,
+                                   step: 1)
+        }
+        if !cells.isEmpty { await download(cells: cells) }
+    }
     func download(cells: [OfflineGridCell]) async {
         guard !busy, !cells.isEmpty else { return }
         let missing = available.filter { pack in

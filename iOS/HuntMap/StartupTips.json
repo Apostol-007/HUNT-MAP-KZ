@@ -1,0 +1,406 @@
+{
+  "schema": "hunt-startup-tips-v1",
+  "note": "Авторские краткие рекомендации по материалам образовательных ресурсов. Не заменяют местные правила РК.",
+  "tips": [
+    {
+      "category": "Туризм",
+      "text": "Оставьте близким маршрут, время возвращения и план действий при задержке.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Проверяйте местные сроки запретов и ограничения на вылов перед поездкой.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Перед выездом проверяйте границы угодий и действительность разрешений.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Скачайте карты до выхода из зоны покрытия; проверяйте работу карты без интернета.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Надевайте спасательный жилет при рыбалке с лодки.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Обращайтесь с любым оружием как с заряженным.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Возьмите бумажную карту и компас в дополнение к GPS.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Учитывайте ветер и прогноз волнения до выхода на водоём.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Никогда не направляйте ствол в сторону человека.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Сохраните запас воды с учётом жары, ветра и продолжительности пути.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Не заходите на незнакомый лёд без проверки местной ледовой обстановки.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Перед выстрелом однозначно определяйте цель и что находится за ней.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Проверьте погоду на весь маршрут, включая время возвращения.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Держите аптечку и средства связи в водонепроницаемой упаковке.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Убирайте палец со спускового крючка до принятия решения о выстреле.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Перед выходом сообщите контактному лицу координаты начала маршрута.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Осматривайте берег: мокрые камни часто значительно более скользкие.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "При преодолении препятствий действуйте по правилам безопасного обращения с оружием.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Держите фонарь в доступном кармане, а не на дне рюкзака.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Храните острые крючки закрытыми при переходах.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Проверьте сроки охоты и разрешённые виды для конкретного региона.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Упакуйте тёплый слой одежды даже при хорошей погоде.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Соблюдайте безопасное расстояние до других рыбаков при забросе.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "При движении группой согласуйте безопасные сектора и сигналы.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Проверяйте запас батареи телефона до начала перехода.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Не оставляйте леску и рыболовные снасти на берегу.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Не стреляйте по шороху, силуэту или неидентифицированному движению.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Переносной аккумулятор храните в сухом герметичном пакете.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Перед выходом на лодке проверьте уровень топлива и исправность двигателя.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Отметьте GPS-точку автомобиля и предполагаемый маршрут возвращения.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Сделайте отметку места стоянки до ухода в незнакомую местность.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Сообщите близким планируемое время возвращения с водоёма.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Используйте контрастные элементы одежды, когда это требуется или повышает видимость.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Не пересекайте бурную реку без оценки глубины и скорости течения.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "При отпускании рыбы старайтесь минимизировать время вне воды.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "При низкой видимости увеличьте осторожность и избегайте поспешных решений.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Проверяйте признаки обезвоживания у всех участников группы.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Используйте поляризационные очки для уменьшения бликов и защиты глаз.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Учитывайте направление ветра, не забывая о возможных локальных порывах.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Не оставляйте пищевые отходы и упаковку на природе.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Следите за изменениями течения после осадков.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Не приближайтесь к раненому дикому животному без безопасного плана действий.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Отмечайте точки с водой, но не считайте каждую точку гарантированным источником.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Избегайте рыбалки под линиями электропередачи с длинным удилищем.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Держите необходимые разрешения доступными для проверки.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Подбирайте обувь по рельефу и проверяйте её перед длинным походом.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Не стойте на неустойчивом обрыве рядом с водой.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Не пересекайте границу охотугодья, не уточнив правовой режим территории.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Для ночёвки выбирайте место вне русел временных потоков.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "При грозе завершайте рыбалку и уходите в безопасное укрытие.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Заранее согласуйте точку сбора группы на случай потери связи.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "В горах учитывайте, что при подъёме температура часто снижается.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Держите питьевую воду отдельно от воды для технических нужд.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Учитывайте, что спутниковая навигация может показывать погрешность координат.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "При грозе уходите с гребней и открытых возвышенностей.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Если заблудились на водоёме, сохраняйте координаты последней надёжной точки.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Не оставляйте мусор и оборудование в охотугодьях.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Периодически сверяйте текущую позицию с заметными ориентирами.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Не оставляйте открытые приманки там, где до них могут добраться дети или животные.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Проверяйте исправность оборудования до выхода.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Разделите аптечку и средства связи между участниками группы.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Перед пересечением мелководья оцените силу течения и устойчивость дна.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Будьте особенно внимательны вблизи населённых пунктов и дорог.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Не подходите к диким животным ради удачного снимка.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Проверяйте рабочее состояние фонаря перед ранней утренней рыбалкой.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Ориентируйтесь на реальные дорожные условия, а не только на линию маршрута.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Соблюдайте правила посещения заповедников и охраняемых территорий.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Наблюдайте за направлением ветра при возвращении на лодке.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Берегите источники воды и места обитания животных от загрязнения.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "На развилках фиксируйте контрольные точки пути.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Убедитесь в наличии необходимых документов и разрешений.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Следите за временем заката и возвращения к стоянке.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Проверьте прогноз порывов ветра перед движением по открытым участкам.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Рыбалка",
+      "text": "Не полагайтесь только на прогноз: наблюдайте за реальной погодой на воде.",
+      "source_url": "https://www.takemefishing.org/how-to-fish/fishing-safety/fishing-safety-tips/"
+    },
+    {
+      "category": "Охота",
+      "text": "Перед выездом убедитесь, что все участники знают правила безопасности.",
+      "source_url": "https://www.hunter-ed.com/pennsylvania/studyGuide/What-You-Learned/201039_111910/"
+    },
+    {
+      "category": "Туризм",
+      "text": "Сохраняйте запас времени на непредвиденную остановку.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Туризм",
+      "text": "При ухудшении видимости сокращайте дистанцию между участниками группы.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Туризм",
+      "text": "Убедитесь, что все знают план возвращения при потере связи.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Туризм",
+      "text": "При появлении головокружения остановитесь и оцените состояние, не продолжайте подъём через силу.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    },
+    {
+      "category": "Туризм",
+      "text": "Зимой берегите телефон и запасной аккумулятор от сильного охлаждения.",
+      "source_url": "https://www.nps.gov/articles/10essentials.htm"
+    }
+  ]
+}
