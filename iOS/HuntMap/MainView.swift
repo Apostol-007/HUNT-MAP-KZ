@@ -742,6 +742,9 @@ struct MainView: View {
                     routingError = nil
                 } catch {
                     guard routeRequestID == requestID, routeDestination == destination else { return }
+                    AppDiagnosticLog.shared.recordError(subsystem: "Навигация",
+                        operation: "Valhalla, \(chosenMode == .foot ? "пешком" : "авто")",
+                        error: error, usedCache: valhalla.tilesInstalled)
                     calculateLegacyRoute(from: current, to: destination, mode: chosenMode,
                                          valhallaError: error.localizedDescription)
                 }
@@ -772,6 +775,9 @@ struct MainView: View {
         } catch {
             navigationPath = []
             navigationKind = "Маршрут недоступен"
+            AppDiagnosticLog.shared.recordError(subsystem: "Навигация",
+                operation: "Резервный локальный граф, \(mode == .foot ? "пешком" : "авто")",
+                error: error, usedCache: routeGraph != nil || !hosting.installedRoutes.isEmpty)
             routingError = (valhallaError.map { "Valhalla: \($0). " } ?? "") + error.localizedDescription
         }
     }
