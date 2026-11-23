@@ -35,7 +35,8 @@ def test_catalog_is_empty_until_pmtiles_files_exist():
 
 def test_publisher_uses_real_region_extraction():
     code = SCRIPT.read_text(encoding="utf-8")
-    assert 'subprocess.run([args.pmtiles, "extract"' in code
+    assert 'subprocess.run(command, check=True, timeout=1800)' in code
+    assert 'pmtiles, "extract"' in code
     assert '"verify"' in code
     assert 'hashlib.sha256()' in code
 
