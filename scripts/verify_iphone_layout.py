@@ -10,7 +10,7 @@ assert launch.is_file(), "LaunchScreen.storyboard absent"
 assert 'launchScreen="YES"' in launch.read_text()
 assert "INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen" in project
 assert "GENERATE_INFOPLIST_FILE: YES" in project
-assert "MARKETING_VERSION: 2.1.0" in project
+assert "MARKETING_VERSION: 2.4.0" in project
 assert "HuntMap/Info.plist" not in project
 assert "mapTab\n                .ignoresSafeArea" in view
 assert "Overlay: does not alter the map's available height" in view

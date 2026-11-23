@@ -13,6 +13,8 @@ struct OfflineMapView: UIViewRepresentable {
     let tileRevision: Int
     let online: Bool
     @Binding var selectedZone: GeoZone?
+    let weatherGrid: ForecastGrid?
+    let weatherLayer: WeatherMapLayer
 
     func makeCoordinator() -> Coordinator { Coordinator(selectedZone: $selectedZone) }
 
@@ -50,7 +52,8 @@ struct OfflineMapView: UIViewRepresentable {
             UserDefaults.standard.set("\(Int(mapFrame.minX)),\(Int(mapFrame.minY)),\(Int(mapFrame.width))x\(Int(mapFrame.height))", forKey: "hunt.diag.mapFrame")
             UserDefaults.standard.set(matches, forKey: "hunt.diag.fullscreenMap")
         }
-        context.coordinator.updateAnnotations(view: view, zones: zones, markers: markers, position: position, track: track)
+        context.coordinator.updateAnnotations(view: view, zones: zones, markers: markers, position: position, track: track,
+                                              weatherGrid: weatherGrid, weatherLayer: weatherLayer)
     }
 
     final class Coordinator: NSObject, MLNMapViewDelegate {
@@ -108,9 +111,60 @@ struct OfflineMapView: UIViewRepresentable {
             }
         }
 
-        func updateAnnotations(view: MLNMapView, zones: [GeoZone], markers: [Marker], position: GeoPoint?, track: Track?) {
+        func updateAnnotations(view: MLNMapView, zones: [GeoZone], markers: [Marker], position: GeoPoint?, track: Track?,
+                               weatherGrid: ForecastGrid?, weatherLayer: WeatherMapLayer) {
             if !shapes.isEmpty { view.removeAnnotations(shapes) }
             var updated: [MLNAnnotation] = []
+            if weatherLayer != .none, let weatherGrid, weatherGrid.validated() {
+                let w = weatherGrid.gridWidth, h = weatherGrid.gridHeight
+                let samples = weatherGrid.points.map { point in
+                    let value: Double?
+                    switch weatherLayer {
+                    case .wind: value = point.windSpeed
+                    case .pressure: value = point.pressure
+                    case .precipitation: value = point.precipitation
+                    case .none: value = nil
+                    }
+                    return WeatherGeometry.Sample(latitude: point.latitude, longitude: point.longitude, value: value)
+                }
+                // Bilinearly interpolated subcells, only inside verified 4-corner model cells.
+                let subdivisions = weatherLayer == .precipitation ? 4 : 3
+                for cell in WeatherGeometry.shade(samples: samples, width: w, height: h, subdivisions: subdivisions) {
+                    var coords = cell.corners.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+                    let polygon = MLNPolygon(coordinates: &coords, count: UInt(coords.count))
+                    polygon.title = "WX|\(weatherLayer.rawValue)|\(cell.value)"
+                    updated.append(polygon)
+                }
+                if weatherLayer == .pressure {
+                    let values = samples.compactMap { $0.value }
+                    if let low = values.min(), let high = values.max() {
+                        let first = Int(ceil(low / 5) * 5), last = Int(floor(high / 5) * 5)
+                        if first <= last {
+                            let levels = stride(from: first, through: last, by: 5).map(Double.init)
+                            for segment in WeatherGeometry.isolines(samples: samples, width: w, height: h, levels: levels) {
+                                var coords = [segment.a, segment.b].map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+                                let line = MLNPolyline(coordinates: &coords, count: UInt(coords.count))
+                                line.title = "WX-ISOBAR|\(Int(segment.level))"
+                                updated.append(line)
+                            }
+                        }
+                    }
+                } else if weatherLayer == .wind {
+                    let spacing = min((weatherGrid.bounds.north-weatherGrid.bounds.south)/Double(max(1,h-1)),
+                                      (weatherGrid.bounds.east-weatherGrid.bounds.west)/Double(max(1,w-1)))
+                    for point in weatherGrid.points {
+                        guard let angle = point.direction, let speed = point.windSpeed else { continue }
+                        let segments = WeatherGeometry.windArrow(latitude: point.latitude, longitude: point.longitude,
+                                                                fromDegrees: angle, speedKmh: speed, lengthDegrees: spacing * 0.30)
+                        for segment in segments {
+                            var coords = [segment.a, segment.b].map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+                            let line = MLNPolyline(coordinates: &coords, count: UInt(coords.count))
+                            line.title = "WX-WIND|\(segment.level)"
+                            updated.append(line)
+                        }
+                    }
+                }
+            }
             for zone in zones {
                 for polygon in zone.polygons {
                     for ring in polygon.rings where ring.count >= 3 {
@@ -144,13 +198,33 @@ struct OfflineMapView: UIViewRepresentable {
             view.addAnnotations(updated)
         }
 
-        func mapView(_ mapView: MLNMapView, alphaForShapeAnnotation annotation: MLNShape) -> CGFloat { 0.95 }
+        func mapView(_ mapView: MLNMapView, alphaForShapeAnnotation annotation: MLNShape) -> CGFloat {
+            annotation.title?.hasPrefix("WX|") == true ? 0.40 : 0.95
+        }
+        func mapView(_ mapView: MLNMapView, fillColorForPolygonAnnotation annotation: MLNPolygon) -> UIColor {
+            guard let title = annotation.title, title.hasPrefix("WX|") else { return .clear }
+            let fields = title.split(separator: "|", omittingEmptySubsequences: false)
+            guard fields.count == 3, let value = Double(fields[2]) else { return .clear }
+            switch String(fields[1]) {
+            case "Ветер":
+                return value < 15 ? .systemTeal : (value < 35 ? .systemYellow : .systemRed)
+            case "Давление":
+                return value < 1000 ? .systemBlue : (value < 1020 ? .systemGreen : .systemOrange)
+            case "Осадки":
+                return value < 0.1 ? .clear : (value < 2 ? .systemBlue : (value < 8 ? .systemPurple : .systemRed))
+            default: return .clear
+            }
+        }
         func mapView(_ mapView: MLNMapView, strokeColorForShapeAnnotation annotation: MLNShape) -> UIColor {
+            if annotation.title?.hasPrefix("WX-ISOBAR|") == true { return .white }
+            if annotation.title?.hasPrefix("WX-WIND|") == true { return .white }
             if annotation.title == "Записанный маршрут" { return .systemGreen }
             return annotation.title?.hasPrefix("НЕ ПРОВЕРЕНО") == true ? .systemYellow : .systemOrange
         }
         func mapView(_ mapView: MLNMapView, lineWidthForPolylineAnnotation annotation: MLNPolyline) -> CGFloat {
-            annotation.title == "Записанный маршрут" ? 4 : 3
+            if annotation.title?.hasPrefix("WX-ISOBAR|") == true { return 1.8 }
+            if annotation.title?.hasPrefix("WX-WIND|") == true { return 2.3 }
+            return annotation.title == "Записанный маршрут" ? 4 : 3
         }
     }
 }

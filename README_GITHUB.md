@@ -1,3 +1,7 @@
+# HUNT MAP KZ v2.4 — GitHub исходники
+
+Погодные слои: интерполированная сетка, векторные стрелки ветра, расчётные изобары давления, выбор времени +0…+48 ч, русские легенды и контроль достоверности; требуется собственный HTTPS-сервер API. Компиляция полного iOS-приложения не подтверждена.
+
 # HUNT MAP KZ
 
 Offline-first iOS hunting navigation prototype for Kazakhstan: MapLibre online OpenFreeMap preview, user-provided offline MBTiles, GPS track recording, markers, GeoJSON boundary import, GBIF Kazakhstan species discovery, optional FastAPI pack server, and shake-to-export privacy-redacted diagnostics.
@@ -18,4 +22,4 @@ No verified nationwide hunting boundary dataset or licensed 1 m satellite imager
 
 ## Release maturity
 
-**0.9 source candidate, unverified on physical iPhone.** GitHub build must run successfully before installing; diagnostics and shake behavior need device tests. Do not rely solely on this app for legal boundary decisions or safety.
+**2.4 source candidate, unverified on physical iPhone.** GitHub build must run successfully before installing; diagnostics and shake behavior need device tests. Do not rely solely on this app for legal boundary decisions or safety.

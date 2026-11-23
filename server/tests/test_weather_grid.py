@@ -49,3 +49,17 @@ def test_missing_values_preserved_as_null():
     payload = [{"hourly": {"time": [hour], **{v: [None] for v in VARIABLES}}} for _ in range(4)]
     value = sample_grid(76, 43, 77, 44, 2, now, fetcher=lambda _: json.dumps(payload).encode())
     assert value['points'][0]['wind_speed_10m'] is None
+
+
+def test_four_by_four_weather_nodes_preserve_order_and_units():
+    now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    hour = now.strftime('%Y-%m-%dT%H:00')
+    sample = {"hourly": {"time": [hour], **{v: [4.5] for v in VARIABLES}}}
+    value = sample_grid(76, 42, 77, 43, 4, now,
+                        fetcher=lambda _: json.dumps([sample] * 16).encode())
+    assert len(value['points']) == 16
+    assert value['points'][0]['latitude'] == 42.0
+    assert value['points'][15]['latitude'] == 43.0
+    assert value['points'][15]['longitude'] == 77.0
+    assert value['units']['precipitation'] == 'mm/hour'
+    assert value['units']['wind_speed_10m'] == 'km/h'

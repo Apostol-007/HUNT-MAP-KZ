@@ -7,6 +7,9 @@ struct MainView: View {
     @StateObject private var tileStore = OfflineTileStore()
     @StateObject private var wildlifeStore = WildlifeStore()
     @StateObject private var weatherService = WeatherService()
+    @StateObject private var weatherGridService = WeatherGridService()
+    @State private var weatherLayer: WeatherMapLayer = .none
+    @State private var showWeatherMap = false
     @State private var showWeather = false
     @StateObject private var wildlifeUpdater = WildlifeUpdater()
     @StateObject private var boundaryDownloader = BoundaryDownloader()
@@ -77,6 +80,8 @@ struct MainView: View {
         .sheet(isPresented: $showAbout) { AboutHuntView() }
         .sheet(isPresented: $showWeather) { WeatherPanel(service: weatherService, coordinate: model.coordinate, online: onlineBasemap)
             .presentationDetents([.medium, .large]).presentationDragIndicator(.visible) }
+        .sheet(isPresented: $showWeatherMap) { WeatherMapSheet(service: weatherGridService, layer: $weatherLayer, coordinate: model.coordinate, online: onlineBasemap)
+            .presentationDetents([.medium, .large]).presentationDragIndicator(.visible) }
     }
 
     private var floatingNavigation: some View {
@@ -113,7 +118,8 @@ struct MainView: View {
                     zones: model.zones, position: model.coordinate, markers: model.markers,
                     track: model.currentTrack, tileFiles: tileStore.paths,
                     tileRevision: tileStore.revision, online: onlineBasemap,
-                    selectedZone: $selectedZone
+                    selectedZone: $selectedZone, weatherGrid: weatherLayer == .none ? nil : weatherGridService.grid,
+                    weatherLayer: weatherLayer
                 )
                 .frame(width: geometry.size.width, height: geometry.size.height)
             }
@@ -130,6 +136,7 @@ struct MainView: View {
                         .accessibilityIdentifier("weatherButton")
                     Menu {
                         Toggle("Онлайн-карта", isOn: $onlineBasemap)
+                        Button("Погодные слои", systemImage: "cloud.sun") { showWeatherMap = true }
                         Button("Диагностика", systemImage: "ladybug") { showDiagnostics = true }
                     } label: { Image(systemName: "square.3.layers.3d").font(.title3) }
                 }
@@ -139,6 +146,19 @@ struct MainView: View {
                 .background(.black.opacity(0.70), in: Capsule())
                 .padding(.horizontal, 12).padding(.top, 8)
 
+                if weatherLayer != .none {
+                    HStack(spacing: 6) {
+                        Image(systemName: "cloud.fill")
+                        Text("\(weatherLayer.rawValue) · \(weatherGridService.forecastLabel)")
+                        if weatherGridService.cached { Text("КЭШ").foregroundStyle(.orange) }
+                        Button("Изменить") { showWeatherMap = true }
+                    }
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .foregroundStyle(.white)
+                    .background(.black.opacity(0.72), in: Capsule())
+                    .padding(.top, 7)
+                }
                 Spacer(minLength: 0)
 
                 if !model.lastWarning.isEmpty && model.lastWarning != "Границы не загружены" {

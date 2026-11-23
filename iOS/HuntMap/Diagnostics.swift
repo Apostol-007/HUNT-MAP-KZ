@@ -66,7 +66,7 @@ struct DiagnosticsView: View {
         Boundary count: \(model.zones.count)
         Map frame pt: \(UserDefaults.standard.string(forKey: "hunt.diag.mapFrame") ?? "not measured")
         Fullscreen map geometry: \(UserDefaults.standard.object(forKey: "hunt.diag.fullscreenMap") == nil ? "not measured" : String(UserDefaults.standard.bool(forKey: "hunt.diag.fullscreenMap")))
-        Weather: Point forecast via Open-Meteo; grid renderer not integrated
+        Weather: Point forecast Open-Meteo; gridded model overlay supported (requires HTTPS backend); no radar or animated wind particles
         Map packs: \(mapCount)
         Wildlife catalogs: \(wildlifeCount)
         Map mode: \(onlineMap ? "online OpenFreeMap" : "strict offline")
