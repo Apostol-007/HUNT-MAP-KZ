@@ -791,6 +791,8 @@ struct MainView: View {
         model.stopRecordedRouteGuidance()
         routeRequestID = nil
         navigationTargetID = nil
+        routeDestination = nil
+        routeGuidance = false
         selectedRecordedTrackID = track.id
         recordedRoute = route
         recordedRoutePreviewIndex = 0
