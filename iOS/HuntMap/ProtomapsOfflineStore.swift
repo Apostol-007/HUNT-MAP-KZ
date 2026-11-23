@@ -23,7 +23,7 @@ struct ProtomapsPack: Codable, Identifiable {
 private struct ProtomapsCatalog: Codable { let schema: String; let packs: [ProtomapsPack] }
 
 @MainActor final class ProtomapsOfflineStore: ObservableObject {
-    static let defaultCatalogURL = "https://create.web-works.kz/maps/protomaps/catalog.json"
+    static let defaultCatalogURL = "https://create.web-works.kz/maps/"
     @Published private(set) var catalogAddress: String =
         UserDefaults.standard.string(forKey: "hunt.protomaps.catalogURL") ?? defaultCatalogURL
     @Published private(set) var loadedCatalogURL = ""
