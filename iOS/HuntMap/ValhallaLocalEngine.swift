@@ -194,6 +194,7 @@ enum ValhallaPolyline6 {
             try await engine.importArchive(from: url)
             await refresh()
         } catch {
+            AppDiagnosticLog.shared.recordError(subsystem: "Навигация", operation: "Установка Valhalla", error: error, usedCache: tilesInstalled)
             status = "Ошибка импорта Valhalla: \(error.localizedDescription)"
         }
     }
@@ -266,6 +267,7 @@ enum ValhallaPolyline6 {
             await refresh()
             hostedDownloadStatus = "Навигационная сеть Valhalla установлена из хостинга"
         } catch {
+            AppDiagnosticLog.shared.recordError(subsystem: "Навигация", operation: "Синхронизация Valhalla", error: error, endpoint: "create.web-works.kz/maps/valhalla", usedCache: tilesInstalled)
             status = "Valhalla: \(error.localizedDescription)"
             hostedDownloadStatus = status
         }

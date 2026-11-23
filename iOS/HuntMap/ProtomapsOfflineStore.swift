@@ -181,7 +181,10 @@ private struct ProtomapsCatalog: Codable { let schema: String; let packs: [Proto
             offlineStyleURL = ProtomapsVectorStyle.write(installed, folder: folder, local: true)
         hybridOfflineStyleURL = ProtomapsVectorStyle.write(installed, folder: folder, local: true, hybrid: true)
             status = "Protomaps: подписи RU/KZ и значки сохранены для офлайна"
-        } catch { status = "Геометрия карты доступна; подписи: \(error.localizedDescription)" }
+        } catch {
+            AppDiagnosticLog.shared.recordError(subsystem: "Карты", operation: "Подписи Protomaps", error: error, usedCache: assetsReady)
+            status = "Геометрия карты доступна; подписи: \(error.localizedDescription)"
+        }
     }
 
     /// Automatically download all newly published packs. The existing installer
@@ -258,7 +261,10 @@ private struct ProtomapsCatalog: Codable { let schema: String; let packs: [Proto
                 offlineStyleURL = ProtomapsVectorStyle.write(installed, folder: folder, local: true)
         hybridOfflineStyleURL = ProtomapsVectorStyle.write(installed, folder: folder, local: true, hybrid: true)
                 status = "Protomaps: установлено \(installed.count) регионов"
-            } catch { status = "Ошибка \(item.name): \(error.localizedDescription)" }
+            } catch {
+                AppDiagnosticLog.shared.recordError(subsystem: "Карты", operation: "Загрузка PMTiles \(item.id)", error: error, usedCache: !installed.isEmpty)
+                status = "Ошибка \(item.name): \(error.localizedDescription)"
+            }
         }
         if !installed.isEmpty && !assetsReady { await installAssets() }
     }

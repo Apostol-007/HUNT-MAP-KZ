@@ -236,7 +236,10 @@ struct HostingZonePack: Decodable, Identifiable {
             installedRoutes.insert(pack.id)
             try persist(); progress = 1
             status = "Дорожная сеть установлена: \(pack.name)"
-        } catch { status = "Сеть дорог: \(error.localizedDescription)" }
+        } catch {
+            AppDiagnosticLog.shared.recordError(subsystem: "Карты", operation: "Обновление дорог и троп", error: error, endpoint: "create.web-works.kz/maps/routing", usedCache: !installedRoutes.isEmpty)
+            status = "Сеть дорог: \(error.localizedDescription)"
+        }
     }
     func installMap(_ pack: HostingMapPack, tiles: OfflineTileStore) async {
         guard !busy else { return }; busy = true; progress = 0; activePack = pack.name
@@ -276,7 +279,10 @@ struct HostingZonePack: Decodable, Identifiable {
             // Existing installer checks SQLite metadata and persists the map to its canonical location.
             await tiles.importLocal(temp)
             status = tiles.message
-        } catch { status = "Карта: \(error.localizedDescription)" }
+        } catch {
+            AppDiagnosticLog.shared.recordError(subsystem: "Карты", operation: "Установка MBTiles", error: error, endpoint: "create.web-works.kz/maps/packs")
+            status = "Карта: \(error.localizedDescription)"
+        }
     }
     func installZones(_ pack: HostingZonePack, model: FieldModel) async {
         guard !busy else { return }; busy = true; progress = 0; activePack = pack.name
@@ -301,7 +307,10 @@ struct HostingZonePack: Decodable, Identifiable {
             installedZones.insert(pack.id)
             progress = 1
             status = "Зоны импортированы: \(imported.count). Юридический статус не подтверждён."
-        } catch { status = "Границы: \(error.localizedDescription)" }
+        } catch {
+            AppDiagnosticLog.shared.recordError(subsystem: "Карты", operation: "Обновление границ", error: error, endpoint: "create.web-works.kz/maps/zones", usedCache: !installedZones.isEmpty)
+            status = "Границы: \(error.localizedDescription)"
+        }
     }
     func routePacks(in cells: [OfflineGridCell]) -> [HostingRoutingPack] {
         guard !cells.isEmpty else { return [] }
