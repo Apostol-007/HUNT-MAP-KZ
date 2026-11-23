@@ -123,3 +123,17 @@ def test_recorded_track_replay_and_bidirectional_follow():
     assert "recordedRouteRemaining" in main and "recordedRouteDeviation" in main
     assert "Array(original.reversed())" in follow
     assert "REPLAY|LOCATION" in view
+
+
+def test_valhalla_local_cpp_route_engine_integration():
+    project = (ROOT / "iOS/project.yml").read_text()
+    engine = (IOS / "ValhallaLocalEngine.swift").read_text()
+    ui = (IOS / "MainView.swift").read_text()
+    assert "valhalla-mobile" in project.lower()
+    assert "import Valhalla" in engine
+    assert "ValhallaConfig(tileExtractTar: archive)" in engine
+    assert "route(rawRequest: payload)" in engine
+    assert '"pedestrian" : "auto"' in engine
+    assert "ValhallaPolyline6.decode" in engine
+    assert "calculateLegacyRoute" in ui
+    assert "valhalla_import" in ui

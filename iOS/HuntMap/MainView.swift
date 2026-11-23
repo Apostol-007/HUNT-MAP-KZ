@@ -11,6 +11,9 @@ struct MainView: View {
     @StateObject private var offlineRoads = OfflineRoadOverlayStore()
     @StateObject private var nativePacks = NativeOfflinePackStore()
     @StateObject private var protomaps = ProtomapsOfflineStore()
+    @StateObject private var valhalla = ValhallaRoutingStore()
+    @State private var importingValhallaTiles = false
+    @State private var routeRequestID: UUID?
     @State private var showHostingDownloads = false
     @State private var gridMode = false
     @State private var gridStep = 0.1
@@ -125,6 +128,14 @@ struct MainView: View {
                     navigationKind = "Маршрут завершён"
                 }
             }
+        }
+        .fileImporter(isPresented: $importingValhallaTiles,
+                      allowedContentTypes: [UTType(filenameExtension: "tar") ?? .data],
+                      allowsMultipleSelection: false) { result in
+            do {
+                guard let file = try result.get().first else { return }
+                Task { await valhalla.install(file) }
+            } catch { routingError = error.localizedDescription }
         }
         .fileImporter(isPresented: $importingRoutingNetwork, allowedContentTypes: [.json], allowsMultipleSelection: false) { result in
             do {
@@ -620,31 +631,55 @@ struct MainView: View {
             model.requestGPS()
             return
         }
+        let requestID = UUID()
+        routeRequestID = requestID
+        let chosenMode = travelMode
+        if valhalla.tilesInstalled {
+            navigationPath = []
+            navigationKind = "Valhalla · расчёт по локальным дорогам…"
+            Task {
+                do {
+                    let result = try await valhalla.route(from: current, to: marker.coordinate, mode: chosenMode)
+                    guard routeRequestID == requestID, navigationTargetID == id else { return }
+                    navigationPath = result
+                    navigationKind = chosenMode == .foot ? "Valhalla · пешком" : "Valhalla · автомобиль"
+                    routingError = nil
+                } catch {
+                    guard routeRequestID == requestID, navigationTargetID == id else { return }
+                    calculateLegacyRoute(from: current, to: marker.coordinate, mode: chosenMode,
+                                         valhallaError: error.localizedDescription)
+                }
+            }
+        } else {
+            calculateLegacyRoute(from: current, to: marker.coordinate, mode: chosenMode)
+        }
+    }
+
+    private func calculateLegacyRoute(from current: GeoPoint, to destination: GeoPoint,
+                                      mode: OfflineRouteGraph.TravelMode, valhallaError: String? = nil) {
         do {
             let graph: OfflineRouteGraph
-            // Prefer published, installed road networks over old manually imported files.
-            if let published = try? hosting.graph(start: current, destination: marker.coordinate, mode: travelMode) {
-                graph = published
+            if let downloaded = try? hosting.graph(start: current, destination: destination, mode: mode) {
+                graph = downloaded
             } else if let bytes = try? Data(contentsOf: routingNetworkURL) {
-                graph = try OfflineRouteGraph(geoJSON: bytes, mode: travelMode)
+                graph = try OfflineRouteGraph(geoJSON: bytes, mode: mode)
             } else {
-                graph = try hosting.graph(start: current, destination: marker.coordinate, mode: travelMode)
+                graph = try hosting.graph(start: current, destination: destination, mode: mode)
             }
-            let actualRoad = try graph.path(from: current, to: marker.coordinate)
-            guard actualRoad.count >= 2 else { throw OfflineRouteGraph.RouteError.disconnected }
-            navigationPath = actualRoad
-            navigationKind = travelMode == .foot ? "Пешком · по разрешённым тропам" : "Автомобиль · по разрешённым дорогам"
+            let route = try graph.path(from: current, to: destination)
+            guard route.count >= 2 else { throw OfflineRouteGraph.RouteError.disconnected }
+            navigationPath = route
+            navigationKind = mode == .foot ? "Локальный граф · пешком" : "Локальный граф · автомобиль"
             routingError = nil
         } catch {
-            // Never draw an invented straight line when a road route cannot be found.
             navigationPath = []
             navigationKind = "Маршрут недоступен"
-            routingError = error.localizedDescription
-            model.status = "Маршрут не построен: " + error.localizedDescription
+            routingError = (valhallaError.map { "Valhalla: \($0). " } ?? "") + error.localizedDescription
         }
     }
 
     private func stopNavigation() {
+        routeRequestID = nil
         navigationTargetID = nil
         if recordedRoute == nil { navigationPath = [] }
         navigationKind = ""
@@ -800,9 +835,12 @@ struct MainView: View {
                         .accessibilityIdentifier("route_drive")
                     Button("Скачать сеть") { showHostingDownloads = true }
                         .accessibilityIdentifier("route_import")
+                    Button("Valhalla TAR") { importingValhallaTiles = true }
+                        .accessibilityIdentifier("valhalla_import")
                 }
                 .buttonStyle(.bordered)
                 .font(.caption2)
+                Text(valhalla.status).font(.caption2).foregroundStyle(.secondary)
                 if routeGraph != nil {
                     Text("Офлайн-сеть: \(routeGraphCount) вершин. Только подтверждённые соединения GeoJSON.")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
@@ -1008,6 +1046,15 @@ struct MainView: View {
     private var routesContent: some View {
         VStack(alignment: .leading, spacing: 15) {
             ReferencePageHeader(title: "Маршруты")
+            HStack {
+                Label("Valhalla", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
+                Spacer()
+                Button("Импорт тайлов TAR") { importingValhallaTiles = true }
+                    .accessibilityIdentifier("valhalla_import_routes")
+            }
+            .font(.caption.bold())
+            .foregroundStyle(HuntReference.green)
+            Text(valhalla.status).font(.caption2).foregroundStyle(HuntReference.muted)
             ReferencePrimaryButton(title: model.recording ? "Завершить маршрут" : "Новый маршрут",
                                    symbol: model.recording ? "stop.fill" : "plus") {
                 if model.recording { model.stopTrack() } else { model.startTrack() }
