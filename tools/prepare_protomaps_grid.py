@@ -28,7 +28,7 @@ def source_candidates(html, today=None):
     """Newest published-looking candidates first; no whole-planet downloads."""
     import datetime
     today = today or datetime.datetime.now(datetime.timezone.utc).date()
-    names = set(re.findall(r"(?<![0-9])(20[0-9]{6})\\.pmtiles", html))
+    names = set(re.findall(r"(?<![0-9])(20[0-9]{6})\.pmtiles", html))
     # Try recent daily uploads. Builds are not guaranteed every day.
     for delta in range(0, 15):
         names.add((today - datetime.timedelta(days=delta)).strftime("%Y%m%d"))
