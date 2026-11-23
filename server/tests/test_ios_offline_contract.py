@@ -77,3 +77,16 @@ def test_protomaps_local_glyphs_and_sprites_are_downloaded():
     assert 'sprites/v4' in source
     assert 'ProtomapsAssets.ready(in: folder)' in style
     assert 'place_names_' in style
+
+
+def test_protomaps_catalog_is_editable_and_diagnosed():
+    store = (IOS / "ProtomapsOfflineStore.swift").read_text()
+    ui = (IOS / "OfflineGridDownloadSheet.swift").read_text()
+    assert "catalogCandidates(" in store
+    assert "setCatalogAddress(" in store
+    assert "loadedCatalogURL" in store
+    assert "rejectedPacks" in store
+    assert "HTTP \\(statusCode)" in store
+    assert "URL(string: raw, relativeTo: catalog)" in store
+    assert "protomaps_catalog_address" in ui
+    assert "Проверить хостинг и каталог" in ui

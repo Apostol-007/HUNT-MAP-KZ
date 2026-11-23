@@ -11,6 +11,7 @@ struct OfflineGridDownloadSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var minZoom = 9
     @State private var maxZoom = 14
+    @State private var address = ""
 
     private var cells: [OfflineGridCell] {
         selected.sorted().compactMap { OfflineGridCell(id: $0, step: step) }
@@ -20,7 +21,23 @@ struct OfflineGridDownloadSheet: View {
         NavigationStack {
             Form {
                 Section("Protomaps · полноценные карты Казахстана") {
-                    Text("PMTiles содержат настоящие векторные тайлы: дороги, тропы, реки, леса, строения. После загрузки архив доступен MapLibre напрямую с диска.")
+                    Text("Карты PMTiles скачиваются с твоего хостинга. Укажи папку с картами или точный URL catalog.json.")
+                        .font(.caption)
+                    TextField("https://create.web-works.kz/maps/", text: $address)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                        .font(.caption.monospaced())
+                        .accessibilityIdentifier("protomaps_catalog_address")
+                    Button("Проверить хостинг и каталог") {
+                        protomaps.setCatalogAddress(address)
+                        Task { await protomaps.refresh() }
+                    }
+                    .disabled(protomaps.busy || address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Text(protomaps.diagnostic)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(protomaps.available.isEmpty ? Color.orange : Color.secondary)
+                        .textSelection(.enabled)
                     Text("Каталог: \(protomaps.available.count) районов · установлено: \(protomaps.installed.count)")
                     Text(protomaps.status).font(.caption)
                     if protomaps.busy {
@@ -28,6 +45,14 @@ struct OfflineGridDownloadSheet: View {
                     }
                     Button("Обновить список карт") { Task { await protomaps.refresh() } }
                         .disabled(protomaps.busy)
+                    ForEach(protomaps.available) { pack in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(pack.name).font(.caption.bold())
+                            Text("\(ByteCountFormatter.string(fromByteCount: pack.bytes, countStyle: .file)) · \(pack.id)")
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     Button("Скачать Protomaps по выделенной сетке") {
                         let selectedCells = cells
                         Task { await protomaps.download(cells: selectedCells) }
@@ -88,7 +113,10 @@ struct OfflineGridDownloadSheet: View {
             }
             .navigationTitle("Скачать карту по сетке")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { dismiss() } } }
-            .task { if protomaps.available.isEmpty { await protomaps.refresh() } }
+            .task {
+                address = protomaps.catalogAddress
+                if protomaps.available.isEmpty { await protomaps.refresh() }
+            }
         }
     }
 }
