@@ -9,6 +9,7 @@ struct MainView: View {
     @StateObject private var maps = OfflineTileStore()
     @StateObject private var hosting = HostingOfflineDownloads()
     @StateObject private var offlineRoads = OfflineRoadOverlayStore()
+    @StateObject private var nativePacks = NativeOfflinePackStore()
     @State private var showHostingDownloads = false
     @State private var gridMode = false
     @State private var gridStep = 0.1
@@ -123,7 +124,7 @@ struct MainView: View {
         } message: { Text(routingError ?? "") }
         .sheet(isPresented: $showLayers) { layerSheet }
         .sheet(isPresented: $showGridDownloads) {
-            OfflineGridDownloadSheet(hosting: hosting, tiles: maps,
+            OfflineGridDownloadSheet(hosting: hosting, tiles: maps, nativePacks: nativePacks,
                                      selected: $selectedGridCells, step: gridStep)
         }
         .sheet(isPresented: $showSearch) { mapSearchSheet }
@@ -346,6 +347,7 @@ struct MainView: View {
                            tileFiles: maps.paths, tileRevision: maps.revision,
                            offlineRoadLines: online ? [] : offlineRoads.lines,
                            offlineRoadRevision: offlineRoads.revision,
+                           nativeOfflineStyleURL: nativePacks.styleURL,
                            routingGeneration: hosting.installedRoutes.hashValue,
                            online: online, selectedZone: $zone,
                            weatherGrid: weatherLayer == .none ? nil : weatherGrid.grid,
@@ -550,7 +552,7 @@ struct MainView: View {
                 Button("Очистить") { selectedGridCells.removeAll() }
                     .disabled(selectedGridCells.isEmpty)
                 Spacer()
-                Button("Найти и скачать пакеты") { showGridDownloads = true }
+                Button("Скачать карту по сетке") { showGridDownloads = true }
                     .disabled(selectedGridCells.isEmpty)
                     .fontWeight(.semibold)
             }

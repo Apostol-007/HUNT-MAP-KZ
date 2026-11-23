@@ -20,6 +20,7 @@ struct OfflineMapView: UIViewRepresentable {
     var offlineRoadLines: [OfflineRoadLine] = []
     var offlineRoadRevision = 0
     var routingGeneration = 0
+    var nativeOfflineStyleURL: URL? = nil
     let online: Bool
     @Binding var selectedZone: GeoZone?
     let weatherGrid: ForecastGrid?
@@ -38,7 +39,7 @@ struct OfflineMapView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(selectedZone: $selectedZone) }
 
     func makeUIView(context: Context) -> MLNMapView {
-        let styleURL = online ? selectedStyle : OfflineMapStyle.url
+        let styleURL = online ? selectedStyle : (nativeOfflineStyleURL ?? OfflineMapStyle.url)
         let view = MLNMapView(frame: .zero, styleURL: styleURL)
         view.delegate = context.coordinator
         context.coordinator.zones = zones
@@ -79,7 +80,7 @@ struct OfflineMapView: UIViewRepresentable {
 
     func updateUIView(_ view: MLNMapView, context: Context) {
         let requestedOnline = online
-        let targetStyle = requestedOnline ? selectedStyle : OfflineMapStyle.url
+        let targetStyle = requestedOnline ? selectedStyle : (nativeOfflineStyleURL ?? OfflineMapStyle.url)
         if view.styleURL != targetStyle {
             view.styleURL = targetStyle
         }
