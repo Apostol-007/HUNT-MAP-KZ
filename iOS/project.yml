@@ -19,22 +19,32 @@ targets:
       - package: HuntCore
       - package: MapLibre
     info:
+      path: HuntMap/Info.plist
       properties:
+        CFBundleDevelopmentRegion: "$(DEVELOPMENT_LANGUAGE)"
+        CFBundleExecutable: "$(EXECUTABLE_NAME)"
+        CFBundleIdentifier: "$(PRODUCT_BUNDLE_IDENTIFIER)"
+        CFBundleInfoDictionaryVersion: "6.0"
+        CFBundleName: "$(PRODUCT_NAME)"
+        CFBundlePackageType: APPL
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        UILaunchStoryboardName: LaunchScreen
+        UIRequiresFullScreen: true
+        UIBackgroundModes:
+          - location
+        MapTilerAPIKey: "$(MAPTILER_API_KEY)"
+        NSLocationWhenInUseUsageDescription: "Показать позицию и предупреждать о границах во время использования карты"
+        NSLocationAlwaysAndWhenInUseUsageDescription: "Записывать маршрут и предупреждать о границах во время активной полевой сессии с заблокированным экраном"
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: kz.huntmap.field
-        GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_MapTilerAPIKey: "$(MAPTILER_API_KEY)"
+        GENERATE_INFOPLIST_FILE: NO
         MARKETING_VERSION: 5.2.0
         CURRENT_PROJECT_VERSION: 52
-        INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen
-        INFOPLIST_KEY_UIRequiresFullScreen: YES
-        INFOPLIST_KEY_UIBackgroundModes: location
         SWIFT_VERSION: 5.0
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Показать позицию и предупреждать о границах во время использования карты"
-        INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription: "Записывать маршрут и предупреждать о границах во время активной полевой сессии с заблокированным экраном"
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
