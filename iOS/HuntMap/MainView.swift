@@ -39,6 +39,11 @@ struct MainView: View {
     @AppStorage("hunt.showTrack") private var showTrackOnMap = true
     @State private var showAnimalsLayer = false
     @State private var editingMarker: Marker?
+    @State private var selectedMapMarker: MapMarkerSelection?
+    @State private var pendingMapPoint: GeoPoint?
+    @State private var pendingMapZone: GeoZone?
+    @State private var movingMarkerID: UUID?
+    @State private var showMapPointActions = false
     @State private var markerToDelete: Marker?
     @State private var trackToDelete: Track?
     @State private var mapFocus: GeoPoint?
@@ -77,6 +82,43 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
         .sheet(isPresented: $showLayers) { layerSheet }
         .sheet(isPresented: $showSearch) { mapSearchSheet }
+        .sheet(item: $selectedMapMarker) { selection in
+            MapMarkerDetails(markerID: selection.id, model: model,
+                onShowOnMap: { point in
+                    mapFocus = point
+                    centerRequest += 1
+                    tab = .map
+                    selectedMapMarker = nil
+                },
+                onMove: {
+                    movingMarkerID = selection.id
+                    selectedMapMarker = nil
+                })
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .confirmationDialog("Точка на карте", isPresented: $showMapPointActions, titleVisibility: .visible) {
+            Button("Поставить метку") {
+                if let point = pendingMapPoint, let marker = model.addMarker(at: point) {
+                    showMarkersOnMap = true
+                    selectedMapMarker = MapMarkerSelection(id: marker.id)
+                }
+                pendingMapPoint = nil
+                pendingMapZone = nil
+            }
+            if pendingMapZone != nil {
+                Button("Информация об угодье") {
+                    zone = pendingMapZone
+                    pendingMapPoint = nil
+                    pendingMapZone = nil
+                }
+            }
+            Button("Отмена", role: .cancel) { pendingMapPoint = nil; pendingMapZone = nil }
+        } message: {
+            if let point = pendingMapPoint {
+                Text(String(format: "Широта %.6f, долгота %.6f", point.latitude, point.longitude))
+            }
+        }
         .sheet(item: $editingMarker) { marker in
             MarkerEditor(marker: marker,
                          onSave: { model.saveMarker($0) },
@@ -250,7 +292,26 @@ struct MainView: View {
                            weatherLayer: weatherLayer,
                            centerRequest: centerRequest,
                            zoomCommand: zoomCommand,
-                           focusCoordinate: mapFocus)
+                           focusCoordinate: mapFocus,
+                           onMapTap: { point in
+                               if let id = movingMarkerID {
+                                   if var marker = model.markers.first(where: { $0.id == id }) {
+                                       marker.coordinate = point
+                                       model.saveMarker(marker)
+                                       selectedMapMarker = MapMarkerSelection(id: id)
+                                   }
+                                   movingMarkerID = nil
+                               } else {
+                                   pendingMapPoint = point
+                                   pendingMapZone = model.zones.first(where: { $0.contains(point) })
+                                   showMapPointActions = true
+                               }
+                           },
+                           onMarkerTap: { id in
+                               if movingMarkerID == nil {
+                                   selectedMapMarker = MapMarkerSelection(id: id)
+                               }
+                           })
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea(.container, edges: .all)
             LinearGradient(colors: [.black.opacity(0.48), .clear, .black.opacity(0.28)],
@@ -302,6 +363,20 @@ struct MainView: View {
                 .padding(.top, 16)
                 .padding(.horizontal, 13)
                 Spacer(minLength: 0)
+                if let movingMarkerID {
+                    HStack(spacing: 8) {
+                        Image(systemName: "hand.point.up.left.fill")
+                        Text("Нажмите на новое место метки")
+                        Spacer()
+                        Button("Отмена") { self.movingMarkerID = nil }
+                    }
+                    .font(.caption.bold())
+                    .padding(12)
+                    .background(HuntReference.card, in: RoundedRectangle(cornerRadius: 14))
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
+                    .accessibilityIdentifier("marker_move_mode")
+                }
                 if weatherLayer != .none {
                     Button { showWeatherLayers = true } label: {
                         Label("\(weatherLayer.rawValue) · \(weatherGrid.forecastLabel)", systemImage: "cloud.fill")

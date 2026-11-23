@@ -23,6 +23,8 @@ struct OfflineMapView: UIViewRepresentable {
     var centerRequest: Int = 0
     var zoomCommand: Int = 0
     var focusCoordinate: GeoPoint? = nil
+    var onMapTap: (GeoPoint) -> Void = { _ in }
+    var onMarkerTap: (UUID) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator(selectedZone: $selectedZone) }
 
@@ -31,8 +33,15 @@ struct OfflineMapView: UIViewRepresentable {
         let view = MLNMapView(frame: .zero, styleURL: styleURL)
         view.delegate = context.coordinator
         context.coordinator.zones = zones
+        context.coordinator.onMapTap = onMapTap
+        context.coordinator.onMarkerTap = onMarkerTap
+        let longPress = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleLongPress(_:)))
+        longPress.minimumPressDuration = 0.55
+        longPress.cancelsTouchesInView = false
+        view.addGestureRecognizer(longPress)
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
         tap.cancelsTouchesInView = false
+        tap.require(toFail: longPress)
         view.addGestureRecognizer(tap)
         context.coordinator.map = view
         view.setCenter(CLLocationCoordinate2D(latitude: 43.24, longitude: 76.91), zoomLevel: 11, animated: false)
@@ -47,6 +56,8 @@ struct OfflineMapView: UIViewRepresentable {
             view.styleURL = targetStyle
         }
         context.coordinator.zones = zones
+        context.coordinator.onMapTap = onMapTap
+        context.coordinator.onMarkerTap = onMarkerTap
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
         // Diagnostic-only window geometry check. Read after UIKit finishes layout.
         DispatchQueue.main.async { [weak view] in
@@ -70,14 +81,69 @@ struct OfflineMapView: UIViewRepresentable {
         var selectedZone: Binding<GeoZone?>
         weak var map: MLNMapView?
         var zones: [GeoZone] = []
+        var onMapTap: (GeoPoint) -> Void = { _ in }
+        var onMarkerTap: (UUID) -> Void = { _ in }
+        private var markerAnnotations: [ObjectIdentifier: UUID] = [:]
+        private var markerAppearance: [ObjectIdentifier: Marker] = [:]
+        private var markerCoordinates: [(UUID, CLLocationCoordinate2D)] = []
         init(selectedZone: Binding<GeoZone?>) { self.selectedZone = selectedZone }
+        @objc func handleLongPress(_ recognizer: UILongPressGestureRecognizer) {
+            guard recognizer.state == .began, let map else { return }
+            let coordinate = map.convert(recognizer.location(in: map), toCoordinateFrom: map)
+            let point = GeoPoint(coordinate.latitude, coordinate.longitude)
+            if point.valid { onMapTap(point) }
+        }
+
         @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
             guard recognizer.state == .ended, let map else { return }
-            let coordinate = map.convert(recognizer.location(in: map), toCoordinateFrom: map)
-            let position = GeoPoint(coordinate.latitude, coordinate.longitude)
-            // Find the smallest enclosing boundary for overlapping territories.
-            let matching = zones.filter { $0.contains(position) }
-            if let zone = matching.first { selectedZone.wrappedValue = zone }
+            let screenPoint = recognizer.location(in: map)
+            // MapLibre can also dispatch didSelect for markers. Only handle it once.
+            if let nearby = markerCoordinates.first(where: { _, coordinate in
+                let markerPoint = map.convert(coordinate, toPointTo: map)
+                return hypot(markerPoint.x - screenPoint.x, markerPoint.y - screenPoint.y) <= 28
+            }) {
+                onMarkerTap(nearby.0)
+                return
+            }
+            let coordinate = map.convert(screenPoint, toCoordinateFrom: map)
+            let point = GeoPoint(coordinate.latitude, coordinate.longitude)
+            guard point.valid else { return }
+            onMapTap(point)
+        }
+
+        func mapView(_ mapView: MLNMapView, didSelect annotation: MLNAnnotation) {
+            if let id = markerAnnotations[ObjectIdentifier(annotation as AnyObject)] {
+                onMarkerTap(id)
+                mapView.deselectAnnotation(annotation, animated: false)
+            }
+        }
+
+        func mapView(_ mapView: MLNMapView, imageFor annotation: MLNAnnotation) -> MLNAnnotationImage? {
+            guard let marker = markerAppearance[ObjectIdentifier(annotation as AnyObject)] else { return nil }
+            let symbol = marker.symbol ?? MarkerStyle.defaultSymbol(for: marker.kind)
+            let color = UIColor(hex: marker.colorHex ?? "#24DA66")
+            let size = CGSize(width: 42, height: 48)
+            let image = UIGraphicsImageRenderer(size: size).image { _ in
+                let circle = CGRect(x: 3, y: 2, width: 36, height: 36)
+                color.setFill()
+                UIBezierPath(ovalIn: circle).fill()
+                UIColor.black.withAlphaComponent(0.35).setStroke()
+                let border = UIBezierPath(ovalIn: circle)
+                border.lineWidth = 1.5
+                border.stroke()
+                let triangle = UIBezierPath()
+                triangle.move(to: CGPoint(x: 14, y: 33))
+                triangle.addLine(to: CGPoint(x: 21, y: 46))
+                triangle.addLine(to: CGPoint(x: 28, y: 33))
+                triangle.close()
+                color.setFill()
+                triangle.fill()
+                let glyph = UIImage(systemName: symbol, withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold))
+                    ?? UIImage(systemName: "mappin")
+                glyph?.withTintColor(.white, renderingMode: .alwaysOriginal)
+                    .draw(in: CGRect(x: 12, y: 11, width: 18, height: 18))
+            }
+            return MLNAnnotationImage(image: image, reuseIdentifier: "hunt-marker-\(marker.id.uuidString)-\(symbol)-\(marker.colorHex ?? "green")")
         }
 
         private var lastRevision = -1
@@ -141,6 +207,9 @@ struct OfflineMapView: UIViewRepresentable {
                                weatherGrid: ForecastGrid?, weatherLayer: WeatherMapLayer) {
             if !shapes.isEmpty { view.removeAnnotations(shapes) }
             var updated: [MLNAnnotation] = []
+            markerAnnotations.removeAll()
+            markerAppearance.removeAll()
+            markerCoordinates.removeAll()
             if weatherLayer != .none, let weatherGrid, weatherGrid.validated() {
                 let w = weatherGrid.gridWidth, h = weatherGrid.gridHeight
                 let samples = weatherGrid.points.map { point in
@@ -212,6 +281,9 @@ struct OfflineMapView: UIViewRepresentable {
                 point.title = marker.title
                 point.coordinate = CLLocationCoordinate2D(latitude: marker.coordinate.latitude, longitude: marker.coordinate.longitude)
                 updated.append(point)
+                markerAnnotations[ObjectIdentifier(point)] = marker.id
+                markerAppearance[ObjectIdentifier(point)] = marker
+                markerCoordinates.append((marker.id, point.coordinate))
             }
             if let position {
                 let gps = MLNPointAnnotation()

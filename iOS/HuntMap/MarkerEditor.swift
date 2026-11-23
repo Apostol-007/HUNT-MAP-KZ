@@ -41,11 +41,13 @@ struct MarkerEditor: View {
     @State private var marker: Marker
     let onSave: (Marker) -> Void
     let onDelete: (UUID) -> Void
+    var isNew = false
     @State private var latitude: String
     @State private var longitude: String
     @State private var confirmDelete = false
 
-    init(marker: Marker, onSave: @escaping (Marker) -> Void, onDelete: @escaping (UUID) -> Void) {
+    init(marker: Marker, isNew: Bool = false, onSave: @escaping (Marker) -> Void, onDelete: @escaping (UUID) -> Void) {
+        self.isNew = isNew
         _marker = State(initialValue: marker)
         _latitude = State(initialValue: String(format: "%.7f", marker.coordinate.latitude))
         _longitude = State(initialValue: String(format: "%.7f", marker.coordinate.longitude))
@@ -111,13 +113,15 @@ struct MarkerEditor: View {
                     Text("Чтобы переместить метку на карте: удерживайте её пальцем, затем отпустите в новом месте. Можно также ввести точные координаты здесь.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Section {
-                    Button("Удалить метку", role: .destructive) { confirmDelete = true }
+                if !isNew {
+                    Section {
+                        Button("Удалить метку", role: .destructive) { confirmDelete = true }
+                    }
                 }
             }
             .scrollContentBackground(.hidden)
             .background(FBTheme.background)
-            .navigationTitle("Редактор метки")
+            .navigationTitle(isNew ? "Новая метка" : "Редактор метки")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {

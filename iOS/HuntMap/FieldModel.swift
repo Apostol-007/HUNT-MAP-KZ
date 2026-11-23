@@ -119,6 +119,14 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         markers.insert(Marker(title:"\(kind) \(markers.count+1)",kind:kind,coordinate:coordinate),at:0)
         persist()
     }
+    @discardableResult
+    func addMarker(at point: GeoPoint, kind: String = "Точка") -> Marker? {
+        guard point.valid else { status = "Недопустимые координаты метки"; return nil }
+        let marker = Marker(title: "\(kind) \(markers.count + 1)", kind: kind, coordinate: point)
+        markers.insert(marker, at: 0)
+        persist()
+        return marker
+    }
     func removeMarkers(at offsets:IndexSet) {markers.remove(atOffsets:offsets);persist()}
     func saveMarker(_ changed: Marker) {
         guard let index = markers.firstIndex(where: { $0.id == changed.id }) else { return }
