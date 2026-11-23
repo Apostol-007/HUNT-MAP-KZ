@@ -9,7 +9,7 @@ launch = root / 'iOS/HuntMap/LaunchScreen.storyboard'
 assert launch.is_file() and 'launchScreen="YES"' in launch.read_text()
 assert 'INFOPLIST_KEY_UILaunchStoryboardName: LaunchScreen' in project
 assert 'GENERATE_INFOPLIST_FILE: YES' in project
-assert 'MARKETING_VERSION: 4.0.0' in project
+assert 'MARKETING_VERSION: 4.8.0' in project
 assert 'HuntMap/Info.plist' not in project
 assert 'OfflineMapView(' in view and '.ignoresSafeArea(.container, edges: .all)' in view
 assert 'CFBundleShortVersionString' in diag

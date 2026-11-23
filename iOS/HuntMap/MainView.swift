@@ -7,6 +7,8 @@ import UniformTypeIdentifiers
 struct MainView: View {
     @EnvironmentObject private var model: FieldModel
     @StateObject private var maps = OfflineTileStore()
+    @StateObject private var hosting = HostingOfflineDownloads()
+    @State private var showHostingDownloads = false
     @StateObject private var animals = WildlifeStore()
     @StateObject private var weather = WeatherService()
     @StateObject private var weatherGrid = WeatherGridService()
@@ -25,7 +27,6 @@ struct MainView: View {
     @State private var showWeatherLayers = false
     @State private var showAbout = false
     @State private var showDiagnostics = false
-    @State private var showAdvanced = false
     @State private var showGBIF = false
     @State private var showSearch = false
     @State private var searchText = ""
@@ -90,6 +91,9 @@ struct MainView: View {
         .background(ShakeDetector().frame(width: 1, height: 1))
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
         .onAppear { loadRoutingNetwork() }
+        .onChange(of: maps.revision) { _, _ in
+            if !maps.installed.isEmpty { online = false }
+        }
         .onChange(of: model.coordinate) { _, newPoint in
             if newPoint != nil, navigationKind == "Ожидание GPS", let id = navigationTargetID {
                 startNavigation(to: id)
@@ -203,7 +207,7 @@ struct MainView: View {
                             wildlifeCount: animals.packs.count, onlineMap: online)
         }
         .sheet(isPresented: $showAbout) { AboutHuntView() }
-        .sheet(isPresented: $showAdvanced) { LegacyMainView() .environmentObject(model) }
+        .sheet(isPresented: $showHostingDownloads) { HostingOfflineSheet(hosting: hosting, tiles: maps).environmentObject(model) }
     }
 
     // MARK: - Root layout
@@ -296,7 +300,7 @@ struct MainView: View {
             Text("Быстрые действия").font(.headline.bold())
             LazyVGrid(columns: [.init(.flexible()), .init(.flexible())], spacing: 10) {
                 ReferenceActionCard(title: "Карта и угодья", subtitle: "Открыть карту", symbol: "map") { tab = .map }
-                ReferenceActionCard(title: "Загрузить карты", subtitle: "Офлайн-районы", symbol: "arrow.down.circle") { showAdvanced = true }
+                ReferenceActionCard(title: "Загрузить карты", subtitle: "Офлайн-районы", symbol: "arrow.down.circle") { showHostingDownloads = true }
                 ReferenceActionCard(title: "Мои маршруты", subtitle: "Треки и GPX", symbol: "mappin.and.ellipse") { dataSection = .routes; tab = .data }
                 ReferenceActionCard(title: "Слои и погода", subtitle: "Прогноз и карта", symbol: "square.3.layers.3d") { tab = .map; showLayers = true }
             }
@@ -495,17 +499,16 @@ struct MainView: View {
             model.requestGPS()
             return
         }
-        if let graph = routeGraph {
-            do {
-                navigationPath = try graph.path(from: current, to: marker.coordinate)
-                navigationKind = "По импортированным тропам"
-            } catch {
-                navigationPath = []
-                navigationKind = "Маршрут по сети не построен"
-                routingError = error.localizedDescription + " Выберите режим «Азимут» или импортируйте другую сеть."
-            }
-        } else {
+        do {
+            let graph: OfflineRouteGraph
+            if let imported = routeGraph { graph = imported }
+            else { graph = try hosting.graph(start: current, destination: marker.coordinate) }
+            navigationPath = try graph.path(from: current, to: marker.coordinate)
+            navigationKind = "По локальной сети дорог и троп"
+        } catch {
+            // When a road network cannot be used, clearly label the straight-line fallback.
             navigateByBearing()
+            model.status = "Маршрут по дорогам недоступен: " + error.localizedDescription
         }
     }
 
@@ -560,9 +563,8 @@ struct MainView: View {
                     Button("Азимут") { navigateByBearing() }
                         .accessibilityIdentifier("route_bearing")
                     Button("По тропам") { startNavigation(to: id) }
-                        .disabled(routeGraph == nil)
                         .accessibilityIdentifier("route_graph")
-                    Button("Импорт сети") { importingRoutingNetwork = true }
+                    Button("Скачать сеть") { showHostingDownloads = true }
                         .accessibilityIdentifier("route_import")
                 }
                 .buttonStyle(.bordered)
@@ -1027,8 +1029,7 @@ struct MainView: View {
                     }.fbCard()
                 }
             }
-            Button("Импорт и обновления каталогов") { showAdvanced = true }
-                .font(.footnote.bold()).foregroundStyle(HuntReference.green)
+            ReferencePrimaryButton(title: "Офлайн-карты и каталоги", symbol: "arrow.down.circle") { showHostingDownloads = true }
         }
     }
 
@@ -1036,13 +1037,13 @@ struct MainView: View {
         VStack(alignment: .leading, spacing: 18) {
             ReferencePageHeader(title: "Ещё")
             VStack(spacing: 0) {
-                ReferenceMenuRow(symbol: "arrow.down.circle", title: "Загрузки карт") { showAdvanced = true }
+                ReferenceMenuRow(symbol: "arrow.down.circle", title: "Загрузки карт") { showHostingDownloads = true }
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "waveform.path.ecg", title: "Диагностика") { showDiagnostics = true }
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "gearshape", title: "Настройки") { showLayers = true }
                 Divider().overlay(HuntReference.separator)
-                ReferenceMenuRow(symbol: "arrow.triangle.2.circlepath", title: "Синхронизация") { showAdvanced = true }
+                ReferenceMenuRow(symbol: "arrow.triangle.2.circlepath", title: "Синхронизация") { showHostingDownloads = true }
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "info.circle", title: "О приложении") { showAbout = true }
             }

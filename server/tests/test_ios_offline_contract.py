@@ -10,7 +10,9 @@ def test_offline_maplibre_has_no_online_tile_fallback():
     assert 'import MapLibre' in map_view
     assert 'import MapKit' not in map_view
     assert '"sources":{}' in map_view
-    assert 'mbtiles://' in map_view
+    assert 'LocalMBTilesServer.shared' in map_view
+    assert 'tileURLTemplates' in map_view
+    assert 'URL(string: "mbtiles://' not in map_view
     # Remote style is allowed only behind an explicit user-controlled online flag.
     assert 'online ? selectedStyle : OfflineMapStyle.url' in map_view
     sources = (IOS / 'MapSources.swift').read_text()
@@ -29,8 +31,8 @@ def test_maplibre_package_declared_and_local_import_available():
     assert 'func importLocal(' in tiles
     assert 'RasterMBTiles.isSupported(temp)' in tiles
     assert 'Self.sha256(file: temp)' in tiles
-    # The rebuilt UI preserves the extended download/import screen as a sheet.
-    advanced = (IOS / 'LegacyMainView.swift').read_text()
-    assert 'showAdvanced' in ui and 'LegacyMainView()' in ui
-    assert 'tileImportShown' in advanced
+    # Legacy screens have been removed, not merely hidden.
+    assert not (IOS / 'LegacyMainView.swift').exists()
+    assert 'LegacyMainView' not in ui
+    assert 'HostingOfflineSheet' in ui
     assert 'MapKit' not in tiles

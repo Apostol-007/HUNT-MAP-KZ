@@ -8,6 +8,8 @@ map_view = (root / 'iOS/HuntMap/OfflineMapView.swift').read_text(encoding='utf-8
 styles = (root / 'iOS/HuntMap/MapSources.swift').read_text(encoding='utf-8')
 map_code = main.split('    private var mapScreen:', 1)[1].split('    // MARK: - Screen 3:', 1)[0]
 checks = {
+    'Old view deleted': not (root / 'iOS/HuntMap/LegacyMainView.swift').exists() and 'LegacyMainView' not in main,
+    'Local MBTiles source': 'LocalMBTilesServer.shared' in map_view and 'URL(string: "mbtiles://' not in map_view,
     'Five tabs preserved': all(name in main for name in ['case home = "Главная"', 'map = "Карта"', 'data = "Данные"', 'services = "Сервисы"', 'more = "Ещё"']),
     'Reference components installed': all(name in reference for name in ['ReferenceActionCard', 'ReferenceLayerRow', 'ReferencePrimaryButton', 'ReferenceChip']),
     'Eight-screen navigation targets': all(name in main for name in ['homeScreen', 'mapScreen', 'layerSheet', 'weatherContent', 'routesContent', 'markersContent', 'wildlifeContent', 'moreScreen']),

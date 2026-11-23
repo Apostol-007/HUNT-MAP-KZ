@@ -1,0 +1,3 @@
+iOS/HuntMap/LegacyMainView.swift
+iOS/HuntMap/MapDownloadAndLayers.swift
+iOS/HuntMap/OfflineAreaPacks.swift

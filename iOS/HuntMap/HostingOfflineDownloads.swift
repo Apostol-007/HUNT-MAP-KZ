@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import CryptoKit
+import UniformTypeIdentifiers
 import HuntCore
 
 /// Static HTTPS distribution: no server-side API, passwords, or remote executable content.
@@ -306,6 +307,9 @@ struct HostingZonePack: Decodable, Identifiable {
         }
         if Task.isCancelled { status = "Загрузка остановлена; готовые пакеты сохранены" }
     }
+    func reportLocalImportError(_ text: String) {
+        status = "Ошибка выбора MBTiles: \(text)"
+    }
     func removeZone(_ id: String, model: FieldModel) {
         guard id.range(of: "^[A-Za-z0-9_-]{1,100}$", options: .regularExpression) != nil else { return }
         let target = folder.appendingPathComponent("zones/" + id + ".geojson")
@@ -355,6 +359,8 @@ struct HostingOfflineSheet: View {
     @EnvironmentObject private var model: FieldModel
     @Environment(\.dismiss) private var dismiss
     @State private var bulkTask: Task<Void, Never>?
+    @State private var importingLocalMap = false
+    @AppStorage("hunt.onlineBasemap") private var onlineBasemap = true
 
     private var visibleRoutes: [HostingRoutingPack] {
         hosting.routes.filter { pack in
@@ -376,6 +382,17 @@ struct HostingOfflineSheet: View {
                             .font(.caption.monospacedDigit())
                     }
                 } header: { Text("Источник данных") }
+                Section("Картографическая подложка") {
+                    Toggle("Онлайн-подложка", isOn: $onlineBasemap)
+                    Button("Импортировать MBTiles из файлов iPhone") { importingLocalMap = true }
+                    Text("Установлено растровых MBTiles: \(tiles.installed.count). Дорожные GeoJSON не содержат изображение карты.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    if tiles.installed.isEmpty {
+                        Text("Офлайн-карта отсутствует. Публикуй MBTiles и catalog.json через Windows MAP MANAGER либо импортируй MBTiles локально. Скачивание только routing/catalog.json не создаёт подложку.")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+                    Text(tiles.message).font(.caption).foregroundStyle(.secondary)
+                }
                 Section("Офлайн-карты (MBTiles)") {
                     if hosting.maps.isEmpty { Text("Опубликованных карт нет").foregroundStyle(.secondary) }
                     ForEach(hosting.maps) { pack in
@@ -459,6 +476,13 @@ struct HostingOfflineSheet: View {
             .navigationTitle("Офлайн с хостинга")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Закрыть") { dismiss() } } }
             .task { if hosting.maps.isEmpty && hosting.routes.isEmpty { await hosting.refresh() } }
+            .fileImporter(isPresented: $importingLocalMap,
+                          allowedContentTypes: [UTType(filenameExtension: "mbtiles") ?? .data]) { result in
+                switch result {
+                case .success(let url): Task { await tiles.importLocal(url) }
+                case .failure(let error): hosting.reportLocalImportError(error.localizedDescription)
+                }
+            }
         }
     }
 }

@@ -47,6 +47,12 @@ struct OfflineMapView: UIViewRepresentable {
         tap.delegate = context.coordinator
         view.addGestureRecognizer(tap)
         context.coordinator.map = view
+        context.coordinator.tilesReadyObserver = NotificationCenter.default.addObserver(
+            forName: .huntMBTilesReady, object: nil, queue: .main
+        ) { [weak coordinator = context.coordinator, weak view] _ in
+            guard let coordinator, let view, let style = view.style else { return }
+            coordinator.refreshOfflineTiles(style: style)
+        }
         view.setCenter(CLLocationCoordinate2D(latitude: 43.24, longitude: 76.91), zoomLevel: 11, animated: false)
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
         return view
@@ -82,6 +88,10 @@ struct OfflineMapView: UIViewRepresentable {
 
     final class Coordinator: NSObject, MLNMapViewDelegate, UIGestureRecognizerDelegate {
         var selectedZone: Binding<GeoZone?>
+        var tilesReadyObserver: NSObjectProtocol?
+        deinit {
+            if let tilesReadyObserver { NotificationCenter.default.removeObserver(tilesReadyObserver) }
+        }
         weak var map: MLNMapView?
         var zones: [GeoZone] = []
         var onMapTap: (GeoPoint) -> Void = { _ in }
@@ -189,6 +199,10 @@ struct OfflineMapView: UIViewRepresentable {
             lastStyle = style
         }
 
+        func refreshOfflineTiles(style: MLNStyle) {
+            configure(style: style, files: latestFiles)
+        }
+
         private func configure(style: MLNStyle, files: [URL]) {
             // Localize visible vector labels on every style load or style change.
             // Source data can omit name:ru; retain its original value rather than hide it.
@@ -199,13 +213,15 @@ struct OfflineMapView: UIViewRepresentable {
                 if let layer = style.layer(withIdentifier: id) { style.removeLayer(layer) }
                 if let source = style.source(withIdentifier: id) { style.removeSource(source) }
             }
-            for (index, file) in files.enumerated() {
-                guard file.isFileURL, file.pathExtension.lowercased() == "mbtiles",
-                      FileManager.default.fileExists(atPath: file.path) else { continue }
+            // Raster MBTiles are served by the existing loopback-only tile service.
+            // MapLibre cannot open arbitrary mbtiles:// files using a generic HTTP source.
+            let server = LocalMBTilesServer.shared
+            let registered = server.register(files)
+            for (index, entry) in registered.enumerated() {
+                let (key, _) = entry
+                guard let template = server.tileTemplate(for: key) else { continue }
                 let id = "hunt-raster-\(index)"
-                // MapLibre Native's local MBTiles protocol reads directly from SQLite on disk.
-                guard let url = URL(string: "mbtiles://\(file.path)") else { continue }
-                let source = MLNRasterTileSource(identifier: id, configurationURL: url, tileSize: 256)
+                let source = MLNRasterTileSource(identifier: id, tileURLTemplates: [template], tileSize: 256)
                 style.addSource(source)
                 style.addLayer(MLNRasterStyleLayer(identifier: id, source: source))
             }
