@@ -79,6 +79,7 @@ struct DiagnosticsView: View {
         Network path available: \(internetConnected)
         Weather point status: \(weatherPointStatus)
         Weather grid status: \(weatherGridStatus)
+        Weather render status: \(UserDefaults.standard.string(forKey: "hunt.diag.weatherPaint") ?? "not drawn")
         Weather selected layer: \(weatherLayer)
         Startup: \(startupStatus)
         Startup failures: \(startupErrors.joined(separator: " | "))

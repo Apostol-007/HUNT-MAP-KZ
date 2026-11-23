@@ -90,7 +90,12 @@ final class WeatherFieldOverlay: UIView {
     }
 
     override func draw(_ rect: CGRect) {
-        guard let forecast, let mapView, let context = UIGraphicsGetCurrentContext() else { return }
+        guard let forecast, let mapView, let context = UIGraphicsGetCurrentContext() else {
+            UserDefaults.standard.set("no canvas / forecast", forKey: "hunt.diag.weatherPaint")
+            return
+        }
+        UserDefaults.standard.set("paint started: \(Int(bounds.width))x\(Int(bounds.height)), layer \(selectedLayer.rawValue), \(forecast.gridWidth)x\(forecast.gridHeight)", forKey: "hunt.diag.weatherPaint")
+        var drawnTiles = 0
         let countX = forecast.gridWidth - 1
         let countY = forecast.gridHeight - 1
         guard countX > 0, countY > 0 else { return }
@@ -132,9 +137,11 @@ final class WeatherFieldOverlay: UIView {
                         context.closePath()
                         context.setFillColor(fill.cgColor)
                         context.fillPath()
+                        drawnTiles += 1
                     }
                 }
             }
         }
+        UserDefaults.standard.set("rendered tiles: \(drawnTiles), layer: \(selectedLayer.rawValue), canvas: \(Int(bounds.width))x\(Int(bounds.height))", forKey: "hunt.diag.weatherPaint")
     }
 }
