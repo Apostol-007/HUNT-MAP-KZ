@@ -102,7 +102,8 @@ final class WeatherFieldOverlay: UIView {
                         let fill = color(average)
                         if fill.cgColor.alpha < 0.01 { continue }
                         let corners = [(u0,v0),(u1,v0),(u1,v1),(u0,v1)]
-                        let points: [CGPoint] = corners.map { (u,v) in
+                        let points: [CGPoint] = corners.map { pair in
+                            let u = pair.0, v = pair.1
                             let location = CLLocationCoordinate2D(
                                 latitude: forecast.bounds.south + (Double(row) + v) * latStep,
                                 longitude: forecast.bounds.west + (Double(column) + u) * lonStep)
