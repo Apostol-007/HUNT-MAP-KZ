@@ -54,6 +54,9 @@ import Network
         guard !started else { return }
         started = true
         guard await internetAvailable() else {
+            AppDiagnosticLog.shared.record(severity: "info", subsystem: "Загрузка",
+                operation: "Проверка сети на старте", code: "OFFLINE",
+                rootCause: "Сеть не подключена", nextAction: "Открыть сохранённые карты")
             title = "Нет интернета"
             detail = "Открываем сохранённые карты"
             presented = false
@@ -128,6 +131,19 @@ import Network
             if !valhalla.tilesInstalled { errors.append("Valhalla: пакет пока недоступен") }
             tick()
         }
+        for failure in errors {
+            AppDiagnosticLog.shared.record(subsystem: "Синхронизация",
+                operation: "Обновление каталога или пакета", code: "UPDATE_FAILED",
+                rootCause: "Не удалось обновить один из наборов данных",
+                nextAction: "Проверить доступность каталога на хостинге, SHA-256 и свободное место",
+                details: failure, endpoint: "create.web-works.kz/maps")
+        }
+        AppDiagnosticLog.shared.record(severity: "info", subsystem: "Синхронизация",
+            operation: "Итог проверки обновлений", code: errors.isEmpty ? "OK" : "PARTIAL",
+            rootCause: errors.isEmpty ? "Данные актуальны" : "Некоторые пакеты не обновились",
+            nextAction: errors.isEmpty ? "Не требуется" : "Изучить ошибки обновления",
+            details: "Пакеты: \(completed)/\(total); ошибок: \(errors.count)",
+            endpoint: "create.web-works.kz/maps")
         title = errors.isEmpty ? "Данные обновлены" : "Обновление завершено с замечаниями"
         detail = errors.isEmpty ? "Все доступные пакеты установлены" : "Существующие данные сохранены"
         isDownloading = false
