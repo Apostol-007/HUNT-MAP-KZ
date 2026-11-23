@@ -36,3 +36,18 @@ def test_maplibre_package_declared_and_local_import_available():
     assert 'LegacyMainView' not in ui
     assert 'HostingOfflineSheet' in ui
     assert 'MapKit' not in tiles
+
+
+def test_downloaded_roads_are_visible_offline_and_local_tiles_allowed():
+    source = (IOS / 'OfflineMapView.swift').read_text()
+    main = (IOS / 'MainView.swift').read_text()
+    road = (IOS / 'OfflineRoadOverlayStore.swift').read_text()
+    hosting = (IOS / 'HostingOfflineDownloads.swift').read_text()
+    project = (ROOT / 'iOS/project.yml').read_text()
+    assert 'NSAllowsLocalNetworking: true' in project
+    assert 'OFFLINE|ROAD' in source
+    assert 'offlineRoadLines: online ? [] : offlineRoads.lines' in main
+    assert 'installedRoadFiles(in bounds:' in hosting
+    assert 'Data(contentsOf: file)' in road
+    assert 'Task.detached(priority: .utility)' in road
+    assert 'onViewportChanged:' in main

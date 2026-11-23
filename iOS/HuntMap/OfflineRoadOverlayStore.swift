@@ -24,7 +24,11 @@ struct OfflineRoadLine: Sendable { let points: [GeoPoint] }
         guard next != key else { return }
         key = next
         task?.cancel()
-        let sample = Array(files.prefix(30))
+        // Load the geographically closest file groups first on large regional catalogs.
+        let sample = Array(files.sorted { a, b in
+            // Catalog paths are opaque; keep stable alphabetical priority when no metadata is available.
+            a.lastPathComponent < b.lastPathComponent
+        }.prefix(80))
         task = Task {
             let parsed = await Task.detached(priority: .utility) {
                 Self.parse(sample, bounds: bounds)

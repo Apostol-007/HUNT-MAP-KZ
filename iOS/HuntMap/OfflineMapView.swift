@@ -19,6 +19,7 @@ struct OfflineMapView: UIViewRepresentable {
     let tileRevision: Int
     var offlineRoadLines: [OfflineRoadLine] = []
     var offlineRoadRevision = 0
+    var routingGeneration = 0
     let online: Bool
     @Binding var selectedZone: GeoZone?
     let weatherGrid: ForecastGrid?
@@ -48,6 +49,8 @@ struct OfflineMapView: UIViewRepresentable {
         context.coordinator.selectedGridCells = selectedGridCells
         context.coordinator.onGridTap = onGridTap
         context.coordinator.onViewportChanged = onViewportChanged
+        context.coordinator.isOffline = !online
+        context.coordinator.routingGeneration = routingGeneration
         let longPress = UILongPressGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleLongPress(_:)))
         longPress.minimumPressDuration = 0.55
         longPress.cancelsTouchesInView = false
@@ -91,6 +94,15 @@ struct OfflineMapView: UIViewRepresentable {
         context.coordinator.selectedGridCells = selectedGridCells
         context.coordinator.onGridTap = onGridTap
         context.coordinator.onViewportChanged = onViewportChanged
+        let needsRoadRefresh = context.coordinator.isOffline != !online ||
+                               context.coordinator.routingGeneration != routingGeneration
+        context.coordinator.isOffline = !online
+        context.coordinator.routingGeneration = routingGeneration
+        if needsRoadRefresh {
+            DispatchQueue.main.async { [weak coordinator = context.coordinator, weak view] in
+                if let coordinator, let view { coordinator.reportViewport(in: view) }
+            }
+        }
         if changedGrid { context.coordinator.renderGrid(in: view) }
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
         // Diagnostic-only window geometry check. Read after UIKit finishes layout.
@@ -127,6 +139,8 @@ struct OfflineMapView: UIViewRepresentable {
         var selectedGridCells: Set<String> = []
         var onGridTap: (String) -> Void = { _ in }
         var onViewportChanged: ([Double]) -> Void = { _ in }
+        var isOffline = false
+        var routingGeneration = 0
         private var gridAnnotations: [MLNShape] = []
         private var markerAnnotations: [ObjectIdentifier: UUID] = [:]
         private var markerAppearance: [ObjectIdentifier: Marker] = [:]

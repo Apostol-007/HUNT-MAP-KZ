@@ -346,6 +346,7 @@ struct MainView: View {
                            tileFiles: maps.paths, tileRevision: maps.revision,
                            offlineRoadLines: online ? [] : offlineRoads.lines,
                            offlineRoadRevision: offlineRoads.revision,
+                           routingGeneration: hosting.installedRoutes.hashValue,
                            online: online, selectedZone: $zone,
                            weatherGrid: weatherLayer == .none ? nil : weatherGrid.grid,
                            weatherLayer: weatherLayer,
@@ -445,6 +446,9 @@ struct MainView: View {
                             : "MBTiles: \(maps.installed.count) · дороги: \(hosting.installedRoutes.count)")
                         Spacer()
                     }
+                    Text(offlineRoads.status)
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.8))
                     .font(.caption2.bold())
                     .foregroundStyle(maps.installed.isEmpty ? Color.orange : HuntReference.green)
                     .padding(9)
