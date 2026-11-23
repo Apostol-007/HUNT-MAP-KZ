@@ -151,6 +151,12 @@ struct MainView: View {
                 planRoute(to: destination, title: routeTitle, markerID: navigationTargetID)
             }
             if let position = newPoint, routeGuidance, let destination = routeDestination {
+                if GeoMath.meters(position, destination) <= max(20, model.accuracy ?? 20) {
+                    navigationKind = "Вы достигли точки назначения"
+                    routeGuidance = false
+                    model.stopRecordedRouteGuidance()
+                    return
+                }
                 refreshNextTurn(at: position)
                 if navigationPath.count >= 2, Date().timeIntervalSince(rerouteTime) > 45 {
                     let distance = navigationPath.map { GeoMath.meters(position, $0) }.min() ?? 0
@@ -222,6 +228,8 @@ struct MainView: View {
         }
         .confirmationDialog("Точка на карте", isPresented: $showMapPointActions, titleVisibility: .visible) {
             Button("Построить маршрут") {
+                if routeGuidance { model.stopRecordedRouteGuidance() }
+                routeGuidance = false
                 if let point = pendingMapPoint { planRoute(to: point, title: "Точка на карте") }
                 pendingMapPoint = nil
                 pendingMapZone = nil
@@ -665,10 +673,13 @@ struct MainView: View {
 
     private func startNavigation(to id: UUID) {
         guard let marker = model.markers.first(where: { $0.id == id }) else { return }
+        if routeGuidance { model.stopRecordedRouteGuidance() }
+        routeGuidance = false
         planRoute(to: marker.coordinate, title: marker.title, markerID: id)
     }
     private func planRoute(to destination: GeoPoint, title: String, markerID: UUID? = nil) {
-        stopRecordedTrack()
+        if recordedRoute != nil { stopRecordedTrack() }
+        if !routeGuidance { navigationPath = [] }
         routeDestination = destination
         routeTitle = title
         navigationTargetID = markerID
@@ -758,6 +769,7 @@ struct MainView: View {
         routeRequestID = nil
         navigationTargetID = nil
         routeDestination = nil
+        if routeGuidance { model.stopRecordedRouteGuidance() }
         routeGuidance = false
         if recordedRoute == nil { navigationPath = [] }
         navigationKind = ""
@@ -946,7 +958,7 @@ struct MainView: View {
                     Button {
                         routeGuidance = true
                         rerouteTime = Date()
-                        model.requestGPS()
+                        model.startRecordedRouteGuidance()
                         if let position = model.coordinate { refreshNextTurn(at: position) }
                     } label: {
                         Label("В путь", systemImage: "location.north.line.fill")
