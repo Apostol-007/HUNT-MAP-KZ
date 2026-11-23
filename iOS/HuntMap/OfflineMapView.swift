@@ -5,7 +5,7 @@ import HuntCore
 /// MapLibre receives only a locally generated, source-free style and file-backed MBTiles.
 /// No HTTP style, glyph, sprite or tile endpoint is configured by this view.
 struct OfflineMapView: UIViewRepresentable {
-    @AppStorage("hunt.map.style") private var mapStyle = MapBasemap.outdoors.rawValue
+    @AppStorage("hunt.map.style") private var mapStyle = MapBasemap.protomaps.rawValue
     private var selectedStyle: URL {
         (MapBasemap(rawValue: mapStyle) ?? .outdoors).styleURL(apiKey: MapTilerConfiguration.apiKey) ?? MapBasemap.outdoors.styleURL(apiKey: "")!
     }
@@ -21,6 +21,8 @@ struct OfflineMapView: UIViewRepresentable {
     var offlineRoadRevision = 0
     var routingGeneration = 0
     var nativeOfflineStyleURL: URL? = nil
+    var protomapsOnlineStyleURL: URL? = nil
+    var protomapsOfflineStyleURL: URL? = nil
     let online: Bool
     @Binding var selectedZone: GeoZone?
     let weatherGrid: ForecastGrid?
@@ -39,7 +41,8 @@ struct OfflineMapView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(selectedZone: $selectedZone) }
 
     func makeUIView(context: Context) -> MLNMapView {
-        let styleURL = online ? selectedStyle : (nativeOfflineStyleURL ?? OfflineMapStyle.url)
+        let styleURL = online ? (mapStyle == MapBasemap.protomaps.rawValue ? (protomapsOnlineStyleURL ?? selectedStyle) : selectedStyle)
+                              : (protomapsOfflineStyleURL ?? nativeOfflineStyleURL ?? OfflineMapStyle.url)
         let view = MLNMapView(frame: .zero, styleURL: styleURL)
         view.delegate = context.coordinator
         context.coordinator.zones = zones
@@ -80,7 +83,8 @@ struct OfflineMapView: UIViewRepresentable {
 
     func updateUIView(_ view: MLNMapView, context: Context) {
         let requestedOnline = online
-        let targetStyle = requestedOnline ? selectedStyle : (nativeOfflineStyleURL ?? OfflineMapStyle.url)
+        let targetStyle = requestedOnline ? (mapStyle == MapBasemap.protomaps.rawValue ? (protomapsOnlineStyleURL ?? selectedStyle) : selectedStyle)
+                                          : (protomapsOfflineStyleURL ?? nativeOfflineStyleURL ?? OfflineMapStyle.url)
         if view.styleURL != targetStyle {
             view.styleURL = targetStyle
         }

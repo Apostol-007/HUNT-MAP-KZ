@@ -53,3 +53,15 @@ def test_downloaded_roads_are_visible_offline_and_local_tiles_allowed():
     assert 'Data(contentsOf: file)' in road
     assert 'Task.detached(priority: .utility)' in road
     assert 'onViewportChanged:' in main
+
+
+def test_protomaps_native_pmtiles_integration():
+    code = (IOS / 'ProtomapsOfflineStore.swift').read_text()
+    style = (IOS / 'ProtomapsVectorStyle.swift').read_text()
+    view = (IOS / 'OfflineMapView.swift').read_text()
+    ui = (IOS / 'MainView.swift').read_text()
+    assert 'pmtiles://' in style and 'absoluteString' in style
+    assert 'roads' in style and 'path' in style and 'water' in style
+    assert 'PMTiles' in code and 'SHA256' in code
+    assert 'protomapsOfflineStyleURL' in view
+    assert 'ProtomapsOfflineStore()' in ui

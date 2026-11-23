@@ -10,6 +10,7 @@ struct MainView: View {
     @StateObject private var hosting = HostingOfflineDownloads()
     @StateObject private var offlineRoads = OfflineRoadOverlayStore()
     @StateObject private var nativePacks = NativeOfflinePackStore()
+    @StateObject private var protomaps = ProtomapsOfflineStore()
     @State private var showHostingDownloads = false
     @State private var gridMode = false
     @State private var gridStep = 0.1
@@ -20,7 +21,7 @@ struct MainView: View {
     @StateObject private var weatherGrid = WeatherGridService()
 
     @AppStorage("hunt.onlineBasemap") private var online = true
-    @AppStorage("hunt.map.style") private var mapStyle = MapBasemap.outdoors.rawValue
+    @AppStorage("hunt.map.style") private var mapStyle = MapBasemap.protomaps.rawValue
     private var hasMapTilerKey: Bool { MapTilerConfiguration.isConfigured }
 
     @State private var tab: Tab = .home
@@ -97,7 +98,7 @@ struct MainView: View {
         .preferredColorScheme(.dark)
         .background(ShakeDetector().frame(width: 1, height: 1))
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
-        .onAppear { loadRoutingNetwork() }
+        .onAppear { loadRoutingNetwork(); Task { await protomaps.refresh() } }
         .onChange(of: online) { _, enabled in if enabled { offlineRoads.clear() } }
         .onChange(of: model.coordinate) { _, newPoint in
             if newPoint != nil, navigationKind == "Ожидание GPS", let id = navigationTargetID {
@@ -124,7 +125,7 @@ struct MainView: View {
         } message: { Text(routingError ?? "") }
         .sheet(isPresented: $showLayers) { layerSheet }
         .sheet(isPresented: $showGridDownloads) {
-            OfflineGridDownloadSheet(hosting: hosting, tiles: maps, nativePacks: nativePacks,
+            OfflineGridDownloadSheet(hosting: hosting, tiles: maps, nativePacks: nativePacks, protomaps: protomaps,
                                      selected: $selectedGridCells, step: gridStep)
         }
         .sheet(isPresented: $showSearch) { mapSearchSheet }
@@ -349,6 +350,8 @@ struct MainView: View {
                            offlineRoadRevision: offlineRoads.revision,
                            routingGeneration: hosting.installedRoutes.hashValue,
                            nativeOfflineStyleURL: nativePacks.styleURL,
+                           protomapsOnlineStyleURL: protomaps.onlineStyleURL,
+                           protomapsOfflineStyleURL: protomaps.offlineStyleURL,
                            online: online, selectedZone: $zone,
                            weatherGrid: weatherLayer == .none ? nil : weatherGrid.grid,
                            weatherLayer: weatherLayer,

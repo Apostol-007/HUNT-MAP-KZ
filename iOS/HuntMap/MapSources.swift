@@ -4,6 +4,7 @@ import Foundation
 /// Public OpenFreeMap styles are online-only and must not be bulk-downloaded.
 /// MapTiler styles require a configured, restricted client-side API key.
 enum MapBasemap: String, CaseIterable, Identifiable {
+    case protomaps = "protomaps"
     case bright = "bright"
     case outdoors = "outdoors"
     case light = "light"
@@ -18,6 +19,7 @@ enum MapBasemap: String, CaseIterable, Identifiable {
 
     var name: String {
         switch self {
+        case .protomaps: return "Protomaps · Казахстан"
         case .bright: return "Подробная"
         case .outdoors: return "Туристическая"
         case .light: return "Светлая"
@@ -32,6 +34,7 @@ enum MapBasemap: String, CaseIterable, Identifiable {
 
     var detail: String {
         switch self {
+        case .protomaps: return "Собственные векторные PMTiles с дорогами и тропами"
         case .bright: return "Дороги и населённые пункты"
         case .outdoors: return "Тропы и ориентиры OSM"
         case .light: return "Минимальная подложка"
@@ -46,6 +49,7 @@ enum MapBasemap: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
+        case .protomaps: return "map.circle.fill"
         case .bright: return "map.fill"
         case .outdoors: return "figure.hiking"
         case .light: return "sun.max.fill"
@@ -86,6 +90,7 @@ enum MapBasemap: String, CaseIterable, Identifiable {
         }
         let style: String
         switch self {
+        case .protomaps: return nil
         case .bright: style = "bright"
         case .outdoors: style = "liberty"
         case .light: style = "positron"

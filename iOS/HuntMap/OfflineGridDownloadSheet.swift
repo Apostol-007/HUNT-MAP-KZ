@@ -5,6 +5,7 @@ struct OfflineGridDownloadSheet: View {
     @ObservedObject var hosting: HostingOfflineDownloads
     @ObservedObject var tiles: OfflineTileStore
     @ObservedObject var nativePacks: NativeOfflinePackStore
+    @ObservedObject var protomaps: ProtomapsOfflineStore
     @Binding var selected: Set<String>
     let step: Double
     @Environment(\.dismiss) private var dismiss
@@ -18,7 +19,34 @@ struct OfflineGridDownloadSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Полноценная карта") {
+                Section("Protomaps · полноценные карты Казахстана") {
+                    Text("PMTiles содержат настоящие векторные тайлы: дороги, тропы, реки, леса, строения. После загрузки архив доступен MapLibre напрямую с диска.")
+                    Text("Каталог: \(protomaps.available.count) районов · установлено: \(protomaps.installed.count)")
+                    Text(protomaps.status).font(.caption)
+                    if protomaps.busy {
+                        ProgressView(value: protomaps.progress)
+                    }
+                    Button("Обновить список карт") { Task { await protomaps.refresh() } }
+                        .disabled(protomaps.busy)
+                    Button("Скачать Protomaps по выделенной сетке") {
+                        let selectedCells = cells
+                        Task { await protomaps.download(cells: selectedCells) }
+                    }
+                    .disabled(protomaps.busy || cells.isEmpty || protomaps.available.isEmpty)
+                    ForEach(protomaps.installed) { item in
+                        HStack {
+                            Text(item.name).font(.caption)
+                            Spacer()
+                            Button(role: .destructive) { protomaps.delete(item) } label: {
+                                Image(systemName: "trash")
+                            }
+                            .disabled(protomaps.busy)
+                        }
+                    }
+                    Text("Подписи и значки требуют локальных fontstack/sprite-ресурсов; геометрия дорог и троп работает офлайн.")
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                Section("Другие источники (совместимость)") {
                     Text("Выбрано клеток: \(cells.count) · размер \(String(format: "%.2f°", step))")
                     Stepper("От масштаба z\(minZoom)", value: $minZoom, in: 5...maxZoom)
                     Stepper("До масштаба z\(maxZoom)", value: $maxZoom, in: minZoom...16)
@@ -57,6 +85,7 @@ struct OfflineGridDownloadSheet: View {
             }
             .navigationTitle("Скачать карту по сетке")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Готово") { dismiss() } } }
+            .task { if protomaps.available.isEmpty { await protomaps.refresh() } }
         }
     }
 }
