@@ -5,7 +5,9 @@ final class OfflineRoutingMultiPackTests: XCTestCase {
     private func json(_ points: [[Double]]) throws -> Data {
         try JSONSerialization.data(withJSONObject: [
             "type": "FeatureCollection",
-            "features": [["type": "Feature", "geometry": ["type": "LineString", "coordinates": points], "properties": [:]]]
+            "features": [["type": "Feature",
+                          "geometry": ["type": "LineString", "coordinates": points],
+                          "properties": ["highway": "track"]]]
         ])
     }
 
@@ -14,7 +16,7 @@ final class OfflineRoutingMultiPackTests: XCTestCase {
         let b = try json([[76.901, 43.20], [76.902, 43.20]])
         let graph = try OfflineRouteGraph(geoJSONParts: [a, b])
         let path = try graph.path(from: GeoPoint(43.20, 76.90), to: GeoPoint(43.20, 76.902))
-        XCTAssertGreaterThanOrEqual(path.count, 5)
+        XCTAssertEqual(path.count, 3)
     }
 
     func testDisconnectedPacksNotInventedAsConnected() throws {

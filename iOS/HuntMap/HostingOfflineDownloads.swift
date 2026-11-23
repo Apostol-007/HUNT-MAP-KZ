@@ -213,7 +213,7 @@ struct HostingZonePack: Decodable, Identifiable {
             let target = folder.appendingPathComponent(pack.id + ".geojson")
             try await transfer(try remote("routing/" + pack.path), bytes: pack.bytes, hash: pack.sha256, destination: target)
             // Verify that the file can actually be used by the current Swift routing engine.
-            _ = try OfflineRouteGraph(geoJSON: Data(contentsOf: target))
+            _ = try OfflineRouteGraph(geoJSON: Data(contentsOf: target), mode: .foot)
             installedRoutes.insert(pack.id)
             try persist(); progress = 1
             status = "Дорожная сеть установлена: \(pack.name)"
@@ -379,7 +379,7 @@ struct HostingZonePack: Decodable, Identifiable {
     }
     /// Merge only installed packages intersecting the start-to-destination corridor.
     /// A strict 200k-vertex limit prevents loading an entire nationwide graph into memory.
-    func graph(start: GeoPoint, destination: GeoPoint) throws -> OfflineRouteGraph {
+    func graph(start: GeoPoint, destination: GeoPoint, mode: OfflineRouteGraph.TravelMode = .foot) throws -> OfflineRouteGraph {
         let margin = 0.03
         let west = min(start.longitude, destination.longitude) - margin
         let east = max(start.longitude, destination.longitude) + margin
@@ -394,7 +394,7 @@ struct HostingZonePack: Decodable, Identifiable {
         let parts = try matching.map { pack in
             try Data(contentsOf: folder.appendingPathComponent(pack.id + ".geojson"))
         }
-        return try OfflineRouteGraph(geoJSONParts: parts)
+        return try OfflineRouteGraph(geoJSONParts: parts, mode: mode)
     }
 }
 

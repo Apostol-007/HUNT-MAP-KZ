@@ -57,6 +57,7 @@ struct MainView: View {
     @State private var navigationTargetID: UUID?
     @State private var navigationPath: [GeoPoint] = []
     @State private var navigationKind = ""
+    @State private var travelMode: OfflineRouteGraph.TravelMode = .foot
     @State private var routingError: String?
     @State private var importingRoutingNetwork = false
     @State private var routeGraph: OfflineRouteGraph?
@@ -106,7 +107,7 @@ struct MainView: View {
                 let secured = file.startAccessingSecurityScopedResource()
                 defer { if secured { file.stopAccessingSecurityScopedResource() } }
                 let bytes = try Data(contentsOf: file)
-                let graph = try OfflineRouteGraph(geoJSON: bytes)
+                let graph = try OfflineRouteGraph(geoJSON: bytes, mode: travelMode)
                 let location = routingNetworkURL
                 try FileManager.default.createDirectory(at: location.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try bytes.write(to: location, options: .atomic)
@@ -540,7 +541,7 @@ struct MainView: View {
 
     private func loadRoutingNetwork() {
         guard let bytes = try? Data(contentsOf: routingNetworkURL),
-              let graph = try? OfflineRouteGraph(geoJSON: bytes) else { return }
+              let graph = try? OfflineRouteGraph(geoJSON: bytes, mode: travelMode) else { return }
         routeGraph = graph
         routeGraphCount = graph.count
     }
@@ -559,28 +560,23 @@ struct MainView: View {
         }
         do {
             let graph: OfflineRouteGraph
-            if let imported = routeGraph { graph = imported }
-            else { graph = try hosting.graph(start: current, destination: marker.coordinate) }
-            navigationPath = try graph.path(from: current, to: marker.coordinate)
-            navigationKind = "По локальной сети дорог и троп"
+            if let bytes = try? Data(contentsOf: routingNetworkURL) {
+                graph = try OfflineRouteGraph(geoJSON: bytes, mode: travelMode)
+            } else {
+                graph = try hosting.graph(start: current, destination: marker.coordinate, mode: travelMode)
+            }
+            let actualRoad = try graph.path(from: current, to: marker.coordinate)
+            guard actualRoad.count >= 2 else { throw OfflineRouteGraph.RouteError.disconnected }
+            navigationPath = actualRoad
+            navigationKind = travelMode == .foot ? "Пешком · по разрешённым тропам" : "Автомобиль · по разрешённым дорогам"
+            routingError = nil
         } catch {
-            // When a road network cannot be used, clearly label the straight-line fallback.
-            navigateByBearing()
-            model.status = "Маршрут по дорогам недоступен: " + error.localizedDescription
-        }
-    }
-
-    private func navigateByBearing() {
-        guard let id = navigationTargetID,
-              let destination = model.markers.first(where: { $0.id == id }),
-              let origin = model.coordinate else {
+            // Never draw an invented straight line when a road route cannot be found.
             navigationPath = []
-            navigationKind = "Ожидание GPS"
-            model.requestGPS()
-            return
+            navigationKind = "Маршрут недоступен"
+            routingError = error.localizedDescription
+            model.status = "Маршрут не построен: " + error.localizedDescription
         }
-        navigationPath = [origin, destination.coordinate]
-        navigationKind = "Азимут · прямая, НЕ дорога"
     }
 
     private func stopNavigation() {
@@ -608,7 +604,7 @@ struct MainView: View {
                         Image(systemName: "xmark.circle.fill").font(.title3)
                     }.accessibilityLabel("Завершить навигацию")
                 }
-                Text(navigationKind).font(.caption2).foregroundStyle(navigationKind.contains("НЕ дорога") ? Color.orange : Color.gray)
+                Text(navigationKind).font(.caption2).foregroundStyle(navigationPath.isEmpty ? Color.orange : Color.gray)
                 if let current = model.coordinate {
                     let distance = GeoMath.meters(current, marker.coordinate)
                     Text(String(format: "До цели: %.0f м · Азимут: %d°", distance, bearing(to: marker.coordinate, from: current)))
@@ -618,10 +614,12 @@ struct MainView: View {
                     }
                 } else { Text("Ожидание координат GPS").font(.caption) }
                 HStack(spacing: 8) {
-                    Button("Азимут") { navigateByBearing() }
-                        .accessibilityIdentifier("route_bearing")
-                    Button("По тропам") { startNavigation(to: id) }
-                        .accessibilityIdentifier("route_graph")
+                    Button("Пешком") { travelMode = .foot; startNavigation(to: id) }
+                        .tint(travelMode == .foot ? .green : .gray)
+                        .accessibilityIdentifier("route_walk")
+                    Button("Автомобиль") { travelMode = .car; startNavigation(to: id) }
+                        .tint(travelMode == .car ? .green : .gray)
+                        .accessibilityIdentifier("route_drive")
                     Button("Скачать сеть") { showHostingDownloads = true }
                         .accessibilityIdentifier("route_import")
                 }
