@@ -380,6 +380,17 @@ struct HostingZonePack: Decodable, Identifiable {
         try? persist()
         status = "Дорожная сеть удалена"
     }
+    /// Return only downloaded GeoJSON files covering the visible map area.
+    func installedRoadFiles(in bounds: [Double]) -> [URL] {
+        guard bounds.count == 4 else { return [] }
+        return routes.filter { pack in
+            guard installedRoutes.contains(pack.id), pack.bounds.count == 4 else { return false }
+            return pack.bounds[0] <= bounds[2] && pack.bounds[2] >= bounds[0] &&
+                   pack.bounds[1] <= bounds[3] && pack.bounds[3] >= bounds[1]
+        }.map { folder.appendingPathComponent($0.id + ".geojson") }
+         .filter { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
     /// Merge only installed packages intersecting the start-to-destination corridor.
     /// A strict 200k-vertex limit prevents loading an entire nationwide graph into memory.
     func graph(start: GeoPoint, destination: GeoPoint, mode: OfflineRouteGraph.TravelMode = .foot) throws -> OfflineRouteGraph {

@@ -8,6 +8,7 @@ struct MainView: View {
     @EnvironmentObject private var model: FieldModel
     @StateObject private var maps = OfflineTileStore()
     @StateObject private var hosting = HostingOfflineDownloads()
+    @StateObject private var offlineRoads = OfflineRoadOverlayStore()
     @State private var showHostingDownloads = false
     @State private var gridMode = false
     @State private var gridStep = 0.1
@@ -96,6 +97,7 @@ struct MainView: View {
         .background(ShakeDetector().frame(width: 1, height: 1))
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
         .onAppear { loadRoutingNetwork() }
+        .onChange(of: online) { _, enabled in if enabled { offlineRoads.clear() } }
         .onChange(of: model.coordinate) { _, newPoint in
             if newPoint != nil, navigationKind == "Ожидание GPS", let id = navigationTargetID {
                 startNavigation(to: id)
@@ -342,6 +344,8 @@ struct MainView: View {
                            track: showTrackOnMap ? model.currentTrack : nil,
                            navigationPath: navigationPath,
                            tileFiles: maps.paths, tileRevision: maps.revision,
+                           offlineRoadLines: online ? [] : offlineRoads.lines,
+                           offlineRoadRevision: offlineRoads.revision,
                            online: online, selectedZone: $zone,
                            weatherGrid: weatherLayer == .none ? nil : weatherGrid.grid,
                            weatherLayer: weatherLayer,
@@ -373,6 +377,11 @@ struct MainView: View {
                            onGridTap: { id in
                                if selectedGridCells.contains(id) { selectedGridCells.remove(id) }
                                else if selectedGridCells.count < 100 { selectedGridCells.insert(id) }
+                           },
+                           onViewportChanged: { bounds in
+                               if !online {
+                                   offlineRoads.load(bounds: bounds, files: hosting.installedRoadFiles(in: bounds))
+                               }
                            })
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .ignoresSafeArea(.container, edges: .all)
@@ -428,6 +437,21 @@ struct MainView: View {
                 .padding(.top, 16)
                 .padding(.horizontal, 13)
                 Spacer(minLength: 0)
+                if !online {
+                    HStack(spacing: 7) {
+                        Image(systemName: maps.installed.isEmpty ? "point.topleft.down.curvedto.point.bottomright.up" : "checkmark.circle.fill")
+                        Text(maps.installed.isEmpty
+                            ? "MBTiles нет · дорожных пакетов: \(hosting.installedRoutes.count)"
+                            : "MBTiles: \(maps.installed.count) · дороги: \(hosting.installedRoutes.count)")
+                        Spacer()
+                    }
+                    .font(.caption2.bold())
+                    .foregroundStyle(maps.installed.isEmpty ? Color.orange : HuntReference.green)
+                    .padding(9)
+                    .background(HuntReference.card.opacity(0.96), in: RoundedRectangle(cornerRadius: 10))
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 6)
+                }
                 if gridMode {
                     gridSelectionBar
                         .padding(.horizontal, 12)
@@ -718,7 +742,7 @@ struct MainView: View {
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("Офлайн · мои карты").font(.subheadline.bold())
                                 Text(maps.installed.isEmpty
-                                     ? "Загрузите MBTiles в разделе офлайн-карт"
+                                     ? "MBTiles не установлены. Дорог: \(hosting.installedRoutes.count)"
                                      : "Установлено пакетов: \(maps.installed.count)")
                                     .font(.caption2).foregroundStyle(HuntReference.muted)
                             }
@@ -760,7 +784,7 @@ struct MainView: View {
                         .opacity(available ? 1 : 0.55)
                     }
 
-                    Text("Онлайн-стили требуют связи. MapLibre не содержит собственных спутниковых снимков. Офлайн-режим использует только установленные MBTiles.")
+                    Text("MBTiles отображаются как подложка, а сохранённые дорожные GeoJSON как линии поверх неё. Без MBTiles офлайн-дороги видны на тёмном фоне, но изображения местности нет.")
                         .font(.caption2).foregroundStyle(HuntReference.muted)
 
                     Text("Дополнительные слои").font(.headline).foregroundStyle(.white)
