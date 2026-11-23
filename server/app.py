@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import math
+import sqlite3
 from pathlib import Path
 from typing import Literal
 from fastapi import FastAPI, HTTPException, Header, Query, Request
@@ -82,6 +84,67 @@ def ground_geojson(ground_id: str, if_none_match: str | None = Header(default=No
 def manifest(scope: Literal['region','ground','country'], id: str = Query(...), layers: str = ''):
     wanted=set(filter(None, layers.split(',')))
     return [p for p in catalog() if p.scope == scope and p.scope_id == id and (not wanted or wanted.issubset(p.layers))]
+
+def _mbtiles_bounds(path: Path) -> tuple[float, float, float, float] | None:
+    """Read bounds in WGS84 degrees from a local, published MBTiles archive.
+
+    Returns None for malformed, empty, or non-MBTiles files. Opening via the
+    SQLite immutable read-only URI prevents accidental writes to package data.
+    """
+    import urllib.parse
+    try:
+        if not path.is_file() or path.stat().st_size < 100:
+            return None
+        uri = "file:" + urllib.parse.quote(str(path)) + "?mode=ro&immutable=1"
+        with sqlite3.connect(uri, uri=True, timeout=1.0) as db:
+            db.execute("PRAGMA query_only=ON")
+            row = db.execute(
+                "SELECT value FROM metadata WHERE name = 'bounds' LIMIT 1"
+            ).fetchone()
+        if row is None or not isinstance(row[0], str):
+            return None
+        values = [float(part.strip()) for part in row[0].split(',')]
+        if len(values) != 4 or not all(math.isfinite(v) for v in values):
+            return None
+        west, south, east, north = values
+        if not (-180 <= west <= 180 and -180 <= east <= 180 and
+                -90 <= south <= 90 and -90 <= north <= 90 and south <= north):
+            return None
+        return west, south, east, north
+    except (OSError, sqlite3.DatabaseError, ValueError, TypeError):
+        return None
+
+
+@app.get('/v1/packs/at-point', response_model=list[ManifestRecord])
+def packs_at_point(lat: float = Query(..., ge=-90, le=90),
+                   lon: float = Query(..., ge=-180, le=180)):
+    """List available raster MBTiles archives containing a WGS84 point.
+
+    Pack metadata (MBTiles bounds) is a bounding rectangle, not a guarantee of
+    actual tile coverage. This endpoint does not infer hunting ground borders.
+    """
+    if not math.isfinite(lat) or not math.isfinite(lon):
+        raise HTTPException(422, 'Invalid coordinates')
+    result: list[ManifestRecord] = []
+    for entry in catalog():
+        if 'raster-mbtiles' not in entry.layers:
+            continue
+        if not entry.pack_id.isascii() or not all(
+            c.isalnum() or c in '-_' for c in entry.pack_id
+        ):
+            continue
+        source = PACKS / f'{entry.pack_id}.bin'
+        if not source.is_file() or source.stat().st_size != entry.size_bytes:
+            continue
+        bounds = _mbtiles_bounds(source)
+        if bounds is None:
+            continue
+        west, south, east, north = bounds
+        longitude_inside = west <= lon <= east if west <= east else (lon >= west or lon <= east)
+        if south <= lat <= north and longitude_inside:
+            result.append(entry)
+    return result
+
 
 @app.api_route('/v1/packs/{pack_id}', methods=['GET', 'HEAD'])
 def pack(request: Request, pack_id: str, range_header: str | None = Header(default=None, alias='Range'), if_range: str | None = Header(default=None, alias='If-Range')):
