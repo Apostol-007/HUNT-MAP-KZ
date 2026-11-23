@@ -17,6 +17,15 @@ enum ValhallaRoutingError: Error, LocalizedError {
     }
 }
 
+struct ValhallaManeuver {
+    let instruction: String
+    let beginIndex: Int
+}
+struct ValhallaRouteResult {
+    let path: [GeoPoint]
+    let maneuvers: [ValhallaManeuver]
+}
+
 /// The Valhalla C++ actor is cached inside a Swift actor, never invoked on the main thread.
 /// Only local Valhalla tile extracts are used; this config has NO remote tiles URL.
 actor ValhallaLocalEngine {
@@ -65,7 +74,7 @@ actor ValhallaLocalEngine {
         }
     }
 
-    func route(from: GeoPoint, to: GeoPoint, mode: OfflineRouteGraph.TravelMode) throws -> [GeoPoint] {
+    func route(from: GeoPoint, to: GeoPoint, mode: OfflineRouteGraph.TravelMode) throws -> ValhallaRouteResult {
         guard hasTiles() else { throw ValhallaRoutingError.missingTiles }
         if router == nil {
             let config = try ValhallaConfig(tileExtractTar: archive)
@@ -78,6 +87,8 @@ actor ValhallaLocalEngine {
             ],
             "costing": mode == .foot ? "pedestrian" : "auto",
             "shape_format": "polyline6",
+            "language": "ru-RU",
+            "directions_type": "instructions",
             "units": "kilometers"
         ]
         let bytes = try JSONSerialization.data(withJSONObject: request)
@@ -90,16 +101,29 @@ actor ValhallaLocalEngine {
             throw ValhallaRoutingError.invalidResponse
         }
         var output: [GeoPoint] = []
+        var maneuvers: [ValhallaManeuver] = []
         for leg in legs {
             guard let encoded = leg["shape"] as? String else {
                 throw ValhallaRoutingError.invalidResponse
             }
             let coordinates = try ValhallaPolyline6.decode(encoded)
-            if output.last == coordinates.first { output.append(contentsOf: coordinates.dropFirst()) }
+            let overlap = output.last == coordinates.first ? 1 : 0
+            let offset = output.count - overlap
+            if overlap == 1 { output.append(contentsOf: coordinates.dropFirst()) }
             else { output.append(contentsOf: coordinates) }
+            if let entries = leg["maneuvers"] as? [[String: Any]] {
+                for entry in entries {
+                    guard let instruction = entry["instruction"] as? String,
+                          let localIndex = entry["begin_shape_index"] as? Int else { continue }
+                    let position = offset + localIndex
+                    if !instruction.isEmpty && (0..<output.count).contains(position) {
+                        maneuvers.append(ValhallaManeuver(instruction: instruction, beginIndex: position))
+                    }
+                }
+            }
         }
         guard output.count >= 2 else { throw ValhallaRoutingError.emptyRoute }
-        return output
+        return ValhallaRouteResult(path: output, maneuvers: maneuvers)
     }
 }
 
@@ -232,7 +256,7 @@ enum ValhallaPolyline6 {
         }
     }
 
-    func route(from: GeoPoint, to: GeoPoint, mode: OfflineRouteGraph.TravelMode) async throws -> [GeoPoint] {
+    func route(from: GeoPoint, to: GeoPoint, mode: OfflineRouteGraph.TravelMode) async throws -> ValhallaRouteResult {
         try await engine.route(from: from, to: to, mode: mode)
     }
 }

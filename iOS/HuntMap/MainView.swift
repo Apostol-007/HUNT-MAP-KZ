@@ -73,6 +73,9 @@ struct MainView: View {
     @State private var recordedRouteRemaining = 0.0
     @State private var recordedRouteDeviation = 0.0
     @State private var travelMode: OfflineRouteGraph.TravelMode = .foot
+    @State private var valhallaManeuvers: [ValhallaManeuver] = []
+    @State private var nextTurnText = ""
+    @State private var nextTurnDistance = 0.0
     @State private var routingError: String?
     @State private var importingRoutingNetwork = false
     @State private var routeGraph: OfflineRouteGraph?
@@ -116,6 +119,9 @@ struct MainView: View {
         .onChange(of: model.coordinate) { _, newPoint in
             if newPoint != nil, navigationKind == "Ожидание GPS", let id = navigationTargetID {
                 startNavigation(to: id)
+            }
+            if let position = newPoint, navigationTargetID != nil, !valhallaManeuvers.isEmpty {
+                refreshNextTurn(at: position)
             }
             if let position = newPoint, let route = recordedRoute, recordedRouteFollowing {
                 let p = route.progress(from: position, after: recordedRouteProgress)
@@ -623,6 +629,8 @@ struct MainView: View {
         guard let marker = model.markers.first(where: { $0.id == id }) else { return }
         stopRecordedTrack()
         navigationTargetID = id
+        valhallaManeuvers = []
+        nextTurnText = ""
         tab = .map
         mapFocus = marker.coordinate
         centerRequest += 1
@@ -642,7 +650,9 @@ struct MainView: View {
                 do {
                     let result = try await valhalla.route(from: current, to: marker.coordinate, mode: chosenMode)
                     guard routeRequestID == requestID, navigationTargetID == id else { return }
-                    navigationPath = result
+                    navigationPath = result.path
+                    valhallaManeuvers = result.maneuvers
+                    refreshNextTurn(at: current)
                     navigationKind = chosenMode == .foot ? "Valhalla · пешком" : "Valhalla · автомобиль"
                     routingError = nil
                 } catch {
@@ -658,6 +668,8 @@ struct MainView: View {
 
     private func calculateLegacyRoute(from current: GeoPoint, to destination: GeoPoint,
                                       mode: OfflineRouteGraph.TravelMode, valhallaError: String? = nil) {
+        valhallaManeuvers = []
+        nextTurnText = ""
         do {
             let graph: OfflineRouteGraph
             if let downloaded = try? hosting.graph(start: current, destination: destination, mode: mode) {
@@ -679,7 +691,29 @@ struct MainView: View {
         }
     }
 
+    private func refreshNextTurn(at location: GeoPoint) {
+        guard navigationPath.count >= 2, !valhallaManeuvers.isEmpty else { return }
+        // Progress is projected onto the received road geometry, not a straight-line route.
+        var closestIndex = 0
+        var closestMeters = Double.infinity
+        for (index, point) in navigationPath.enumerated() {
+            let d = GeoMath.meters(location, point)
+            if d < closestMeters { closestMeters = d; closestIndex = index }
+        }
+        let upcoming = valhallaManeuvers.first(where: { $0.beginIndex > closestIndex }) ??
+            valhallaManeuvers.last!
+        nextTurnText = upcoming.instruction
+        nextTurnDistance = 0
+        if closestIndex < upcoming.beginIndex {
+            for index in (closestIndex + 1)...upcoming.beginIndex {
+                nextTurnDistance += GeoMath.meters(navigationPath[index - 1], navigationPath[index])
+            }
+        }
+    }
+
     private func stopNavigation() {
+        valhallaManeuvers = []
+        nextTurnText = ""
         routeRequestID = nil
         navigationTargetID = nil
         if recordedRoute == nil { navigationPath = [] }
@@ -820,6 +854,11 @@ struct MainView: View {
                     }.accessibilityLabel("Завершить навигацию")
                 }
                 Text(navigationKind).font(.caption2).foregroundStyle(navigationPath.isEmpty ? Color.orange : Color.gray)
+                if !nextTurnText.isEmpty {
+                    Text(nextTurnText).font(.subheadline.bold()).foregroundStyle(HuntReference.green)
+                    Text(String(format: "Следующий манёвр примерно через %.0f м по дороге", nextTurnDistance))
+                        .font(.caption.monospacedDigit())
+                }
                 if let current = model.coordinate {
                     let distance = GeoMath.meters(current, marker.coordinate)
                     Text(String(format: "До цели: %.0f м · Азимут: %d°", distance, bearing(to: marker.coordinate, from: current)))

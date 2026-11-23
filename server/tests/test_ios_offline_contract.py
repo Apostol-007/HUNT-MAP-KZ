@@ -159,3 +159,14 @@ def test_recorded_route_guidance_handles_foreground_and_background_gps():
     assert "manager.authorizationStatus == .authorizedAlways" in model
     assert "model.startRecordedRouteGuidance()" in ui
     assert "model.stopRecordedRouteGuidance()" in ui
+
+
+def test_valhalla_turn_by_turn_russian_directions():
+    engine = (IOS / "ValhallaLocalEngine.swift").read_text()
+    main = (IOS / "MainView.swift").read_text()
+    assert '"language": "ru-RU"' in engine
+    assert '"directions_type": "instructions"' in engine
+    assert 'begin_shape_index' in engine
+    assert 'ValhallaManeuver' in engine
+    assert 'refreshNextTurn(at:' in main
+    assert 'Следующий манёвр' in main
