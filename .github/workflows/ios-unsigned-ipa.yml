@@ -55,6 +55,9 @@ jobs:
             -scheme HuntMapKZ
       - name: Build for physical iPhone without signing
         working-directory: iOS
+        env:
+          HUNT_OFFLINE_STYLE_URL: ${{ vars.HUNT_OFFLINE_STYLE_URL }}
+          MAPTILER_API_KEY: ${{ secrets.MAPTILER_API_KEY }}
         run: |
           set -o pipefail
           xcodebuild \
@@ -67,6 +70,8 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY='' \
+            HUNT_OFFLINE_STYLE_URL="$HUNT_OFFLINE_STYLE_URL" \
+            MAPTILER_API_KEY="$MAPTILER_API_KEY" \
             build 2>&1 | tee "$RUNNER_TEMP/ios-build.log"
       - name: Package and inspect IPA
         run: |
