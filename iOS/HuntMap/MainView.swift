@@ -560,7 +560,10 @@ struct MainView: View {
         }
         do {
             let graph: OfflineRouteGraph
-            if let bytes = try? Data(contentsOf: routingNetworkURL) {
+            // Prefer published, installed road networks over old manually imported files.
+            if let published = try? hosting.graph(start: current, destination: marker.coordinate, mode: travelMode) {
+                graph = published
+            } else if let bytes = try? Data(contentsOf: routingNetworkURL) {
                 graph = try OfflineRouteGraph(geoJSON: bytes, mode: travelMode)
             } else {
                 graph = try hosting.graph(start: current, destination: marker.coordinate, mode: travelMode)

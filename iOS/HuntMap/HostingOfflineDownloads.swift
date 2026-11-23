@@ -212,8 +212,11 @@ struct HostingZonePack: Decodable, Identifiable {
             try checkCapacity(pack.bytes)
             let target = folder.appendingPathComponent(pack.id + ".geojson")
             try await transfer(try remote("routing/" + pack.path), bytes: pack.bytes, hash: pack.sha256, destination: target)
-            // Verify that the file can actually be used by the current Swift routing engine.
-            _ = try OfflineRouteGraph(geoJSON: Data(contentsOf: target), mode: .foot)
+            // A pack can contain only roads or only footpaths; either travel mode is valid.
+            let contents = try Data(contentsOf: target)
+            let walkable = (try? OfflineRouteGraph(geoJSON: contents, mode: .foot)) != nil
+            let drivable = (try? OfflineRouteGraph(geoJSON: contents, mode: .car)) != nil
+            guard walkable || drivable else { throw OfflineRouteGraph.RouteError.emptyNetwork }
             installedRoutes.insert(pack.id)
             try persist(); progress = 1
             status = "Дорожная сеть установлена: \(pack.name)"
