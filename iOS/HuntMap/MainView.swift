@@ -60,6 +60,15 @@ struct MainView: View {
     @State private var navigationTargetID: UUID?
     @State private var navigationPath: [GeoPoint] = []
     @State private var navigationKind = ""
+    @State private var recordedRoute: RecordedTrackFollow?
+    @State private var selectedRecordedTrackID: UUID?
+    @State private var recordedRoutePreviewIndex = 0
+    @State private var recordedRouteFollowing = false
+    @State private var recordedRoutePlay = false
+    @State private var playbackTask: Task<Void, Never>?
+    @State private var recordedRouteProgress = 0
+    @State private var recordedRouteRemaining = 0.0
+    @State private var recordedRouteDeviation = 0.0
     @State private var travelMode: OfflineRouteGraph.TravelMode = .foot
     @State private var routingError: String?
     @State private var importingRoutingNetwork = false
@@ -99,10 +108,22 @@ struct MainView: View {
         .background(ShakeDetector().frame(width: 1, height: 1))
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
         .onAppear { loadRoutingNetwork(); Task { await protomaps.refresh() } }
+        .onDisappear { playbackTask?.cancel() }
         .onChange(of: online) { _, enabled in if enabled { offlineRoads.clear() } }
         .onChange(of: model.coordinate) { _, newPoint in
             if newPoint != nil, navigationKind == "Ожидание GPS", let id = navigationTargetID {
                 startNavigation(to: id)
+            }
+            if let position = newPoint, let route = recordedRoute, recordedRouteFollowing {
+                let p = route.progress(from: position, after: recordedRouteProgress)
+                recordedRouteProgress = max(recordedRouteProgress, p.index)
+                recordedRouteRemaining = p.remaining
+                recordedRouteDeviation = p.deviation
+                if recordedRouteProgress >= route.points.count - 1 &&
+                   p.deviation < max(25, model.accuracy ?? 25) {
+                    recordedRouteFollowing = false
+                    navigationKind = "Маршрут завершён"
+                }
             }
         }
         .fileImporter(isPresented: $importingRoutingNetwork, allowedContentTypes: [.json], allowsMultipleSelection: false) { result in
@@ -343,8 +364,9 @@ struct MainView: View {
             OfflineMapView(zones: showGrounds ? model.zones : [],
                            position: showGPSOnMap ? model.coordinate : nil,
                            markers: showMarkersOnMap ? model.markers : [],
-                           track: showTrackOnMap ? model.currentTrack : nil,
+                           track: showTrackOnMap ? (model.currentTrack ?? model.tracks.first(where: { $0.id == selectedRecordedTrackID })) : nil,
                            navigationPath: navigationPath,
+                           replayPosition: replayMapPosition,
                            tileFiles: maps.paths, tileRevision: maps.revision,
                            offlineRoadLines: online ? [] : offlineRoads.lines,
                            offlineRoadRevision: offlineRoads.revision,
@@ -491,6 +513,11 @@ struct MainView: View {
                     }
                     .padding(.bottom, 8)
                 }
+                if recordedRoute != nil {
+                    recordedTrackPanel
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 8)
+                }
                 if navigationTargetID != nil {
                     navigationPanel
                         .padding(.horizontal, 12)
@@ -582,6 +609,7 @@ struct MainView: View {
 
     private func startNavigation(to id: UUID) {
         guard let marker = model.markers.first(where: { $0.id == id }) else { return }
+        stopRecordedTrack()
         navigationTargetID = id
         tab = .map
         mapFocus = marker.coordinate
@@ -618,8 +646,121 @@ struct MainView: View {
 
     private func stopNavigation() {
         navigationTargetID = nil
-        navigationPath = []
+        if recordedRoute == nil { navigationPath = [] }
         navigationKind = ""
+    }
+
+    private var replayMapPosition: GeoPoint? {
+        guard let route = recordedRoute, !recordedRouteFollowing,
+              !route.points.isEmpty else { return nil }
+        return route.points[max(0, min(recordedRoutePreviewIndex, route.points.count - 1))]
+    }
+
+    private func showRecordedTrack(_ track: Track, direction: RecordedRouteDirection, follow: Bool) {
+        guard let route = RecordedTrackFollow(track: track, direction: direction) else {
+            routingError = "В записи меньше двух GPS-точек. Маршрут нельзя воспроизвести."
+            return
+        }
+        playbackTask?.cancel()
+        recordedRoutePlay = false
+        navigationTargetID = nil
+        selectedRecordedTrackID = track.id
+        recordedRoute = route
+        recordedRoutePreviewIndex = 0
+        recordedRouteProgress = 0
+        recordedRouteRemaining = route.remainingFrom[0]
+        recordedRouteDeviation = 0
+        recordedRouteFollowing = follow
+        navigationPath = route.points
+        navigationKind = follow ? "Повторное прохождение · \(direction.rawValue)" : "Просмотр записи · \(direction.rawValue)"
+        tab = .map
+        mapFocus = route.points[0]
+        centerRequest += 1
+        if follow { model.requestGPS() }
+    }
+
+    private func stopRecordedTrack() {
+        playbackTask?.cancel()
+        playbackTask = nil
+        recordedRoutePlay = false
+        recordedRouteFollowing = false
+        recordedRoute = nil
+        selectedRecordedTrackID = nil
+        recordedRoutePreviewIndex = 0
+        recordedRouteProgress = 0
+        if navigationTargetID == nil { navigationPath = []; navigationKind = "" }
+    }
+
+    private func playRecordedTrack() {
+        guard let route = recordedRoute, !recordedRouteFollowing else { return }
+        playbackTask?.cancel()
+        if recordedRoutePreviewIndex >= route.points.count - 1 {
+            recordedRoutePreviewIndex = 0
+        }
+        recordedRoutePlay = true
+        playbackTask = Task { @MainActor in
+            while !Task.isCancelled && recordedRoutePlay,
+                  let current = recordedRoute, recordedRoutePreviewIndex < current.points.count - 1 {
+                try? await Task.sleep(nanoseconds: 230_000_000)
+                if Task.isCancelled || !recordedRoutePlay { break }
+                recordedRoutePreviewIndex += 1
+            }
+            recordedRoutePlay = false
+        }
+    }
+
+    private var recordedTrackPanel: some View {
+        VStack(alignment: .leading, spacing: 9) {
+            if let route = recordedRoute {
+                HStack {
+                    Image(systemName: recordedRouteFollowing ? "figure.walk.motion" : "play.rectangle.fill")
+                        .foregroundStyle(HuntReference.green)
+                    Text(navigationKind).font(.caption.bold()).lineLimit(2)
+                    Spacer()
+                    Button { stopRecordedTrack() } label: { Image(systemName: "xmark.circle.fill") }
+                        .accessibilityIdentifier("recorded_track_stop")
+                }
+                if recordedRouteFollowing {
+                    Text(String(format: "Осталось по записи: %.2f км · отклонение от ближайшей точки: %.0f м",
+                                recordedRouteRemaining / 1000, recordedRouteDeviation))
+                        .font(.caption.monospacedDigit())
+                    if recordedRouteDeviation > 60 {
+                        Text("Вы отклонились от записанного пути. Проверьте местность.")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
+                    Button("Остановить прохождение") { stopRecordedTrack() }
+                        .buttonStyle(.bordered)
+                } else {
+                    Slider(value: Binding(get: { Double(recordedRoutePreviewIndex) },
+                                          set: { recordedRoutePreviewIndex = Int($0); recordedRoutePlay = false;
+                                                 playbackTask?.cancel() }),
+                           in: 0...Double(route.points.count - 1), step: 1)
+                        .accessibilityIdentifier("recorded_track_timeline")
+                    HStack {
+                        Text("\(recordedRoutePreviewIndex + 1) / \(route.points.count)")
+                            .font(.caption.monospacedDigit())
+                        Spacer()
+                        Button(recordedRoutePlay ? "Пауза" : "Воспроизвести") {
+                            if recordedRoutePlay { recordedRoutePlay = false; playbackTask?.cancel() }
+                            else { playRecordedTrack() }
+                        }
+                        .accessibilityIdentifier("recorded_track_play")
+                        Button("Пройти") {
+                            recordedRoutePlay = false
+                            playbackTask?.cancel()
+                            recordedRouteFollowing = true
+                            recordedRouteProgress = 0
+                            model.requestGPS()
+                            navigationKind = "Повторное прохождение · \(route.direction.rawValue)"
+                        }.accessibilityIdentifier("recorded_track_follow")
+                    }
+                    .font(.caption.bold())
+                }
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(12)
+        .background(HuntReference.card.opacity(0.97), in: RoundedRectangle(cornerRadius: 14))
     }
 
     private func bearing(to destination: GeoPoint, from origin: GeoPoint) -> Int {
@@ -928,6 +1069,23 @@ struct MainView: View {
             }
             Spacer(minLength: 2)
             Menu {
+                Button("Показать на карте", systemImage: "map") {
+                    showRecordedTrack(track, direction: .forward, follow: false)
+                }
+                Button("Воспроизвести: от начала", systemImage: "play.fill") {
+                    showRecordedTrack(track, direction: .forward, follow: false)
+                    playRecordedTrack()
+                }
+                Button("Воспроизвести: от конца", systemImage: "backward.fill") {
+                    showRecordedTrack(track, direction: .backward, follow: false)
+                    playRecordedTrack()
+                }
+                Button("Пройти от начала", systemImage: "figure.walk") {
+                    showRecordedTrack(track, direction: .forward, follow: true)
+                }
+                Button("Пройти от конца", systemImage: "figure.walk.motion") {
+                    showRecordedTrack(track, direction: .backward, follow: true)
+                }
                 if let file = model.exportGPX(track) {
                     ShareLink(item: file) { Label("Поделиться GPX", systemImage: "square.and.arrow.up") }
                 }

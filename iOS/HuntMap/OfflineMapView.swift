@@ -15,6 +15,7 @@ struct OfflineMapView: UIViewRepresentable {
     let markers: [Marker]
     let track: Track?
     var navigationPath: [GeoPoint] = []
+    var replayPosition: GeoPoint? = nil
     let tileFiles: [URL]
     let tileRevision: Int
     var offlineRoadLines: [OfflineRoadLine] = []
@@ -129,7 +130,7 @@ struct OfflineMapView: UIViewRepresentable {
             UserDefaults.standard.set("\(Int(mapFrame.minX)),\(Int(mapFrame.minY)),\(Int(mapFrame.width))x\(Int(mapFrame.height))", forKey: "hunt.diag.mapFrame")
             UserDefaults.standard.set(matches, forKey: "hunt.diag.fullscreenMap")
         }
-        context.coordinator.updateAnnotations(view: view, zones: zones, markers: markers, position: position, track: track, navigationPath: navigationPath,
+        context.coordinator.updateAnnotations(view: view, zones: zones, markers: markers, position: position, track: track, navigationPath: navigationPath, replayPosition: replayPosition,
                                               weatherGrid: weatherGrid, weatherLayer: weatherLayer,
                                               offlineRoadLines: online ? [] : offlineRoadLines, offlineRoadRevision: offlineRoadRevision)
         context.coordinator.applyCameraCommands(view: view, position: focusCoordinate ?? position,
@@ -357,12 +358,12 @@ struct OfflineMapView: UIViewRepresentable {
             view.addAnnotations(shapes)
         }
 
-        func updateAnnotations(view: MLNMapView, zones: [GeoZone], markers: [Marker], position: GeoPoint?, track: Track?, navigationPath: [GeoPoint],
+        func updateAnnotations(view: MLNMapView, zones: [GeoZone], markers: [Marker], position: GeoPoint?, track: Track?, navigationPath: [GeoPoint], replayPosition: GeoPoint?,
                                weatherGrid: ForecastGrid?, weatherLayer: WeatherMapLayer,
                                offlineRoadLines: [OfflineRoadLine], offlineRoadRevision: Int) {
             // Persistent MLNPointAnnotation identity is critical for tapping. Recreating
             // every marker on each GPS/SwiftUI update used to cancel selection gestures.
-            let transientKey = String(describing: zones) + "|" + String(describing: track) + "|" + String(describing: navigationPath) + "|" + String(describing: weatherLayer) + "|" + String(describing: weatherGrid) + "|" + String(offlineRoadRevision)
+            let transientKey = String(describing: zones) + "|" + String(describing: track) + "|" + String(describing: navigationPath) + "|" + String(describing: replayPosition) + "|" + String(describing: weatherLayer) + "|" + String(describing: weatherGrid) + "|" + String(offlineRoadRevision)
             if transientKey != lastTransientKey {
                 if !transientAnnotations.isEmpty { view.removeAnnotations(transientAnnotations) }
                 transientAnnotations.removeAll()
@@ -442,6 +443,12 @@ struct OfflineMapView: UIViewRepresentable {
                 let line = MLNPolyline(coordinates: &coordinates, count: UInt(coordinates.count))
                 line.title = "Записанный маршрут"
                 updated.append(line)
+            }
+            if let replayPosition {
+                let pin = MLNPointAnnotation()
+                pin.coordinate = CLLocationCoordinate2D(latitude: replayPosition.latitude, longitude: replayPosition.longitude)
+                pin.title = "REPLAY|LOCATION"
+                updated.append(pin)
             }
             if navigationPath.count >= 2 {
                 var routeCoords = navigationPath.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }

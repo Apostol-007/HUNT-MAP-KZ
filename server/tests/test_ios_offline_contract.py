@@ -111,3 +111,15 @@ def test_offline_style_cannot_fallback_to_remote_native_pack():
     assert "nativeOfflineStyleURL ?? OfflineMapStyle.url" not in mapview
     assert "Гибрид · полностью офлайн" in ui
     assert ".disabled(protomaps.installed.isEmpty || maps.installed.isEmpty)" in ui
+
+
+def test_recorded_track_replay_and_bidirectional_follow():
+    main = (IOS / "MainView.swift").read_text()
+    follow = (IOS / "RecordedTrackFollow.swift").read_text()
+    view = (IOS / "OfflineMapView.swift").read_text()
+    assert "Воспроизвести: от начала" in main and "Воспроизвести: от конца" in main
+    assert "Пройти от начала" in main and "Пройти от конца" in main
+    assert "recorded_track_timeline" in main
+    assert "recordedRouteRemaining" in main and "recordedRouteDeviation" in main
+    assert "Array(original.reversed())" in follow
+    assert "REPLAY|LOCATION" in view
