@@ -1,5 +1,6 @@
 import Foundation
 import HuntCore
+import CoreLocation
 
 /// A point forecast, never represented as a spatial weather overlay.
 @MainActor final class WeatherService: ObservableObject {
@@ -9,11 +10,34 @@ import HuntCore
     @Published private(set) var isCached = false
     private var task: Task<Void, Never>?
     private let cacheURL: URL = {
-        let folder = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return folder.appendingPathComponent("hunt_weather_point.json")
     }()
+    private var lastRequest: Date?
+    private var lastCoordinate: CLLocationCoordinate2D?
+
+    /// New forecasts replace the persisted snapshot only after a fully decoded response.
+    /// Repeated GPS fixes never trigger a network storm.
+    func updateIfNeeded(latitude: Double, longitude: Double, force: Bool = false) {
+        let point = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+        if !force, let at = lastRequest, let previous = lastCoordinate,
+           Date().timeIntervalSince(at) < 1800,
+           CLLocation(latitude: previous.latitude, longitude: previous.longitude)
+                .distance(from: CLLocation(latitude: latitude, longitude: longitude)) < 10_000 { return }
+        lastRequest = Date()
+        lastCoordinate = point
+        refresh(latitude: latitude, longitude: longitude, strictOffline: false)
+    }
 
     init() {
+        // Migrate the previous URLCache-backed version without losing existing forecasts.
+        let oldURL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("hunt_weather_point.json")
+        if !FileManager.default.fileExists(atPath: cacheURL.path),
+           let oldData = try? Data(contentsOf: oldURL) {
+            try? oldData.write(to: cacheURL, options: .atomic)
+        }
         guard let data = try? Data(contentsOf: cacheURL),
               let saved = try? JSONDecoder().decode(PointWeather.self, from: data) else { return }
         forecast = saved

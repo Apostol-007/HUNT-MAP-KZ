@@ -7,7 +7,6 @@ struct WeatherMapSheet: View {
     @Binding var layer: WeatherMapLayer
     let coordinate: GeoPoint?
     let online: Bool
-    @AppStorage("hunt.weather.gridServer") private var server = ""
     @State private var hoursAhead = 0.0
     @State private var forecastMode = 0
     @State private var selectedDay = 0
@@ -111,28 +110,24 @@ struct WeatherMapSheet: View {
                     }
 
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Источник сеточных данных").font(.headline)
-                        TextField("https://твой-сервер.kz", text: $server)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled()
-                            .keyboardType(.URL).textFieldStyle(.roundedBorder)
-                        Text("Нужен собственный HTTPS-сервер с /v1/weather/grid. Публичные тайлы карты и этот прогноз — разные источники.")
+                        Text("Источник прогноза: Open-Meteo").font(.headline)
+                        Text("Сервер выбирать не нужно. При наличии интернета прогноз обновляется автоматически, без связи берётся сохранённый кеш.")
                             .font(.caption).foregroundStyle(.secondary)
                         if let coordinate {
                             Button {
-                                service.load(server: server, latitude: coordinate.latitude,
-                                             longitude: coordinate.longitude,
-                                             hourOffset: Int(hoursAhead), strictOffline: !online)
+                                service.load(latitude: coordinate.latitude, longitude: coordinate.longitude,
+                                             hourOffset: Int(hoursAhead))
                             } label: {
                                 Label(service.loading ? "Получение данных…" : "Загрузить прогноз на карту", systemImage: "arrow.down.circle.fill")
                                     .font(.headline).frame(maxWidth: .infinity).frame(minHeight: 46)
                             }
                             .buttonStyle(.borderedProminent).tint(FBTheme.green)
-                            .disabled(layer == .none || service.loading || !online)
+                            .disabled(layer == .none || service.loading)
                         } else {
                             Label("Для центрирования сетки сначала включите GPS", systemImage: "location.slash")
                                 .foregroundStyle(.orange).font(.footnote)
                         }
-                        if !online { Text("Строго офлайн: сетевые запросы отключены").foregroundStyle(.orange).font(.footnote) }
+
                         if service.loading { ProgressView() }
                         Text(service.status).font(.footnote)
                         if service.grid != nil {
@@ -159,7 +154,14 @@ struct WeatherMapSheet: View {
             .navigationTitle("Погодные слои")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Готово") { dismiss() } } }
-            .onAppear { hoursAhead = Double(service.chosenOffset); selectedDay = service.chosenOffset / 24 }
+            .onAppear {
+                hoursAhead = Double(service.chosenOffset)
+                selectedDay = service.chosenOffset / 24
+                if let coordinate, layer != .none {
+                    service.load(latitude: coordinate.latitude, longitude: coordinate.longitude,
+                                 hourOffset: service.chosenOffset)
+                }
+            }
         }
     }
 

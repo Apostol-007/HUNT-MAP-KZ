@@ -106,7 +106,7 @@ struct WeatherPanel: View {
                     if let coordinate {
                         Button {
                             hourIndex = 0
-                            service.refresh(latitude: coordinate.latitude, longitude: coordinate.longitude, strictOffline: !online)
+                            service.refresh(latitude: coordinate.latitude, longitude: coordinate.longitude, strictOffline: false)
                         } label: {
                             Label("Обновить прогноз", systemImage: "arrow.clockwise")
                                 .frame(maxWidth: .infinity)
@@ -129,7 +129,7 @@ struct WeatherPanel: View {
         }
         .onAppear {
             if service.forecast == nil, let coordinate {
-                service.refresh(latitude: coordinate.latitude, longitude: coordinate.longitude, strictOffline: !online)
+                service.refresh(latitude: coordinate.latitude, longitude: coordinate.longitude, strictOffline: false)
             }
         }
     }

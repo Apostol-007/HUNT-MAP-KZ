@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 /// Rebuilt UI: MapLibre remains the root full-screen view. No native TabView,
 /// no fixed-height map, no nested NavigationStack around the map.
 struct MainView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var model: FieldModel
     @StateObject private var maps = OfflineTileStore()
     @StateObject private var hosting = HostingOfflineDownloads()
@@ -20,6 +21,7 @@ struct MainView: View {
     @State private var selectedGridCells: Set<String> = []
     @State private var showGridDownloads = false
     @StateObject private var animals = WildlifeStore()
+    @StateObject private var connectivity = WeatherConnectivity()
     @StateObject private var weather = WeatherService()
     @StateObject private var weatherGrid = WeatherGridService()
 
@@ -113,10 +115,23 @@ struct MainView: View {
         .preferredColorScheme(.dark)
         .background(ShakeDetector().frame(width: 1, height: 1))
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
-        .onAppear { loadRoutingNetwork(); Task { await protomaps.refresh() } }
+        .onAppear {
+            loadRoutingNetwork()
+            Task { await protomaps.refresh() }
+            refreshWeatherOnLaunch()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { refreshWeatherOnLaunch() }
+        }
+        .onChange(of: connectivity.connected) { _, connected in
+            if connected { refreshWeatherOnLaunch() }
+        }
         .onDisappear { playbackTask?.cancel() }
         .onChange(of: online) { _, enabled in if enabled { offlineRoads.clear() } }
         .onChange(of: model.coordinate) { _, newPoint in
+            if let point = newPoint {
+                weather.updateIfNeeded(latitude: point.latitude, longitude: point.longitude)
+            }
             if newPoint != nil, navigationKind == "Ожидание GPS", let id = navigationTargetID {
                 startNavigation(to: id)
             }
@@ -782,8 +797,7 @@ struct MainView: View {
                     centerRequest += 1
                 }
             }
-            recordedRoutePlay = false
-        }
+            recordedRoutePlay = false        }
     }
 
     private var recordedTrackPanel: some View {
@@ -1344,7 +1358,7 @@ struct MainView: View {
             .background(HuntReference.card, in: RoundedRectangle(cornerRadius: 21))
             if let point = model.coordinate {
                 Button(weather.busy ? "Обновляется…" : "Обновить прогноз") {
-                    weather.refresh(latitude: point.latitude, longitude: point.longitude, strictOffline: !online)
+                    weather.refresh(latitude: point.latitude, longitude: point.longitude, strictOffline: false)
                 }
                 .font(.footnote.bold())
                 .foregroundStyle(HuntReference.green)
@@ -1356,8 +1370,8 @@ struct MainView: View {
             Text(weather.message).font(.caption2).foregroundStyle(HuntReference.muted)
         }
         .onAppear {
-            if weather.forecast == nil, let point = model.coordinate {
-                weather.refresh(latitude: point.latitude, longitude: point.longitude, strictOffline: !online)
+            if let point = model.coordinate {
+                weather.refresh(latitude: point.latitude, longitude: point.longitude, strictOffline: false)
             }
         }
     }
@@ -1381,6 +1395,18 @@ struct MainView: View {
             .frame(height: 54)
         }
         .buttonStyle(.plain)
+    }
+    private func refreshWeatherOnLaunch() {
+        // GPS may not yet have a fix on launch. In that case refresh for the last
+        // known weather location; the first new GPS fix will correct it if needed.
+        guard let latitude = model.coordinate?.latitude ?? weather.forecast?.latitude,
+              let longitude = model.coordinate?.longitude ?? weather.forecast?.longitude else { return }
+        // A network request is attempted even if the map itself uses offline PMTiles.
+        weather.updateIfNeeded(latitude: latitude, longitude: longitude, force: true)
+        if weatherLayer != .none {
+            weatherGrid.load(latitude: latitude, longitude: longitude,
+                             hourOffset: weatherGrid.chosenOffset)
+        }
     }
     private func openWeatherMap() {
         tab = .map
