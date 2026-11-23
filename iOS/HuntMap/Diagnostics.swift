@@ -24,7 +24,6 @@ struct DiagnosticsView: View {
     let mapCount: Int
     let wildlifeCount: Int
     let onlineMap: Bool
-    @ObservedObject var osm: NativeOfflineOSM
     @State private var includeApproximatePosition = false
 
     private var releaseVersion: String {
@@ -65,16 +64,12 @@ struct DiagnosticsView: View {
         Saved track count: \(model.tracks.count)
         Marker count: \(model.markers.count)
         Boundary count: \(model.zones.count)
+        Map frame pt: \(UserDefaults.standard.string(forKey: "hunt.diag.mapFrame") ?? "not measured")
+        Fullscreen map geometry: \(UserDefaults.standard.object(forKey: "hunt.diag.fullscreenMap") == nil ? "not measured" : String(UserDefaults.standard.bool(forKey: "hunt.diag.fullscreenMap")))
+        Weather: Point forecast via Open-Meteo; grid renderer not integrated
         Map packs: \(mapCount)
         Wildlife catalogs: \(wildlifeCount)
         Map mode: \(onlineMap ? "online OpenFreeMap" : "strict offline")
-        OSM downloaded regions: \(osm.regions.count)
-        OSM loaded features: \(osm.lines.count)
-        OSM download busy: \(osm.busy)
-        OSM last status: \(osm.status)
-        OSM last server: \(osm.lastServer ?? "none")
-        OSM last HTTP: \(osm.lastHTTPStatus.map(String.init) ?? "none")
-        OSM last error: \(osm.lastDownloadError ?? "none")
         Last GPS error: \(model.lastError)
         Last warning: \(model.lastWarning)
         NOTE: Diagnostic does NOT include exact coordinates, names, tracks, emails, tokens or personal identifiers.
@@ -124,6 +119,7 @@ struct AboutHuntView: View {
                 Section("Открытые данные") {
                     Link("OpenStreetMap и лицензия ODbL", destination: URL(string: "https://www.openstreetmap.org/copyright")!)
                     Link("OpenFreeMap", destination: URL(string: "https://openfreemap.org/")!)
+                    Link("Open-Meteo и условия использования", destination: URL(string: "https://open-meteo.com/")!)
                     Link("GBIF", destination: URL(string: "https://www.gbif.org/")!)
                     Link("Государственный портал данных", destination: URL(string: "https://data.egov.kz/")!)
                 }
