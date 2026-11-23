@@ -5,9 +5,9 @@ import HuntCore
 /// MapLibre receives only a locally generated, source-free style and file-backed MBTiles.
 /// No HTTP style, glyph, sprite or tile endpoint is configured by this view.
 struct OfflineMapView: UIViewRepresentable {
-    @AppStorage("hunt.map.style") private var mapStyle = (MapTilerConfiguration.isConfigured ? MapBasemap.satellite.rawValue : MapBasemap.outdoors.rawValue)
+    @AppStorage("hunt.map.style") private var mapStyle = MapBasemap.outdoors.rawValue
     private var selectedStyle: URL {
-        (MapBasemap(rawValue: mapStyle) ?? .bright).styleURL(apiKey: MapTilerConfiguration.apiKey) ?? MapBasemap.bright.styleURL(apiKey: "")!
+        (MapBasemap(rawValue: mapStyle) ?? .outdoors).styleURL(apiKey: MapTilerConfiguration.apiKey) ?? MapBasemap.outdoors.styleURL(apiKey: "")!
     }
 
     let zones: [GeoZone]

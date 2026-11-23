@@ -14,7 +14,7 @@ struct MainView: View {
     @StateObject private var weatherGrid = WeatherGridService()
 
     @AppStorage("hunt.onlineBasemap") private var online = true
-    @AppStorage("hunt.map.style") private var mapStyle = (MapTilerConfiguration.isConfigured ? MapBasemap.satellite.rawValue : MapBasemap.outdoors.rawValue)
+    @AppStorage("hunt.map.style") private var mapStyle = MapBasemap.outdoors.rawValue
     private var hasMapTilerKey: Bool { MapTilerConfiguration.isConfigured }
 
     @State private var tab: Tab = .home
@@ -91,9 +91,6 @@ struct MainView: View {
         .background(ShakeDetector().frame(width: 1, height: 1))
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
         .onAppear { loadRoutingNetwork() }
-        .onChange(of: maps.revision) { _, _ in
-            if !maps.installed.isEmpty { online = false }
-        }
         .onChange(of: model.coordinate) { _, newPoint in
             if newPoint != nil, navigationKind == "Ожидание GPS", let id = navigationTargetID {
                 startNavigation(to: id)
@@ -645,29 +642,73 @@ struct MainView: View {
     private var layerSheet: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 11) {
+                VStack(alignment: .leading, spacing: 12) {
                     ReferencePageHeader(title: "Слои карты")
-                        .padding(.bottom, 7)
+                    Text("Картографический движок: MapLibre Native")
+                        .font(.caption).foregroundStyle(HuntReference.muted)
+
+                    Text("Базовая карта").font(.headline).foregroundStyle(.white)
+                    Button {
+                        online = false
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "iphone.gen3").frame(width: 25)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Офлайн · мои карты").font(.subheadline.bold())
+                                Text(maps.installed.isEmpty
+                                     ? "Загрузите MBTiles в разделе офлайн-карт"
+                                     : "Установлено пакетов: \(maps.installed.count)")
+                                    .font(.caption2).foregroundStyle(HuntReference.muted)
+                            }
+                            Spacer()
+                            if !online { Image(systemName: "checkmark.circle.fill").foregroundStyle(HuntReference.green) }
+                        }
+                        .padding(12)
+                        .background(HuntReference.green.opacity(!online ? 0.15 : 0.05), in: RoundedRectangle(cornerRadius: 12))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.white)
+
+                    ForEach(MapBasemap.allCases) { basemap in
+                        let available = basemap.isAvailable(apiKey: MapTilerConfiguration.apiKey)
+                        Button {
+                            guard available else { return }
+                            mapStyle = basemap.rawValue
+                            online = true
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: basemap.symbol).frame(width: 25)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(basemap.name).font(.subheadline.bold())
+                                    Text(available ? basemap.detail : "Требуется ключ MapTiler")
+                                        .font(.caption2).foregroundStyle(HuntReference.muted)
+                                }
+                                Spacer()
+                                if online && mapStyle == basemap.rawValue {
+                                    Image(systemName: "checkmark.circle.fill").foregroundStyle(HuntReference.green)
+                                }
+                            }
+                            .padding(12)
+                            .background(HuntReference.green.opacity(online && mapStyle == basemap.rawValue ? 0.15 : 0.05),
+                                        in: RoundedRectangle(cornerRadius: 12))
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.white)
+                        .disabled(!available)
+                        .opacity(available ? 1 : 0.55)
+                    }
+
+                    Text("Онлайн-стили требуют связи. MapLibre не содержит собственных спутниковых снимков. Офлайн-режим использует только установленные MBTiles.")
+                        .font(.caption2).foregroundStyle(HuntReference.muted)
+
+                    Text("Дополнительные слои").font(.headline).foregroundStyle(.white)
                     ReferenceLayerRow(symbol: "map", title: "Охотугодья",
-                                      detail: "Границы и информация", enabled: $showGrounds)
-                    ReferenceLayerRow(symbol: "mountain.2", title: "Рельеф",
-                                      detail: "3D-высоты: ожидается источник DEM", enabled: reliefBinding,
-                                      available: false)
-                    ReferenceLayerRow(symbol: "globe.europe.africa.fill", title: "Спутник",
-                                      detail: hasMapTilerKey ? "Снимки высокой детализации" : "Нужен ключ MapTiler",
-                                      enabled: satelliteBinding, available: hasMapTilerKey)
-                    ReferenceLayerRow(symbol: "map.fill", title: "Топографическая",
-                                      detail: "Outdoor: местность и тропы", enabled: topographicBinding)
+                                      detail: "Проверенные и импортированные границы", enabled: $showGrounds)
                     ReferenceLayerRow(symbol: "cloud.sun", title: "Погода",
                                       detail: "Ветер, давление, осадки", enabled: weatherEnabledBinding)
                     ReferenceLayerRow(symbol: "pawprint.fill", title: "Животные",
-                                      detail: "Нужны геоданные о видах", enabled: $showAnimalsLayer,
+                                      detail: "Нужны проверенные геоданные", enabled: $showAnimalsLayer,
                                       available: false)
-                    Text("Виды животных отображаются в справочнике; пространственный слой включим после получения проверенного покрытия и прав на публикацию.")
-                        .font(.caption2).foregroundStyle(HuntReference.muted)
-                    Toggle("Онлайн-подложка", isOn: $online)
-                        .tint(HuntReference.green)
-                        .padding(.vertical, 9)
                     ReferencePrimaryButton(title: "Закрыть", symbol: "checkmark") { showLayers = false }
                 }
                 .padding(17)
@@ -679,19 +720,6 @@ struct MainView: View {
         .presentationDragIndicator(.visible)
     }
 
-    private var reliefBinding: Binding<Bool> {
-        Binding(get: { mapStyle == MapBasemap.outdoors.rawValue },
-                set: { mapStyle = $0 ? MapBasemap.outdoors.rawValue : MapBasemap.bright.rawValue; if $0 { online = true } })
-    }
-    private var satelliteBinding: Binding<Bool> {
-        Binding(get: { mapStyle == MapBasemap.satellite.rawValue },
-                set: { if $0 && hasMapTilerKey { mapStyle = MapBasemap.satellite.rawValue; online = true }
-                       else if !$0 { mapStyle = MapBasemap.bright.rawValue } })
-    }
-    private var topographicBinding: Binding<Bool> {
-        Binding(get: { mapStyle == MapBasemap.outdoors.rawValue },
-                set: { mapStyle = $0 ? MapBasemap.outdoors.rawValue : MapBasemap.bright.rawValue; if $0 { online = true } })
-    }
     private var weatherEnabledBinding: Binding<Bool> {
         Binding(get: { weatherLayer != .none },
                 set: { if $0 { showLayers = false; showWeatherLayers = true }
