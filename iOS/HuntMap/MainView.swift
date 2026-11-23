@@ -1,585 +1,585 @@
 import SwiftUI
 import HuntCore
-import UniformTypeIdentifiers
 
+/// Rebuilt UI: MapLibre remains the root full-screen view. No native TabView,
+/// no fixed-height map, no nested NavigationStack around the map.
 struct MainView: View {
-    @EnvironmentObject var model:FieldModel
-    @StateObject private var tileStore = OfflineTileStore()
-    @StateObject private var wildlifeStore = WildlifeStore()
-    @StateObject private var weatherService = WeatherService()
-    @StateObject private var weatherGridService = WeatherGridService()
-    @State private var weatherLayer: WeatherMapLayer = .none
-    @State private var showWeatherMap = false
-    @State private var showWeather = false
-    @StateObject private var wildlifeUpdater = WildlifeUpdater()
-    @StateObject private var boundaryDownloader = BoundaryDownloader()
-    @State private var boundaryGroundID = ""
-    @State private var directGeoJSONURL = ""
-    @State private var wildlifeServer = "https://example.org"
-    @State private var wildlifeGround = ""
-    @State private var wildlifeImportShown = false
-    @State private var wildlifeSearch = ""
-    @State private var selectedScope = "ground"
-    @State private var scopeID = ""
-    @State private var tileImportShown=false
-    @State private var importShown=false
-    @State private var importError:String?
-    @State private var showDiagnostics = false
-    @State private var showAbout = false
-    @State private var selectedZone: GeoZone?
-    @State private var publicTaxa: [GBIFTaxon] = []
-    @State private var gbifStatus = "Не загружено"
-    @State private var loadingGBIF = false
-    @AppStorage("hunt.onlineBasemap") private var onlineBasemap = true
-    @State private var selectedTab: HuntTab = .map
-    // The map is the background of the entire window, NOT a child of TabView.
-    // TabView's safe-area and intrinsic sizing previously letterboxed the map.
-    private enum HuntTab: String, CaseIterable {
-        case map = "Карта", tracks = "Маршруты", markers = "Маркеры"
-        case wildlife = "Животные", downloads = "Загрузки"
+    @EnvironmentObject private var model: FieldModel
+    @StateObject private var maps = OfflineTileStore()
+    @StateObject private var animals = WildlifeStore()
+    @StateObject private var weather = WeatherService()
+    @StateObject private var weatherGrid = WeatherGridService()
 
-        var symbol: String {
+    @AppStorage("hunt.onlineBasemap") private var online = true
+    @AppStorage("hunt.map.style") private var mapStyle = MapBasemap.bright.rawValue
+    @AppStorage("hunt.map.maptilerKey") private var mapTilerKey = ""
+
+    @State private var tab: Tab = .home
+    @State private var dataSection: DataSection = .routes
+    @State private var serviceSection: ServiceSection = .weather
+    @State private var weatherLayer: WeatherMapLayer = .none
+    @State private var zone: GeoZone?
+    @State private var showLayers = false
+    @State private var showWeather = false
+    @State private var showWeatherLayers = false
+    @State private var showAbout = false
+    @State private var showDiagnostics = false
+    @State private var showAdvanced = false
+    @State private var showGBIF = false
+    @State private var taxa: [GBIFTaxon] = []
+    @State private var wildlifeError: String?
+
+    private enum Tab: String, CaseIterable {
+        case home = "Главная", map = "Карта", data = "Данные", services = "Сервисы", more = "Ещё"
+        var icon: String {
             switch self {
+            case .home: "house.fill"
             case .map: "map.fill"
-            case .tracks: "figure.hiking"
-            case .markers: "mappin.and.ellipse"
-            case .wildlife: "pawprint.fill"
-            case .downloads: "arrow.down.circle.fill"
+            case .data: "square.grid.2x2.fill"
+            case .services: "square.stack.3d.up.fill"
+            case .more: "ellipsis"
             }
         }
     }
+    private enum DataSection: String, CaseIterable { case routes = "Маршруты", markers = "Метки" }
+    private enum ServiceSection: String, CaseIterable { case weather = "Погода", wildlife = "Животные" }
 
-    // The map is a persistent, edge-to-edge background. The interface is
-    // restored to the familiar five-section navigation from the early builds.
-    // Controls are safe-area aware, but they NEVER change the map viewport.
     var body: some View {
         ZStack {
-            mapTab
-                .opacity(selectedTab == .map ? 1 : 0)
-                .allowsHitTesting(selectedTab == .map)
-
-            if selectedTab != .map {
-                Group {
-                    switch selectedTab {
-                    case .map: EmptyView()
-                    case .tracks: tracksTab
-                    case .markers: markersTab
-                    case .wildlife: wildlifeTab
-                    case .downloads: downloadsTab
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .fbScreenBackground()
-            }
+            // Keep the expensive MapLibre instance alive when switching tabs.
+            // Only controls disappear; the map remains genuinely full-screen.
+            mapScreen
+                .opacity(tab == .map ? 1 : 0)
+                .allowsHitTesting(tab == .map)
+            if tab != .map { themedScreen }
         }
-        .overlay(alignment: .bottom) { floatingNavigation }
-        .fbScreenBackground()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .bottom) { navigation }
+        .background(FBTheme.background.ignoresSafeArea())
+        .preferredColorScheme(.dark)
         .background(ShakeDetector().frame(width: 1, height: 1))
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
+        .sheet(isPresented: $showLayers) { layerSheet }
+        .sheet(isPresented: $showWeather) {
+            WeatherPanel(service: weather, coordinate: model.coordinate, online: online)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showWeatherLayers) {
+            WeatherMapSheet(service: weatherGrid, layer: $weatherLayer,
+                            coordinate: model.coordinate, online: online)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
+        .sheet(item: $zone) { GroundDetailsSheet(zone: $0) }
         .sheet(isPresented: $showDiagnostics) {
-            DiagnosticsView(model: model, mapCount: tileStore.installed.count,
-                            wildlifeCount: wildlifeStore.packs.count, onlineMap: onlineBasemap)
+            DiagnosticsView(model: model, mapCount: maps.installed.count,
+                            wildlifeCount: animals.packs.count, onlineMap: online)
         }
         .sheet(isPresented: $showAbout) { AboutHuntView() }
-        .sheet(isPresented: $showWeather) {
-            WeatherPanel(service: weatherService, coordinate: model.coordinate, online: onlineBasemap)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-        }
-        .sheet(isPresented: $showWeatherMap) {
-            WeatherMapSheet(service: weatherGridService, layer: $weatherLayer,
-                            coordinate: model.coordinate, online: onlineBasemap)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-        }
+        .sheet(isPresented: $showAdvanced) { LegacyMainView() .environmentObject(model) }
     }
 
-    private var floatingNavigation: some View {
+    // MARK: - Root layout
+    private var themedScreen: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                switch tab {
+                case .home: homeScreen
+                case .data: dataScreen
+                case .services: serviceScreen
+                case .more: moreScreen
+                case .map: EmptyView()
+                }
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 15)
+            .padding(.bottom, 112)
+        }
+        .scrollIndicators(.hidden)
+        .fbScreenBackground()
+    }
+
+    private var navigation: some View {
         HStack(spacing: 0) {
-            ForEach(HuntTab.allCases, id: \.self) { tab in
-                Button {
-                    selectedTab = tab
-                } label: {
-                    FBTabButton(title: tab.rawValue, systemImage: tab.symbol, active: selectedTab == tab)
-                        .frame(height: 62)
+            ForEach(Tab.allCases, id: \.self) { item in
+                Button { withAnimation(.easeOut(duration: 0.16)) { tab = item } } label: {
+                    FBTabButton(title: item.rawValue, systemImage: item.icon, active: tab == item)
+                        .frame(height: 60)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(tab.rawValue)
+                .accessibilityIdentifier("tab_\(item.rawValue)")
             }
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, 7)
         .padding(.vertical, 8)
-        .background(FBTheme.panel.opacity(0.96), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 24).stroke(FBTheme.stroke, lineWidth: 1))
-        .shadow(color: .black.opacity(0.35), radius: 18, y: 6)
-        .padding(.horizontal, 10)
-        .padding(.bottom, 6)
+        .background(FBTheme.panel.opacity(0.97), in: RoundedRectangle(cornerRadius: 25))
+        .overlay(RoundedRectangle(cornerRadius: 25).stroke(FBTheme.stroke, lineWidth: 1))
+        .padding(.horizontal, 11)
+        .padding(.bottom, 4)
     }
 
-    private var mapTab: some View {
-        ZStack {
-            OfflineMapView(
-                zones: model.zones, position: model.coordinate, markers: model.markers,
-                track: model.currentTrack, tileFiles: tileStore.paths,
-                tileRevision: tileStore.revision, online: onlineBasemap,
-                selectedZone: $selectedZone,
-                weatherGrid: weatherLayer == .none ? nil : weatherGridService.grid,
-                weatherLayer: weatherLayer
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .ignoresSafeArea(.container, edges: .all)
+    // MARK: - Home
+    private var homeScreen: some View {
+        VStack(alignment: .leading, spacing: 21) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("HUNT MAP KZ").font(.system(size: 26, weight: .heavy, design: .rounded))
+                    Text("Охота · Карты · Навигация").font(.subheadline).foregroundStyle(FBTheme.textSecondary)
+                }
+                Spacer()
+                Button { showDiagnostics = true } label: {
+                    Image(systemName: "bell.badge")
+                        .font(.title3).foregroundStyle(FBTheme.green)
+                        .frame(width: 46, height: 46).background(FBTheme.panel2, in: Circle())
+                }
+                .accessibilityLabel("Диагностика")
+            }
+            Button { tab = .map } label: {
+                ZStack(alignment: .bottomLeading) {
+                    LinearGradient(colors: [Color(red: 0.02, green: 0.30, blue: 0.17),
+                                            Color(red: 0.02, green: 0.12, blue: 0.12),
+                                            FBTheme.panel], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    Image(systemName: "mountain.2.fill")
+                        .font(.system(size: 142, weight: .ultraLight))
+                        .foregroundStyle(FBTheme.green.opacity(0.19))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        .offset(x: -12, y: -10)
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("КАРТЫ КАЗАХСТАНА").font(.caption.bold()).foregroundStyle(FBTheme.green)
+                        Text("Исследуй\nтерритории")
+                            .font(.system(size: 32, weight: .bold, design: .rounded))
+                            .multilineTextAlignment(.leading)
+                        Text("GPS · Границы · Маршруты")
+                            .font(.subheadline).foregroundStyle(FBTheme.textSecondary)
+                        Label("Открыть карту", systemImage: "arrow.up.right")
+                            .font(.subheadline.bold()).foregroundStyle(FBTheme.green)
+                            .padding(.top, 5)
+                    }
+                    .padding(20)
+                }
+                .frame(height: 240)
+                .background(FBTheme.panel, in: RoundedRectangle(cornerRadius: 25))
+                .clipShape(RoundedRectangle(cornerRadius: 25))
+                .overlay(RoundedRectangle(cornerRadius: 25).stroke(FBTheme.stroke))
+            }
+            .buttonStyle(.plain)
 
-            LinearGradient(colors: [.black.opacity(0.58), .clear, .black.opacity(0.78)],
+            Text("Быстрые действия").font(.title3.bold())
+            LazyVGrid(columns: [.init(.flexible()), .init(.flexible())], spacing: 12) {
+                actionCard("Открыть карту", subtitle: "Геолокация и слои", icon: "map", tint: FBTheme.green) { tab = .map }
+                actionCard("Скачать карты", subtitle: "Офлайн-пакеты", icon: "arrow.down.circle", tint: FBTheme.mint) { showAdvanced = true }
+                actionCard("Маршруты", subtitle: "Запись и история", icon: "point.topleft.down.curvedto.point.bottomright.up", tint: FBTheme.cyan) { dataSection = .routes; tab = .data }
+                actionCard("Погода", subtitle: "Ветер, давление, осадки", icon: "cloud.sun.fill", tint: FBTheme.green) { serviceSection = .weather; tab = .services }
+            }
+
+            VStack(alignment: .leading, spacing: 15) {
+                Text("Мои данные").font(.headline)
+                HStack(spacing: 0) {
+                    statistic("Маршруты", value: model.tracks.count)
+                    Spacer()
+                    statistic("Метки", value: model.markers.count)
+                    Spacer()
+                    statistic("Угодья", value: model.zones.count)
+                }
+            }
+            .fbCard()
+        }
+    }
+
+    private func statistic(_ title: String, value: Int) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text("\(value)").font(.title.bold()).foregroundStyle(FBTheme.green)
+            Text(title).font(.caption).foregroundStyle(FBTheme.textSecondary)
+        }
+    }
+    private func actionCard(_ title: String, subtitle: String, icon: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 12) {
+                Image(systemName: icon).font(.title2.bold()).foregroundStyle(tint)
+                    .frame(width: 43, height: 43)
+                    .background(tint.opacity(0.13), in: RoundedRectangle(cornerRadius: 13))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).font(.subheadline.bold()).foregroundStyle(.white)
+                    Text(subtitle).font(.caption2).foregroundStyle(FBTheme.textSecondary)
+                        .lineLimit(2).frame(minHeight: 29, alignment: .topLeading)
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: 121)
+            .fbCard()
+        }.buttonStyle(.plain)
+    }
+
+    // MARK: - Full-screen map
+    private var mapScreen: some View {
+        ZStack {
+            OfflineMapView(zones: model.zones, position: model.coordinate,
+                           markers: model.markers, track: model.currentTrack,
+                           tileFiles: maps.paths, tileRevision: maps.revision,
+                           online: online, selectedZone: $zone,
+                           weatherGrid: weatherLayer == .none ? nil : weatherGrid.grid,
+                           weatherLayer: weatherLayer)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .ignoresSafeArea(.container, edges: .all)
+            LinearGradient(colors: [.black.opacity(0.45), .clear, .black.opacity(0.55)],
                            startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
-
             VStack(spacing: 0) {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("HUNT MAP KZ")
-                            .font(.system(size: 31, weight: .heavy, design: .rounded))
-                            .foregroundStyle(FBTheme.textPrimary)
-                        HStack(spacing: 8) {
-                            Label(model.status, systemImage: "location.fill")
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.8)
-                            Spacer(minLength: 0)
-                            Text(onlineBasemap ? "ONLINE" : "OFFLINE")
-                                .foregroundStyle(onlineBasemap ? FBTheme.green : FBTheme.warning)
-                                .fontWeight(.bold)
-                        }
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(FBTheme.textPrimary)
+                HStack(spacing: 8) {
+                    HStack(spacing: 9) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(FBTheme.green)
+                        Text("Карта Казахстана").font(.subheadline.bold())
+                        Spacer(minLength: 2)
+                        Text(online ? "ОНЛАЙН" : "ОФЛАЙН")
+                            .font(.system(size: 10, weight: .heavy))
+                            .foregroundStyle(online ? FBTheme.green : FBTheme.warning)
                     }
-                    Spacer(minLength: 8)
-                    VStack(spacing: 10) {
-                        Button { showWeather = true } label: {
-                            Image(systemName: "cloud.sun.fill")
-                                .font(.system(size: 20, weight: .semibold))
-                                .foregroundStyle(FBTheme.green)
-                                .frame(width: 46, height: 46)
-                                .background(FBTheme.panel.opacity(0.92), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                .overlay(RoundedRectangle(cornerRadius: 16).stroke(FBTheme.stroke, lineWidth: 1))
-                        }
-                        .accessibilityLabel("Погода")
-                        .accessibilityIdentifier("weatherButton")
-                        Menu {
-                            Toggle("Онлайн-карта", isOn: $onlineBasemap)
-                            Button("Погодные слои", systemImage: "cloud.sun") { showWeatherMap = true }
-                            Button("О приложении", systemImage: "info.circle") { showAbout = true }
-                            Button("Диагностика", systemImage: "ladybug") { showDiagnostics = true }
-                        } label: {
-                            Image(systemName: "line.3.horizontal.decrease.circle.fill")
-                                .font(.system(size: 20, weight: .semibold))
-                                .foregroundStyle(FBTheme.mint)
-                                .frame(width: 46, height: 46)
-                                .background(FBTheme.panel.opacity(0.92), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                .overlay(RoundedRectangle(cornerRadius: 16).stroke(FBTheme.stroke, lineWidth: 1))
-                        }
-                        .accessibilityLabel("Слои и настройки")
+                    .padding(14)
+                    .background(FBTheme.panel.opacity(0.93), in: Capsule())
+                    Button { showLayers = true } label: {
+                        Image(systemName: "square.3.layers.3d")
+                            .font(.title3.bold())
+                            .foregroundStyle(FBTheme.green)
+                            .frame(width: 48, height: 48)
+                            .background(FBTheme.panel.opacity(0.93), in: Circle())
                     }
+                    .accessibilityLabel("Слои карты")
                 }
                 .padding(.horizontal, 14)
-                .padding(.vertical, 14)
-                .background(FBTheme.panel.opacity(0.90), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 26).stroke(FBTheme.stroke, lineWidth: 1))
-                .padding(.horizontal, 12)
                 .padding(.top, 8)
 
                 if weatherLayer != .none {
-                    HStack(spacing: 10) {
-                        Image(systemName: "wind")
-                            .foregroundStyle(FBTheme.green)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(weatherLayer.rawValue)
-                                .font(.subheadline.bold())
-                            Text(weatherGridService.forecastLabel)
-                                .font(.caption)
-                                .foregroundStyle(FBTheme.textSecondary)
+                    Button { showWeatherLayers = true } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "cloud.fill").foregroundStyle(FBTheme.green)
+                            Text("\(weatherLayer.rawValue) · \(weatherGrid.forecastLabel)")
+                                .font(.caption.bold()).foregroundStyle(.white)
+                            Spacer()
+                            Image(systemName: "chevron.right").foregroundStyle(FBTheme.green)
                         }
-                        if weatherGridService.cached {
-                            Text("КЭШ")
-                                .font(.caption2.bold())
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(FBTheme.warning.opacity(0.18), in: Capsule())
-                                .foregroundStyle(FBTheme.warning)
-                        }
-                        Spacer(minLength: 0)
-                        Button("Изменить") { showWeatherMap = true }
-                            .font(.caption.bold())
-                            .foregroundStyle(FBTheme.green)
+                        .padding(12)
+                        .background(FBTheme.panel.opacity(0.94), in: RoundedRectangle(cornerRadius: 17))
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 12)
-                    .background(FBTheme.panel.opacity(0.90), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 20).stroke(FBTheme.stroke, lineWidth: 1))
-                    .padding(.horizontal, 12)
-                    .padding(.top, 10)
+                    .padding(.horizontal, 14).padding(.top, 10)
                 }
-
                 Spacer(minLength: 0)
-
                 if !model.lastWarning.isEmpty && model.lastWarning != "Границы не загружены" {
-                    HStack(spacing: 10) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                        Text(model.lastWarning)
-                            .font(.footnote.bold())
-                            .multilineTextAlignment(.leading)
-                    }
-                    .foregroundStyle(FBTheme.textPrimary)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(FBTheme.warning.opacity(0.94), in: RoundedRectangle(cornerRadius: 18))
-                    .padding(.horizontal, 12)
-                    .padding(.bottom, 8)
+                    Label(model.lastWarning, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption.bold())
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(FBTheme.warning.opacity(0.93), in: RoundedRectangle(cornerRadius: 15))
+                        .padding(.horizontal, 14).padding(.bottom, 8)
                 }
-
                 HStack(spacing: 10) {
-                    fieldControl("location.north.fill", "GPS", subtitle: "Позиция", tint: FBTheme.cyan) { model.requestGPS() }
-                    fieldControl("mappin.and.ellipse", "Метка", subtitle: "Точка", tint: FBTheme.green) { model.addMarker() }
-                    fieldControl(model.recording ? "stop.fill" : "record.circle.fill",
-                                 model.recording ? "Стоп" : "Запись",
-                                 subtitle: model.recording ? "Маршрут" : "Трек",
-                                 tint: model.recording ? FBTheme.danger : FBTheme.mint) {
+                    mapAction("location.north.fill", "GPS", tint: FBTheme.cyan) { model.requestGPS() }
+                    mapAction("mappin.circle.fill", "Метка", tint: FBTheme.green) { model.addMarker() }
+                    mapAction(model.recording ? "stop.circle.fill" : "record.circle.fill",
+                              model.recording ? "Стоп" : "Запись", tint: model.recording ? FBTheme.danger : FBTheme.mint) {
                         if model.recording { model.stopTrack() } else { model.startTrack() }
                     }
                 }
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 13)
                 .padding(.bottom, 86)
             }
         }
-        .sheet(item: $selectedZone) { zone in
-            GroundDetailsSheet(zone: zone)
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-        }
     }
-
-    private func fieldControl(_ symbol: String, _ title: String, subtitle: String, tint: Color, action: @escaping () -> Void) -> some View {
+    private func mapAction(_ symbol: String, _ title: String, tint: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            FBActionPill(title: title, subtitle: subtitle, icon: symbol, tint: tint)
+            HStack(spacing: 7) {
+                Image(systemName: symbol).foregroundStyle(tint)
+                Text(title).foregroundStyle(.white)
+            }
+            .font(.subheadline.bold())
+            .frame(maxWidth: .infinity)
+            .frame(height: 49)
+            .background(FBTheme.panel.opacity(0.95), in: RoundedRectangle(cornerRadius: 17))
+            .overlay(RoundedRectangle(cornerRadius: 17).stroke(FBTheme.stroke))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(title)
     }
 
-    private var tracksTab:some View {
+    private var layerSheet: some View {
         NavigationStack {
-            List {
-                if let current=model.currentTrack {Section("Активный маршрут") {trackRow(current);Button(model.paused ? "Продолжить":"Пауза") {model.togglePause()}}}
-                Section("История") {ForEach(model.tracks) {trackRow($0)}}
-            }
-            .scrollContentBackground(.hidden)
-            .background(FBTheme.background)
-            .overlay {if model.tracks.isEmpty && model.currentTrack == nil {ContentUnavailableView("Маршрутов пока нет",systemImage:"figure.hiking",description:Text("Начните запись на вкладке Карта"))}}
-            .navigationTitle("Маршруты")
-        }
-    }
-    private func trackRow(_ track:Track)->some View {
-        HStack {VStack(alignment:.leading){Text(track.name);Text("\(track.fixes.count) точек · \(Int(track.distanceMeters)) м").font(.caption).foregroundStyle(.secondary)};Spacer();if let url=model.exportGPX(track) {ShareLink(item:url){Image(systemName:"square.and.arrow.up")}}}
-    }
-    private var markersTab:some View {
-        NavigationStack {
-            List {ForEach(model.markers) {m in HStack {Image(systemName:"mappin.circle.fill").foregroundStyle(.orange);VStack(alignment:.leading){Text(m.title);Text("\(m.coordinate.latitude.formatted(.number.precision(.fractionLength(5)))), \(m.coordinate.longitude.formatted(.number.precision(.fractionLength(5))))").font(.caption).foregroundStyle(.secondary)};Spacer();ShareLink(item:"geo:\(m.coordinate.latitude),\(m.coordinate.longitude)"){Image(systemName:"square.and.arrow.up")}}}.onDelete(perform:model.removeMarkers)}
-            .toolbar {Button("Добавить",systemImage:"plus") {model.addMarker()}}
-            .scrollContentBackground(.hidden)
-            .background(FBTheme.background)
-            .overlay {if model.markers.isEmpty {ContentUnavailableView("Маркеров пока нет",systemImage:"mappin",description:Text("Добавьте метку по GPS"))}}
-            .navigationTitle("Маркеры")
-        }
-    }
-    private var wildlifeTab:some View {
-        NavigationStack {
-            List {
-                Section {
-                    Text("Данные о животных не означают разрешение на охоту. Источники импортированных пакетов не проверяются приложением автоматически.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Button("Получить виды из GBIF · Казахстан", systemImage: "globe.asia.australia") {
-                        Task {
-                            loadingGBIF = true
-                            defer { loadingGBIF = false }
-                            do {
-                                publicTaxa = try await GBIFDiscovery.fetchKazakhstan()
-                                gbifStatus = "Получено названий: \(publicTaxa.count). Это наблюдения, а не список видов угодья"
-                            } catch { gbifStatus = "Ошибка GBIF: \(error.localizedDescription)" }
-                        }
-                    }.disabled(loadingGBIF)
-                    Text(gbifStatus).font(.caption).foregroundStyle(.secondary)
-                    ForEach(publicTaxa) { taxon in
-                        Text(taxon.name).font(.subheadline)
-                    }
-                    Button("Импортировать каталог JSON", systemImage: "square.and.arrow.down") {
-                        wildlifeImportShown = true
-                    }
-                    Text(wildlifeStore.message).font(.caption).foregroundStyle(.secondary)
-                    TextField("HTTPS-адрес сервера", text: $wildlifeServer)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .keyboardType(.URL)
-                    TextField("ID угодья из проверенного источника", text: $wildlifeGround)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Button("Проверить обновления", systemImage: "arrow.clockwise") {
-                        Task { await wildlifeUpdater.check(server: wildlifeServer, groundID: wildlifeGround) }
-                    }.disabled(wildlifeUpdater.busy)
-                    Text(wildlifeUpdater.status).font(.caption).foregroundStyle(.secondary)
-                    ForEach(wildlifeUpdater.candidates) { item in
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text("Версия: \(item.pack_id)").font(.subheadline)
-                                Text("\(item.taxa_count) видов · \(item.generated_at)")
-                                    .font(.caption2).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button("Скачать") {
-                                Task { await wildlifeUpdater.install(item, server: wildlifeServer, store: wildlifeStore) }
-                            }.disabled(wildlifeUpdater.busy)
-                        }
-                    }
-                }
-                ForEach(Array(wildlifeStore.packs.enumerated()), id: \.offset) { index, pack in
-                    Section {
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text("Территория: \(pack.ground_id)").font(.headline)
-                                Text("Источник: \(pack.source) · \(pack.license)")
-                                    .font(.caption).foregroundStyle(.secondary)
-                                Text("Дата набора: \(pack.generated_at)").font(.caption2)
-                            }
-                            Spacer()
-                            Button(role: .destructive) { wildlifeStore.remove(at: index) } label: {
-                                Image(systemName: "trash")
-                            }
-                        }
-                    } header: { Text("Каталог \(index + 1)") }
-                    Section("Виды · \(pack.taxa.count)") {
-                        ForEach(pack.taxa.filter { wildlifeSearch.isEmpty ||
-                            $0.scientific_name.localizedCaseInsensitiveContains(wildlifeSearch) ||
-                            ($0.name_ru?.localizedCaseInsensitiveContains(wildlifeSearch) ?? false) ||
-                            ($0.name_kk?.localizedCaseInsensitiveContains(wildlifeSearch) ?? false)
-                        }) { taxon in
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(taxon.name_ru ?? taxon.name_kk ?? taxon.scientific_name).font(.headline)
-                                Text(taxon.scientific_name).italic().font(.caption)
-                                Text("Статус: \(wildlifeLabel(taxon.category)) · свидетельств: \(taxon.evidence_count)")
-                                    .font(.caption).foregroundStyle(.secondary)
-                                if let date = taxon.latest_evidence_at { Text("Последнее свидетельство: \(date)").font(.caption2) }
-                                if let source = taxon.source_record_url, let url = URL(string: source) {
-                                    Link("Исходная запись", destination: url).font(.caption)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Подложка карты").font(.title3.bold())
+                    ForEach(MapBasemap.allCases) { style in
+                        Button {
+                            if style == .satellite && mapTilerKey.isEmpty { return }
+                            mapStyle = style.rawValue
+                            online = true
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: style.symbol)
+                                    .font(.title3)
+                                    .foregroundStyle(FBTheme.green)
+                                    .frame(width: 45, height: 45)
+                                    .background(FBTheme.green.opacity(0.13), in: RoundedRectangle(cornerRadius: 14))
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(style.name).font(.subheadline.bold()).foregroundStyle(.white)
+                                    if style == .satellite && mapTilerKey.isEmpty {
+                                        Text("Нужен ключ MapTiler").font(.caption).foregroundStyle(FBTheme.warning)
+                                    }
+                                }
+                                Spacer()
+                                if mapStyle == style.rawValue {
+                                    Image(systemName: "checkmark.circle.fill").foregroundStyle(FBTheme.green)
                                 }
                             }
+                            .fbSoftCard()
                         }
+                        .buttonStyle(.plain)
                     }
+                    Toggle("Онлайн-карта", isOn: $online).tint(FBTheme.green).fbCard()
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("MapTiler API-ключ").font(.headline)
+                        SecureField("Введите ключ для спутника и других карт", text: $mapTilerKey)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .padding(12)
+                            .background(FBTheme.panel2, in: RoundedRectangle(cornerRadius: 13))
+                        Text("Без ключа доступны стили OpenFreeMap. Офлайн-карты подключаются только из установленных пакетов. Русские подписи включаются при наличии name:ru.")
+                            .font(.caption).foregroundStyle(FBTheme.textSecondary)
+                        Text("Данные © OpenStreetMap contributors. Для MapTiler действуют условия его лицензии.")
+                            .font(.caption2).foregroundStyle(FBTheme.textSecondary)
+                    }.fbCard()
+                    Button { showWeatherLayers = true } label: {
+                        FBActionPill(title: "Погодные слои", subtitle: "Ветер · Давление · Осадки", icon: "cloud.sun.fill", tint: FBTheme.green)
+                    }.buttonStyle(.plain)
                 }
+                .padding(18)
             }
-            .scrollContentBackground(.hidden)
-            .background(FBTheme.background)
-            .searchable(text: $wildlifeSearch, prompt: "Русское, казахское или научное название")
-            .navigationTitle("Животные")
-            .fileImporter(isPresented: $wildlifeImportShown, allowedContentTypes: [.json]) { result in
-                switch result {
-                case .success(let url): wildlifeStore.importFile(url)
-                case .failure(let error): wildlifeStore.message = error.localizedDescription
-                }
-            }
+            .fbScreenBackground()
+            .navigationTitle("Слои карты")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Готово") { showLayers = false } } }
         }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
     }
-    private func wildlifeLabel(_ category: String) -> String {
-        switch category {
-        case "confirmed": "подтверждено источником"
-        case "probable": "вероятно"
-        case "historical": "историческое"
-        default: "нет данных"
-        }
-    }
-    private var downloadsTab:some View {
-        NavigationStack {
-            Form {
-                Section("Картографическая подложка") {
-                    Toggle("Онлайн-карта OpenFreeMap", isOn: $onlineBasemap)
-                    Text("Онлайн-режим показывает дороги, тропы и объекты при наличии интернета. Отключите его для строгого офлайна. Онлайн-тайлы не скачиваются массово для офлайн-использования.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Section("Погода · Open-Meteo") {
-                    Button("Открыть прогноз ветра, давления и осадков", systemImage: "cloud.sun.fill") { showWeather = true }
-                    Text("Почасовой прогноз для GPS-точки; пространственные погодные слои пока не реализованы.").font(.caption).foregroundStyle(.secondary)
-                }
-                Section("О приложении и диагностика") {
-                    Button("О приложении") { showAbout = true }
-                    Button("Диагностика / сохранить / отправить в ChatGPT") { showDiagnostics = true }
-                    Button("Запросить фоновое разрешение GPS") { model.requestBackgroundGPS() }
-                    Text("Также откройте диагностику, встряхнув iPhone.").font(.caption).foregroundStyle(.secondary)
-                }
-                Section("Загрузка опубликованных границ") {
-                    TextField("ID угодья из каталога вашего сервера", text: $boundaryGroundID)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Button("Загрузить GeoJSON с сервера") {
-                        Task { await boundaryDownloader.fetch(server: tileStore.serviceURL, groundID: boundaryGroundID, model: model) }
-                    }.disabled(boundaryDownloader.busy || boundaryGroundID.isEmpty)
-                    Text(boundaryDownloader.message).font(.caption).foregroundStyle(.secondary)
-                }
-                Section("Загрузить GeoJSON напрямую") {
-                    TextField("https://.../grounds.geojson", text: $directGeoJSONURL)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .keyboardType(.URL)
-                    Button("Загрузить границы из HTTPS GeoJSON", systemImage: "globe") {
-                        Task { await boundaryDownloader.fetchGeoJSON(urlString: directGeoJSONURL, model: model) }
-                    }.disabled(boundaryDownloader.busy || directGeoJSONURL.isEmpty)
-                    Text("Источник должен разрешать загрузку и повторное использование. Поддерживаются FeatureCollection и Feature с Polygon/MultiPolygon. Сохраняются все простые поля properties.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Section("Открытые источники границ") {
-                    Link("Государственные геоданные Казахстана (проверяйте права)", destination: URL(string: "https://data.egov.kz/")!)
-                    Link("Tabigat: исходные данные и карта", destination: URL(string: "https://tabigat.gov.kz/")!)
-                    Text("Автоматическая загрузка официальных границ не включена: требуется подтверждённый машиночитаемый адрес и разрешение. GeoJSON импортируется отдельно.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Section("Сервер карт") {
-                    TextField("https://maps.example.kz", text: $tileStore.serviceURL)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Text("Только HTTPS. В публичном каталоге нет проверенных охотугодий: сервер должен быть настроен и наполнен правомерными данными.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Section("Режим загрузки") {
-                    Picker("Масштаб пакета", selection: $selectedScope) {
-                        Text("Область").tag("region")
-                        Text("Охотугодье").tag("ground")
-                        Text("Казахстан").tag("country")
-                    }.pickerStyle(.segmented)
-                    TextField(selectedScope == "country" ? "KZ" : "ID области / угодья", text: $scopeID)
-                        .textInputAutocapitalization(.never)
-                    Button("Найти пакеты") {
-                        Task { await tileStore.fetch(scope: selectedScope, id: selectedScope == "country" ? "KZ" : scopeID) }
-                    }.disabled(tileStore.busy || (selectedScope != "country" && scopeID.isEmpty))
-                    ForEach(tileStore.available) { pack in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(pack.pack_id).font(.headline)
-                            Text("\(ByteCountFormatter.string(fromByteCount: pack.size_bytes, countStyle: .file)) · \(pack.source_version) · \(pack.license)")
-                                .font(.caption).foregroundStyle(.secondary)
-                            Button("Скачать / продолжить (SHA-256)") { Task { await tileStore.install(pack) } }
-                                .disabled(tileStore.busy)
-                        }
-                    }
-                }
-                Section("Импорт без сервера") {
-                    Button("Импортировать растровый MBTiles", systemImage: "square.and.arrow.down") { tileImportShown = true }
-                    Text("Только ваши файлы, которые законно разрешено копировать. Лицензия и границы автоматически не подтверждаются.").font(.caption).foregroundStyle(.secondary)
-                }
-                Section("Установленные карты") {
-                    if tileStore.installed.isEmpty { Text("Офлайн-карты пока отсутствуют") }
-                    ForEach(tileStore.installed) { pack in
-                        HStack {
-                            VStack(alignment: .leading) {
-                                Text(pack.pack_id)
-                                Text("\(pack.license) · \(pack.verified ? "источник проверен" : "источник не подтверждён")")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Button(role: .destructive) { tileStore.remove(pack) } label: { Image(systemName: "trash") }
-                        }
-                    }
-                }
-                Section("Статус") {
-                    if tileStore.busy { ProgressView(value: tileStore.progress) }
-                    Text(tileStore.message)
-                    LabeledContent("Картографических пакетов", value: String(tileStore.installed.count))
-                    LabeledContent("Границ", value: String(model.zones.count))
-                    LabeledContent("Каталогов животных", value: String(wildlifeStore.packs.count))
-                }
-                Section("Локальный GeoJSON") {Button("Импортировать границы GeoJSON",systemImage:"square.and.arrow.down") {importShown=true};if let importError {Text(importError).foregroundStyle(.red)}}
-                Section("Тестирование") {Button("Показать демо-полигон") {model.loadDemoZones()};Text("Демонстрационный полигон создан искусственно. Он не является охотугодьем.").font(.caption).foregroundStyle(.secondary)}
-                Section("Ограничения") {
-                    Text("MapLibre использует локальный стиль без интернет-источников и файлы MBTiles. Отсутствие сетевых запросов необходимо подтвердить сетевым тестом на физическом iPhone.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            .scrollContentBackground(.hidden)
-            .background(FBTheme.background)
-            .navigationTitle("Загрузки").fileImporter(isPresented: $tileImportShown, allowedContentTypes: [.item]) { result in
-                switch result {
-                case .success(let url): Task { await tileStore.importLocal(url) }
-                case .failure(let error): importError = error.localizedDescription
-                }
-            }.fileImporter(isPresented:$importShown,allowedContentTypes:[.json]) { result in
-                do {model.setImportedZones(try GeoJSONImport.load(result.get()));importError=nil} catch {importError=error.localizedDescription}
-            }
-        }
-    }
-}
 
-struct OfflineCanvas:View {
-    let zones:[GeoZone];let position:GeoPoint?;let markers:[Marker];let track:Track?
-    @State private var scale=1.0
-    @State private var offset:CGSize = .zero
-    var body:some View {
-        GeometryReader { geo in
-            Canvas {context,size in
-                let center=position ?? GeoPoint(43.26,76.90)
-                let span=0.12/scale
-                func screen(_ p:GeoPoint)->CGPoint {
-                    CGPoint(x:size.width/2+(p.longitude-center.longitude)/span*size.width+offset.width,y:size.height/2-(p.latitude-center.latitude)/span*size.height+offset.height)
-                }
-                for zone in zones {
-                    for poly in zone.polygons {
-                        for ring in poly.rings {
-                            guard let first=ring.first else {continue}
-                            var path=Path();path.move(to:screen(first))
-                            for p in ring.dropFirst() {path.addLine(to:screen(p))};path.closeSubpath()
-                            context.stroke(path,with:.color(zone.verified ? .orange : .yellow),lineWidth:3)
-                        }
-                    }
-                }
-                if let track,let first=track.fixes.first {var path=Path();path.move(to:screen(first.point));for fix in track.fixes.dropFirst() {path.addLine(to:screen(fix.point))};context.stroke(path,with:.color(.green),lineWidth:3)}
-                for m in markers {let p=screen(m.coordinate);context.fill(Path(ellipseIn:CGRect(x:p.x-5,y:p.y-5,width:10,height:10)),with:.color(.orange))}
-                if let position {let p=screen(position);context.fill(Path(ellipseIn:CGRect(x:p.x-7,y:p.y-7,width:14,height:14)),with:.color(.blue));context.stroke(Path(ellipseIn:CGRect(x:p.x-8,y:p.y-8,width:16,height:16)),with:.color(.white),lineWidth:2)}
-            }
-            .overlay(alignment:.topLeading) {VStack(alignment:.leading){Text("СХЕМА · БЕЗ ПОДЛОЖКИ").font(.caption.bold());Text("Не навигационная топокарта").font(.caption2)}.foregroundStyle(.white).padding(10).background(.black.opacity(0.6)).clipShape(RoundedRectangle(cornerRadius:8)).padding(10)}
-            .overlay(alignment:.bottomTrailing) {VStack {Button {scale=min(20,scale*1.5)} label:{Image(systemName:"plus")};Button {scale=max(0.5,scale/1.5)} label:{Image(systemName:"minus")}}.buttonStyle(.borderedProminent).padding(12)}
-            .gesture(DragGesture().onChanged {offset=$0.translation}.onEnded {_ in offset = .zero})
+    // MARK: - Routes and markers
+    private var dataScreen: some View {
+        VStack(alignment: .leading, spacing: 17) {
+            pageTitle("Мои данные", subtitle: "Маршруты и сохранённые точки")
+            Picker("Раздел", selection: $dataSection) {
+                ForEach(DataSection.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }.pickerStyle(.segmented)
+            if dataSection == .routes { routesContent } else { markersContent }
         }
     }
-}
-
-
-/// All original fields are presented, rather than a hardcoded mock of one hunting ground.
-private struct GroundDetailsSheet: View {
-    let zone: GeoZone
-    @Environment(\.dismiss) private var dismiss
-    private var fields: [(key: String, value: String)] {
-        (zone.attributes ?? [:]).map { (key: $0.key, value: $0.value) }
-            .sorted { $0.key.localizedStandardCompare($1.key) == .orderedAscending }
-    }
-    var body: some View {
-        NavigationStack {
-            List {
-                Section("Общая информация") {
-                    LabeledContent("Название", value: zone.name)
-                    LabeledContent("Тип", value: zone.kind == .protectedArea ? "Охраняемая территория" : "Охотничье хозяйство")
-                    LabeledContent("Достоверность", value: zone.verified ? "Верифицировано" : "Не подтверждено")
-                    LabeledContent("Источник", value: zone.source)
-                }
-                Section("Все атрибуты источника · \(fields.count)") {
-                    if fields.isEmpty {
-                        Text("В GeoJSON отсутствуют атрибуты хозяйства. Их нельзя восстановить по одной геометрии.")
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach(fields.indices, id: \.self) { index in
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(fields[index].key).font(.caption).foregroundStyle(.secondary)
-                            Text(fields[index].value.isEmpty ? "Нет данных" : fields[index].value)
-                                .font(.body).textSelection(.enabled)
-                        }.padding(.vertical, 3)
-                    }
-                }
-                Section {
-                    Text("Данные информационные. Актуальность границ, договоров и разрешений необходимо проверить по первоисточнику.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
+    private var routesContent: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            Button {
+                if model.recording { model.stopTrack() } else { model.startTrack() }
+            } label: {
+                Label(model.recording ? "Завершить маршрут" : "Новый маршрут", systemImage: model.recording ? "stop.fill" : "plus")
+                    .frame(maxWidth: .infinity).frame(height: 50)
+            }.buttonStyle(.borderedProminent).tint(FBTheme.green)
+            if model.recording {
+                HStack {
+                    Label(model.paused ? "На паузе" : "Идёт запись", systemImage: "record.circle")
+                        .foregroundStyle(FBTheme.green)
+                    Spacer()
+                    Button(model.paused ? "Продолжить" : "Пауза") { model.togglePause() }
+                }.fbCard()
             }
-            .scrollContentBackground(.hidden)
-            .background(FBTheme.background)
-            .navigationTitle(zone.name).navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Закрыть") { dismiss() } } }
+            if model.tracks.isEmpty && model.currentTrack == nil {
+                emptyCard("Маршрутов пока нет", hint: "Начни запись на карте", icon: "figure.hiking")
+            }
+            ForEach(model.tracks) { track in
+                HStack(spacing: 13) {
+                    Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
+                        .font(.title2).foregroundStyle(FBTheme.green)
+                        .frame(width: 45, height: 45)
+                        .background(FBTheme.green.opacity(0.13), in: RoundedRectangle(cornerRadius: 13))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(track.name).font(.subheadline.bold())
+                        Text("\(track.fixes.count) точек · \(Int(track.distanceMeters)) м")
+                            .font(.caption).foregroundStyle(FBTheme.textSecondary)
+                    }
+                    Spacer()
+                    if let url = model.exportGPX(track) {
+                        ShareLink(item: url) { Image(systemName: "square.and.arrow.up").foregroundStyle(FBTheme.green) }
+                    }
+                }.fbCard()
+            }
+        }
+    }
+    private var markersContent: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            Button { model.addMarker() } label: {
+                Label("Добавить метку по GPS", systemImage: "plus")
+                    .frame(maxWidth: .infinity).frame(height: 50)
+            }.buttonStyle(.borderedProminent).tint(FBTheme.green)
+            if model.markers.isEmpty { emptyCard("Меток пока нет", hint: "Сначала включи GPS, затем сохрани точку", icon: "mappin.slash") }
+            ForEach(model.markers) { marker in
+                HStack(spacing: 12) {
+                    Image(systemName: marker.symbol ?? "mappin.circle.fill")
+                        .foregroundStyle(FBTheme.green).font(.title2)
+                        .frame(width: 44, height: 44)
+                        .background(FBTheme.green.opacity(0.14), in: RoundedRectangle(cornerRadius: 13))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(marker.title).font(.subheadline.bold())
+                        Text(String(format: "%.5f, %.5f", marker.coordinate.latitude, marker.coordinate.longitude))
+                            .font(.caption).foregroundStyle(FBTheme.textSecondary)
+                    }
+                    Spacer(minLength: 6)
+                    ShareLink(item: "geo:\(marker.coordinate.latitude),\(marker.coordinate.longitude)") {
+                        Image(systemName: "square.and.arrow.up").foregroundStyle(FBTheme.green)
+                    }
+                }.fbCard()
+            }
+        }
+    }
+
+    // MARK: - Weather, wildlife and advanced screens
+    private var serviceScreen: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            pageTitle("Сервисы", subtitle: "Прогноз и животные Казахстана")
+            Picker("Раздел", selection: $serviceSection) {
+                ForEach(ServiceSection.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }.pickerStyle(.segmented)
+            if serviceSection == .weather {
+                weatherContent
+            } else {
+                wildlifeContent
+            }
+        }
+    }
+    private var weatherContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("ПОГОДА В ТЕКУЩЕЙ ТОЧКЕ", systemImage: "location.fill")
+                    .font(.caption.bold()).foregroundStyle(FBTheme.green)
+                HStack {
+                    Text(weather.forecast?.temperatureC.map { "\(Int($0.rounded()))°" } ?? "—°")
+                        .font(.system(size: 62, weight: .light, design: .rounded))
+                    Spacer()
+                    Image(systemName: "cloud.sun.fill")
+                        .font(.system(size: 52)).foregroundStyle(FBTheme.green)
+                }
+                Text(weather.forecast == nil ? "Данные ещё не загружены" : "Источник: Open-Meteo")
+                    .font(.subheadline).foregroundStyle(FBTheme.textSecondary)
+                if weather.isCached { Text("Сохранённый прогноз").font(.caption).foregroundStyle(FBTheme.warning) }
+            }.fbCard()
+            HStack(spacing: 10) {
+                weatherQuick("Ветер", icon: "wind")
+                weatherQuick("Давление", icon: "barometer")
+                weatherQuick("Осадки", icon: "cloud.rain.fill")
+            }
+            Button { showWeather = true } label: {
+                FBActionPill(title: "Подробный прогноз", subtitle: "Почасовые данные и единицы измерения", icon: "calendar", tint: FBTheme.green)
+            }.buttonStyle(.plain)
+            Button { tab = .map; showWeatherLayers = true } label: {
+                FBActionPill(title: "Погодная карта", subtitle: "Ветер · Давление · Осадки", icon: "square.3.layers.3d", tint: FBTheme.mint)
+            }.buttonStyle(.plain)
+            if model.coordinate == nil {
+                Text("Для погоды нужна GPS-позиция").font(.caption).foregroundStyle(FBTheme.textSecondary)
+            } else {
+                Button("Обновить прогноз") {
+                    if let coord = model.coordinate {
+                        weather.refresh(latitude: coord.latitude, longitude: coord.longitude, strictOffline: !online)
+                    }
+                }.tint(FBTheme.green)
+            }
+            Text(weather.message).font(.caption).foregroundStyle(FBTheme.textSecondary)
+        }
+        .onAppear {
+            if weather.forecast == nil, let coord = model.coordinate {
+                weather.refresh(latitude: coord.latitude, longitude: coord.longitude, strictOffline: !online)
+            }
+        }
+    }
+    private func weatherQuick(_ title: String, icon: String) -> some View {
+        Button { showWeather = true } label: {
+            VStack(spacing: 9) {
+                Image(systemName: icon).foregroundStyle(FBTheme.green).font(.title2)
+                Text(title).font(.caption.bold()).foregroundStyle(.white)
+            }
+            .frame(maxWidth: .infinity).frame(height: 72)
+            .fbSoftCard()
+        }.buttonStyle(.plain)
+    }
+    private var wildlifeContent: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Наблюдения не означают разрешение на охоту.")
+                .font(.footnote).foregroundStyle(FBTheme.textSecondary)
+                .fbCard()
+            Button {
+                Task {
+                    showGBIF = true
+                    do { taxa = try await GBIFDiscovery.fetchKazakhstan(); wildlifeError = nil }
+                    catch { wildlifeError = error.localizedDescription }
+                    showGBIF = false
+                }
+            } label: {
+                Label(showGBIF ? "Загрузка…" : "Загрузить наблюдения GBIF", systemImage: "arrow.down.circle")
+                    .frame(maxWidth: .infinity).frame(height: 50)
+            }
+            .buttonStyle(.borderedProminent).tint(FBTheme.green).disabled(showGBIF)
+            if let wildlifeError { Text(wildlifeError).foregroundStyle(FBTheme.danger).font(.caption) }
+            ForEach(taxa) { item in
+                HStack {
+                    Image(systemName: "pawprint.fill").foregroundStyle(FBTheme.green)
+                    Text(item.name).font(.subheadline)
+                    Spacer()
+                }.fbCard()
+            }
+            if taxa.isEmpty && !showGBIF {
+                emptyCard("Каталог наблюдений не загружен", hint: "Выполни загрузку из GBIF или импортируй локальный JSON", icon: "pawprint")
+            }
+        }
+    }
+    private var moreScreen: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            pageTitle("Ещё", subtitle: "Карты, настройки и поддержка")
+            moreButton("Загрузки карт", hint: "MBTiles · GeoJSON · Каталоги", icon: "arrow.down.circle.fill") { showAdvanced = true }
+            moreButton("Выбор картографической подложки", hint: "MapTiler · OpenFreeMap · Офлайн", icon: "square.3.layers.3d") { showLayers = true }
+            moreButton("Диагностика", hint: "Встряхивание · Экспорт отчёта", icon: "waveform.path.ecg") { showDiagnostics = true }
+            moreButton("О приложении", hint: "Автор · Версия · Источники", icon: "info.circle") { showAbout = true }
+            moreButton("Дополнительные инструменты", hint: "Импорт, управление каталогами и параметры", icon: "gearshape.2") { showAdvanced = true }
+            VStack(spacing: 10) {
+                Image(systemName: "shield.lefthalf.filled")
+                    .font(.system(size: 50)).foregroundStyle(FBTheme.green)
+                Text("HUNT MAP KZ").font(.title2.bold())
+                Text("Навигация · Казахстан").font(.caption).foregroundStyle(FBTheme.textSecondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 28)
+        }
+    }
+    private func moreButton(_ title: String, hint: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 13) {
+                Image(systemName: icon)
+                    .font(.title3).foregroundStyle(FBTheme.green)
+                    .frame(width: 40)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title).font(.subheadline.bold()).foregroundStyle(.white)
+                    Text(hint).font(.caption2).foregroundStyle(FBTheme.textSecondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(FBTheme.textSecondary)
+            }.fbCard()
+        }.buttonStyle(.plain)
+    }
+    private func emptyCard(_ title: String, hint: String, icon: String) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: icon).font(.system(size: 38)).foregroundStyle(FBTheme.green)
+            Text(title).font(.headline)
+            Text(hint).font(.footnote).foregroundStyle(FBTheme.textSecondary).multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity).padding(.vertical, 28).fbCard()
+    }
+    private func pageTitle(_ title: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.system(size: 30, weight: .bold, design: .rounded))
+            Text(subtitle).font(.subheadline).foregroundStyle(FBTheme.textSecondary)
         }
     }
 }

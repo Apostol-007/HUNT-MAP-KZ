@@ -5,6 +5,12 @@ import HuntCore
 /// MapLibre receives only a locally generated, source-free style and file-backed MBTiles.
 /// No HTTP style, glyph, sprite or tile endpoint is configured by this view.
 struct OfflineMapView: UIViewRepresentable {
+    @AppStorage("hunt.map.style") private var mapStyle = MapBasemap.bright.rawValue
+    @AppStorage("hunt.map.maptilerKey") private var mapTilerKey = ""
+    private var selectedStyle: URL {
+        (MapBasemap(rawValue: mapStyle) ?? .bright).styleURL(apiKey: mapTilerKey) ?? MapBasemap.bright.styleURL(apiKey: "")!
+    }
+
     let zones: [GeoZone]
     let position: GeoPoint?
     let markers: [Marker]
@@ -19,7 +25,7 @@ struct OfflineMapView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(selectedZone: $selectedZone) }
 
     func makeUIView(context: Context) -> MLNMapView {
-        let styleURL = online ? URL(string: "https://tiles.openfreemap.org/styles/liberty")! : OfflineMapStyle.url
+        let styleURL = online ? selectedStyle : OfflineMapStyle.url
         let view = MLNMapView(frame: .zero, styleURL: styleURL)
         view.delegate = context.coordinator
         context.coordinator.zones = zones
@@ -34,9 +40,9 @@ struct OfflineMapView: UIViewRepresentable {
 
     func updateUIView(_ view: MLNMapView, context: Context) {
         let requestedOnline = online
-        let currentOnline = view.styleURL?.host == "tiles.openfreemap.org"
-        if requestedOnline != currentOnline {
-            view.styleURL = requestedOnline ? URL(string: "https://tiles.openfreemap.org/styles/liberty") : OfflineMapStyle.url
+        let targetStyle = requestedOnline ? selectedStyle : OfflineMapStyle.url
+        if view.styleURL != targetStyle {
+            view.styleURL = targetStyle
         }
         context.coordinator.zones = zones
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
