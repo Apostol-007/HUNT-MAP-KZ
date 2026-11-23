@@ -65,3 +65,42 @@ def test_remote_probe_reads_only_eight_header_bytes():
         assert req.get_header("Range") == "bytes=0-7"
         return Response()
     assert MODULE.probe_source("https://build.protomaps.com/20261116.pmtiles", opener)
+
+
+def test_country_grid_is_partitioned_into_batches_of_100():
+    region = MODULE.parse_bbox("46.49,40.56,87.31,55.44")
+    groups = MODULE.partition(MODULE.cells(region, 0.5, 100000), 100)
+    first = next(groups)
+    second = next(groups)
+    assert len(first) == len(second) == 100
+    assert first[-1][0] != second[0][0]
+
+
+def test_catalog_is_written_incrementally_and_restored(tmp_path):
+    catalog = tmp_path / "catalog.json"
+    entry = {"id": "cell_a", "bounds": [76.0, 43.0, 76.5, 43.5],
+             "bytes": 300, "maxzoom": 15,
+             "url": "https://create.web-works.kz/maps/protomaps/cell_a.pmtiles",
+             "sha256": "a" * 64}
+    MODULE.atomic_catalog(catalog, {"cell_a": entry}, "local.pmtiles", "https://create.web-works.kz/maps/protomaps")
+    restored = MODULE.load_catalog(catalog)
+    assert restored["cell_a"] == entry
+    assert not (tmp_path / "catalog.json.tmp").exists()
+
+
+def test_partial_archive_is_not_used_as_completed(tmp_path):
+    destination = tmp_path / "cell_a.pmtiles"
+    destination.write_bytes(b"bad")
+    entry = {"bounds": [76.0, 43.0, 76.5, 43.5],
+             "bytes": 3, "maxzoom": 15,
+             "url": "https://create.web-works.kz/maps/protomaps/cell_a.pmtiles",
+             "sha256": "a" * 64}
+    assert not MODULE.cached_record(entry, destination, entry["bounds"], "https://create.web-works.kz/maps/protomaps", 15)
+
+
+def test_windows_batch_has_no_region_prompt_and_never_autocloses():
+    batch = (ROOT / "tools" / "PREPARE_PROTOMAPS_WINDOWS.bat").read_text(encoding="utf-8")
+    assert "--batch-size 100" in batch
+    assert "46.49,40.56,87.31,55.44" in batch
+    assert "pause" in batch.lower()
+    assert "set /p REGION" not in batch
