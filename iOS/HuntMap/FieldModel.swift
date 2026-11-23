@@ -208,7 +208,12 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
             UNUserNotificationCenter.current().add(UNNotificationRequest(identifier:UUID().uuidString,content:notification,trigger:nil))
         }
     }
-    func locationManager(_ manager:CLLocationManager,didFailWithError error:Error) {status="Ошибка GPS: \(error.localizedDescription)"; lastError = status}
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        status = "Ошибка GPS: \(error.localizedDescription)"
+        lastError = status
+        AppDiagnosticLog.shared.recordError(subsystem: "GPS",
+            operation: "Получение координат", error: error)
+    }
     func locationManagerDidChangeAuthorization(_ manager:CLLocationManager) {
         if manager.authorizationStatus == .authorizedAlways || manager.authorizationStatus == .authorizedWhenInUse {
             if manager.authorizationStatus == .authorizedAlways && navigatingRecordedTrack {
