@@ -107,12 +107,14 @@ struct MainView: View {
 
     var body: some View {
         ZStack {
-            // Keep the expensive MapLibre instance alive when switching tabs.
-            // Only controls disappear; the map remains genuinely full-screen.
-            mapScreen
-                .opacity(tab == .map ? 1 : 0)
-                .allowsHitTesting(tab == .map)
-            if tab != .map { themedScreen }
+            // MapLibre, PMTiles and style parsing can consume substantial memory.
+            // Never construct the native map behind the Home screen on cold launch.
+            // Instantiate only when the map tab is actually selected.
+            if tab == .map {
+                mapScreen
+            } else {
+                themedScreen
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .bottom) { navigation }
@@ -133,11 +135,13 @@ struct MainView: View {
             // main thread at launch. Offline routing loads it on first request.
             startupSync.begin(hosting: hosting, tiles: maps, protomaps: protomaps,
                               model: model, valhalla: valhalla)
-            refreshWeatherOnLaunch()
+            // Weather is not critical to app launch: defer it until after the
+            // first screen is usable and an actual map view has a viewport.
             Task {
-                try? await Task.sleep(for: .seconds(1))
+                try? await Task.sleep(for: .seconds(4))
                 guard !Task.isCancelled else { return }
-                weatherGrid.load(hourOffset: 0)
+                refreshWeatherOnLaunch()
+                if weatherLayer != .none { weatherGrid.load(hourOffset: 0) }
             }
         }
         .onChange(of: scenePhase) { _, phase in
