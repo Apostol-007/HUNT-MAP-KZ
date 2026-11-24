@@ -289,3 +289,13 @@ def test_cold_start_does_not_build_hidden_map_or_hash_on_main_actor():
     assert 'func needsRouteUpdateAsync' in hosting
     assert 'hosting.needsRouteUpdateAsync(pack)' in startup
     assert 'Task.sleep(for: .seconds(8))' in startup
+
+def test_active_gps_track_append_only_journal():
+    model = (IOS / "FieldModel.swift").read_text()
+    journal = (IOS / "TrackPointJournal.swift").read_text()
+    assert 'private let trackJournal = TrackPointJournal()' in model
+    assert 'if !trackJournal.append(point) { persist() }' in model
+    assert 'CREATE TABLE IF NOT EXISTS fixes' in journal
+    assert 'ORDER BY id' in journal
+    assert 'pending.fixes = journalFixes' in model
+    assert 'if let pending=obj.pendingTrack' not in model

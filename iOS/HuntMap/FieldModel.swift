@@ -51,6 +51,7 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
     private let manager=CLLocationManager()
     private let engine=BoundaryEngine()
     private var lastFix: CLLocation?
+    private let trackJournal = TrackPointJournal()
     private var documentURL:URL {
         let dir=FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0]
         try? FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
@@ -107,6 +108,7 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         }
         lastFix=nil // Do not reuse the last fix from a previous recording session.
         currentTrack=Track(name:"Маршрут \(Date.now.formatted(date:.numeric,time:.shortened))")
+        if let currentTrack { trackJournal.begin(trackID: currentTrack.id) }
         recording=true;paused=false
         // Background updates are enabled ONLY after Always authorization; foreground-only
         // recording must never terminate the app because the user denied Always access.
@@ -133,6 +135,13 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         if manager.allowsBackgroundLocationUpdates && !navigatingRecordedTrack { manager.allowsBackgroundLocationUpdates=false }
         manager.pausesLocationUpdatesAutomatically = !navigatingRecordedTrack
         persist()
+        // Clear only after the completed track has been committed to field.json.
+        // If JSON persistence fails, the journal remains available for recovery.
+        if let data = try? Data(contentsOf: documentURL),
+           let saved = try? JSONDecoder().decode(LocalData.self, from: data),
+           saved.pendingTrack == nil {
+            trackJournal.clear()
+        }
     }
     func addMarker(kind:String="Точка") {
         guard let coordinate else { status="Сначала получите GPS-позицию"; return }
@@ -190,8 +199,11 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
                 let dt=fix.timestamp.timeIntervalSince(last.timestamp)
                 if dt>0 && GeoMath.meters(GeoPoint(last.coordinate.latitude,last.coordinate.longitude),p)/dt>80 {return}
             }
-            currentTrack?.fixes.append(TrackFix(point:p,timestamp:fix.timestamp,accuracy:fix.horizontalAccuracy,altitude:fix.altitude))
-            persist() // Atomic write of current track after each accepted fix.
+            let point = TrackFix(point:p,timestamp:fix.timestamp,accuracy:fix.horizontalAccuracy,altitude:fix.altitude)
+            currentTrack?.fixes.append(point)
+            // Append one SQLite row, never re-encode all saved routes on every GPS update.
+            // If SQLite is unavailable, preserve the previous full-JSON persistence.
+            if !trackJournal.append(point) { persist() }
         }
         lastFix=fix
         for event in engine.process(GPSFix(position:p,accuracyMeters:fix.horizontalAccuracy,timestamp:fix.timestamp),zones:zones) {
@@ -230,13 +242,21 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         markers=obj.markers;tracks=obj.tracks;zones=obj.zones
         // An interrupted recording is restored exactly once. Clear pendingTrack on disk
         // immediately, otherwise every relaunch would duplicate the recovered route.
-        if let pending=obj.pendingTrack {
+        if var pending=obj.pendingTrack {
+            // The SQLite journal is authoritative for the active recording. Legacy
+            // pending fixes are retained when migrating from an older installed IPA.
+            let journalFixes = trackJournal.read(trackID: pending.id)
+            if journalFixes.count > pending.fixes.count { pending.fixes = journalFixes }
             if !pending.fixes.isEmpty && !tracks.contains(where: { $0.id == pending.id }) {
                 tracks.insert(Track(id:pending.id, name:pending.name+" (восстановлен)",
                                     createdAt:pending.createdAt, fixes:pending.fixes), at:0)
             }
             lastWarning = "Запись после закрытия приложения восстановлена"
             persist()
+            // Delete recovered fixes only once the restored state is on disk.
+            if let data = try? Data(contentsOf: documentURL),
+               let saved = try? JSONDecoder().decode(LocalData.self, from: data),
+               saved.pendingTrack == nil { trackJournal.clear() }
         }
     }
     private func persist() {
