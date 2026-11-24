@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import HuntCore
 import UniformTypeIdentifiers
 
@@ -29,6 +30,7 @@ struct MainView: View {
     private var hasMapTilerKey: Bool { MapTilerConfiguration.isConfigured }
 
     @State private var tab: Tab = .home
+    @State private var mapOpened = false
     @State private var dataSection: DataSection = .routes
     @State private var serviceSection: ServiceSection = .weather
     @State private var weatherLayer: WeatherMapLayer = .none
@@ -112,9 +114,13 @@ struct MainView: View {
             // MapLibre, PMTiles and style parsing can consume substantial memory.
             // Never construct the native map behind the Home screen on cold launch.
             // Instantiate only when the map tab is actually selected.
-            if tab == .map {
+            if mapOpened || tab == .map {
                 mapScreen
-            } else {
+                    .opacity(tab == .map ? 1 : 0)
+                    .allowsHitTesting(tab == .map)
+                    .accessibilityHidden(tab != .map)
+            }
+            if tab != .map {
                 themedScreen
             }
         }
@@ -158,6 +164,12 @@ struct MainView: View {
             if value != .none { weatherGrid.load(hourOffset: weatherGrid.chosenOffset) }
         }
         .onDisappear { playbackTask?.cancel() }
+        .onChange(of: tab) { _, value in
+            if value == .map { mapOpened = true }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
+            if tab != .map { mapOpened = false }
+        }
         .onChange(of: online) { _, enabled in if enabled { offlineRoads.clear() } }
         .onChange(of: model.coordinate) { _, newPoint in
             if let point = newPoint {
@@ -526,6 +538,7 @@ struct MainView: View {
                                else if selectedGridCells.count < 100 { selectedGridCells.insert(id) }
                            },
                            onViewportChanged: { bounds in
+                               guard tab == .map else { return }
                                weatherGrid.updateViewport(bounds, active: weatherLayer != .none)
                                if !online {
                                    offlineRoads.load(bounds: bounds, files: hosting.installedRoadFiles(in: bounds))
