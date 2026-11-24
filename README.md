@@ -15,7 +15,7 @@
 
 ## Сборка
 
-В GitHub: Actions → HUNT MAP KZ - unsigned iOS IPA → Run workflow.
+В GitHub: Actions → HUNT MAP KZ - unsigned iOS IPA → Run workflow. Обычные push запускают Linux-тесты; IPA на macOS запускается только вручную либо для коммита с `[release]` в сообщении.
 Сборка производится из `iOS/project.yml` и `Core/`; исходники из корня не используются.
 
 ## Проверки
@@ -26,14 +26,14 @@ python -m pip install -r server/requirements.txt pytest httpx
 python -m pytest -q server/tests
 ```
 
-Статус функциональности и ограничения: [мастер-спецификация v4](docs/HUNT_MAP_KZ_v4_MASTER_UI_SPEC_RU.md).
+Актуальный статус релиза и ограничения: [IMPLEMENTATION_STATUS](docs/IMPLEMENTATION_STATUS.md). Мастер-спецификация UI: [v4](docs/HUNT_MAP_KZ_v4_MASTER_UI_SPEC_RU.md).
 Аудит и удалённые файлы: [отчёт об очистке](docs/REPOSITORY_AUDIT_2026-11-23.md).
 
 Интеграция статических карт и маршрутов: `https://create.web-works.kz/maps/` (для опубликованных пакетов требуется реальное наличие файлов). Генерация IPA и тесты на iPhone должны проверяться по фактическому результату GitHub Actions.
 
 ## Protomaps (HUNT MAP KZ v5.4)
 
-Primary vector basemap is **Protomaps Basemap v4 / PMTiles**. The app reads regional `.pmtiles` directly with MapLibre Native, without any raster conversion. Previously imported MBTiles, downloaded GeoJSON routing graphs and map markers remain supported.
+Protomaps Basemap v4 / PMTiles is an optional regional vector source. The generated MapLibre style refers to the `pmtiles://` scheme; **actual decoding and display of PMTiles on physical iPhone is not yet verified**. The app still supports raster MBTiles, GeoJSON routing, and local markers. Do not consider the number of downloaded PMTiles equivalent to successful rendering.
 
 1. On Windows run `tools/PREPARE_PROTOMAPS_WINDOWS.bat`. It uses the official `pmtiles extract` CLI to create Almaty grid archives and SHA-256 catalog.
 2. Upload **all** output files from `hosting_upload/protomaps/` to `https://create.web-works.kz/maps/protomaps/` (same filenames and paths).
