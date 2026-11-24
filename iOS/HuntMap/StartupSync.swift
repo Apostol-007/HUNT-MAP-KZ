@@ -80,13 +80,13 @@ import Network
             !tiles.installed.contains { $0.sha256.lowercased() == pack.sha256.lowercased() }
         }
         var roads: [HostingRoutingPack] = []
-        for pack in hosting.routes where await hosting.needsRouteUpdateAsync(pack) {
-            roads.append(pack)
+        for pack in hosting.routes {
+            if await hosting.needsRouteUpdateAsync(pack) { roads.append(pack) }
             await Task.yield()
         }
         var zones: [HostingZonePack] = []
-        for pack in hosting.zones where await hosting.needsZoneUpdateAsync(pack) {
-            zones.append(pack)
+        for pack in hosting.zones {
+            if await hosting.needsZoneUpdateAsync(pack) { zones.append(pack) }
             await Task.yield()
         }
         let protos = protomaps.available.filter { pack in

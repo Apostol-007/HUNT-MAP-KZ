@@ -269,11 +269,11 @@ def test_startup_does_not_gate_map_on_downloads():
     assert '@Published private(set) var presented = false' in startup
     assert 'StartupSyncBanner(sync: startupSync)' in main
     assert 'StartupSyncScreen(sync:' not in main
-    assert 'Task.sleep(for: .seconds(2))' in startup
+    assert 'Task.sleep(for: .seconds(8))' in startup
     assert 'func skip()' in startup
     assert 'active = true' in startup and 'defer { active = false }' in startup
     assert 'loadRoutingNetwork()' not in main.split('.onAppear {', 1)[1].split('.onChange(of: scenePhase)', 1)[0]
-    assert 'try? await Task.sleep(for: .seconds(1))' in main
+    assert 'try? await Task.sleep(for: .seconds(4))' in main
     assert 'let recentFiles = files.filter' in (IOS / "WeatherGridService.swift").read_text()
 
 
