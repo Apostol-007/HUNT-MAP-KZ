@@ -79,7 +79,47 @@ struct HostingZonePack: Decodable, Identifiable {
         try? FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
         return path
     }
-    init() { restore() }
+    /// Last verified manifest receipt. A same-size file with a changed modification
+    /// date is rehashed; even unchanged packages are audited again after seven days.
+    private struct VerifiedReceipt: Codable {
+        let sha256: String
+        let size: Int64
+        let modifiedAt: TimeInterval
+        let validatedAt: TimeInterval
+    }
+    private var receipts: [String: VerifiedReceipt] = [:]
+    private var receiptsURL: URL { folder.appendingPathComponent("verified-receipts.json") }
+    private func validatedReceipt(_ file: URL, key: String, hash: String, size: Int64) -> Bool {
+        guard let receipt = receipts[key],
+              receipt.sha256 == hash.lowercased(), receipt.size == size,
+              Date().timeIntervalSince1970 - receipt.validatedAt < 7 * 24 * 3600,
+              let properties = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+              let actualSize = properties.fileSize,
+              let modified = properties.contentModificationDate else { return false }
+        return Int64(actualSize) == size &&
+            abs(modified.timeIntervalSince1970 - receipt.modifiedAt) < 0.001
+    }
+    private func saveReceipt(_ file: URL, key: String, hash: String, size: Int64) {
+        guard let properties = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+              let actualSize = properties.fileSize, Int64(actualSize) == size,
+              let modified = properties.contentModificationDate else { return }
+        receipts[key] = VerifiedReceipt(sha256: hash.lowercased(), size: size,
+            modifiedAt: modified.timeIntervalSince1970,
+            validatedAt: Date().timeIntervalSince1970)
+        persistReceipts()
+    }
+    private func persistReceipts() {
+        if let bytes = try? JSONEncoder().encode(receipts) {
+            try? bytes.write(to: receiptsURL, options: .atomic)
+        }
+    }
+    init() {
+        if let bytes = try? Data(contentsOf: receiptsURL),
+           let saved = try? JSONDecoder().decode([String: VerifiedReceipt].self, from: bytes) {
+            receipts = saved
+        }
+        restore()
+    }
 
     private func restore() {
         if let data = try? Data(contentsOf: folder.appendingPathComponent("maps-catalog.json")),
@@ -193,16 +233,26 @@ struct HostingZonePack: Decodable, Identifiable {
         guard FileManager.default.fileExists(atPath: file.path),
               let size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize),
               Int64(size) == pack.bytes else { return true }
+        if validatedReceipt(file, key: "route:" + pack.id, hash: pack.sha256, size: pack.bytes) { return false }
         guard let found = try? await digestAsync(file) else { return true }
-        return found.lowercased() != pack.sha256.lowercased()
+        if found.lowercased() == pack.sha256.lowercased() {
+            saveReceipt(file, key: "route:" + pack.id, hash: pack.sha256, size: pack.bytes)
+            return false
+        }
+        return true
     }
     func needsZoneUpdateAsync(_ pack: HostingZonePack) async -> Bool {
         let file = folder.appendingPathComponent("zones/" + pack.id + ".geojson")
         guard FileManager.default.fileExists(atPath: file.path),
               let size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize),
               Int64(size) == pack.bytes else { return true }
+        if validatedReceipt(file, key: "zone:" + pack.id, hash: pack.sha256, size: pack.bytes) { return false }
         guard let found = try? await digestAsync(file) else { return true }
-        return found.lowercased() != pack.sha256.lowercased()
+        if found.lowercased() == pack.sha256.lowercased() {
+            saveReceipt(file, key: "zone:" + pack.id, hash: pack.sha256, size: pack.bytes)
+            return false
+        }
+        return true
     }
     private func transfer(_ url: URL, bytes: Int64, hash: String, destination: URL) async throws {
         guard bytes > 0, hash.range(of: "^[a-fA-F0-9]{64}$", options: .regularExpression) != nil else { throw HostingError.invalidCatalog }
@@ -225,17 +275,15 @@ struct HostingZonePack: Decodable, Identifiable {
             try FileManager.default.moveItem(at: staged, to: destination)
         }
     }
+    // The synchronous UI queries never hash multi-GB packages. The async
+    // verification path performs SHA-256 when the receipt is absent or expired.
     func needsRouteUpdate(_ pack: HostingRoutingPack) -> Bool {
-        let file = folder.appendingPathComponent(pack.id + ".geojson")
-        guard FileManager.default.fileExists(atPath: file.path),
-              let found = try? Self.digest(file) else { return true }
-        return found.lowercased() != pack.sha256.lowercased()
+        !validatedReceipt(folder.appendingPathComponent(pack.id + ".geojson"),
+            key: "route:" + pack.id, hash: pack.sha256, size: pack.bytes)
     }
     func needsZoneUpdate(_ pack: HostingZonePack) -> Bool {
-        let file = folder.appendingPathComponent("zones/" + pack.id + ".geojson")
-        guard FileManager.default.fileExists(atPath: file.path),
-              let found = try? Self.digest(file) else { return true }
-        return found.lowercased() != pack.sha256.lowercased()
+        !validatedReceipt(folder.appendingPathComponent("zones/" + pack.id + ".geojson"),
+            key: "zone:" + pack.id, hash: pack.sha256, size: pack.bytes)
     }
     func installRoute(_ pack: HostingRoutingPack) async {
         guard !busy else { return }; busy = true; progress = 0; activePack = pack.name
@@ -258,6 +306,7 @@ struct HostingZonePack: Decodable, Identifiable {
             }.value
             guard valid else { throw OfflineRouteGraph.RouteError.emptyNetwork }
             installedRoutes.insert(pack.id)
+            saveReceipt(target, key: "route:" + pack.id, hash: pack.sha256, size: pack.bytes)
             try persist(); progress = 1
             status = "Дорожная сеть установлена: \(pack.name)"
         } catch {
@@ -334,6 +383,7 @@ struct HostingZonePack: Decodable, Identifiable {
             }.value
             model.setImportedZones(imported)
             installedZones.insert(pack.id)
+            saveReceipt(target, key: "zone:" + pack.id, hash: pack.sha256, size: pack.bytes)
             progress = 1
             status = "Зоны импортированы: \(imported.count). Юридический статус не подтверждён."
         } catch {
@@ -419,6 +469,8 @@ struct HostingZonePack: Decodable, Identifiable {
         do {
             try FileManager.default.removeItem(at: target)
             installedZones.remove(id)
+            receipts.removeValue(forKey: "zone:" + id)
+            persistReceipts()
             var imported: [GeoZone] = []
             let directory = folder.appendingPathComponent("zones")
             for file in (try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil))
@@ -432,6 +484,8 @@ struct HostingZonePack: Decodable, Identifiable {
     func removeRoute(_ id: String) {
         try? FileManager.default.removeItem(at: folder.appendingPathComponent(id + ".geojson"))
         installedRoutes.remove(id)
+        receipts.removeValue(forKey: "route:" + id)
+        persistReceipts()
         try? persist()
         status = "Дорожная сеть удалена"
     }

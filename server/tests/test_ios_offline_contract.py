@@ -338,3 +338,13 @@ def test_local_mbtiles_server_reuses_read_only_sqlite_readers():
     assert 'for (_, db) in readers { sqlite3_close(db) }' in source
     assert 'readers[key] = db' in source
     assert 'guard let key = files.first(where:' in source
+
+
+def test_verified_package_receipts_prevent_repeat_hashing_on_main_actor():
+    src = (IOS / "HostingOfflineDownloads.swift").read_text()
+    assert 'private struct VerifiedReceipt: Codable' in src
+    assert '7 * 24 * 3600' in src
+    assert 'saveReceipt(file, key: "route:"' in src
+    assert 'saveReceipt(file, key: "zone:"' in src
+    sync = src.split('func needsRouteUpdate(_ pack:', 1)[1].split('func installRoute(', 1)[0]
+    assert 'Self.digest(' not in sync
