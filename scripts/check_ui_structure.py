@@ -18,7 +18,7 @@ checks = {
     'Map no fixed viewport height': '.frame(height:' not in map_code.split('LinearGradient(colors:', 1)[0],
     'GPS and tracking actions retained': all(name in main for name in ['model.requestGPS()', 'model.insertMarker(', 'model.startTrack()', 'model.stopTrack()']),
     'Map controls are interactive': all(name in main for name in ['showSearch = true', 'zoomCommand += 1', 'zoomCommand -= 1', 'centerRequest += 1']),
-    'Layers real state': all(name in main for name in ['showGrounds ?', 'satelliteBinding', 'weatherEnabledBinding']),
+    'Layers real state': all(name in main for name in ['showGrounds ?', 'mapStyle = MapBasemap.hybrid.rawValue', 'weatherEnabledBinding']),
     'Disabled unavailable wildlife map overlay': 'available: false' in main,
     'Vector remote source and offline fallback': 'api.maptiler.com/maps/' in styles and 'OfflineMapStyle.url' in map_view,
     'Map telemetry preserved': 'hunt.diag.fullscreenMap' in map_view,
