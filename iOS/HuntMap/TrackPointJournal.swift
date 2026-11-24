@@ -10,6 +10,7 @@ import HuntCore
 
     init() {
         let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         path = folder.appendingPathComponent("active-track.sqlite")
         guard sqlite3_open(path.path, &db) == SQLITE_OK else {
             if db != nil { sqlite3_close(db) }

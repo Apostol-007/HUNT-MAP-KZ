@@ -117,7 +117,29 @@ struct ForecastGrid: Codable {
         var bbox: ForecastGrid.Bounds { .init(west: west, south: south, east: east, north: north) }
         var key: String { "\(Int(west * 100))_\(Int(south * 100))_\(Int(east * 100))_\(Int(north * 100))_\(width)x\(height)" }
     }
-    init() { try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true) }
+    init() {
+        try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        let directory = cacheDirectory
+        // Cache retention is disk housekeeping, not launch-critical work.
+        Task.detached(priority: .background) { Self.pruneCache(directory) }
+    }
+
+    nonisolated private static func pruneCache(_ directory: URL) {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
+        let candidates = files.filter {
+            $0.pathExtension == "json" && $0.lastPathComponent.hasPrefix("v2_")
+        }.sorted {
+            let left = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]))
+                .flatMap(\.contentModificationDate) ?? .distantPast
+            let right = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]))
+                .flatMap(\.contentModificationDate) ?? .distantPast
+            return left > right
+        }
+        for file in candidates.dropFirst(256) {
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
 
     private func regionForViewport() -> Region {
         // Entire Kazakhstan in overview zoom. Intermediate/close zooms use the actual camera

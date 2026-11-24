@@ -357,3 +357,11 @@ def test_user_can_export_full_data_backup_without_deleting_storage():
     assert 'LocalData(markers: markers, tracks: tracks,' in model
     assert 'trackJournal.read(trackID:' in model
     assert 'ShareLink(item: backupFile)' in ui
+
+
+def test_gps_database_directory_exists_and_weather_cache_has_retention():
+    journal = (IOS / "TrackPointJournal.swift").read_text()
+    weather = (IOS / "WeatherGridService.swift").read_text()
+    assert 'createDirectory(at: folder' in journal
+    assert 'Task.detached(priority: .background)' in weather
+    assert 'candidates.dropFirst(256)' in weather
