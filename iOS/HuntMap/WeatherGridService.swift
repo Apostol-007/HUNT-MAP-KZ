@@ -5,7 +5,7 @@ import HuntCore
 /// Forecast GRID, not radar, not a real-time measurement. Sampled 3x3 forecast points.
 /// Fetched directly from Open-Meteo; never asks the user to configure a weather server.
 enum WeatherMapLayer: String, CaseIterable, Identifiable {
-    case none = "Без слоя", wind = "Ветер", pressure = "Давление", precipitation = "Осадки"
+    case none = "Без слоя", wind = "Ветер", pressure = "Давление", precipitation = "Осадки", probability = "Вероятность осадков"
     var id: Self { self }
 }
 
@@ -18,12 +18,14 @@ struct ForecastGrid: Codable {
         let direction: Double?
         let pressure: Double?
         let precipitation: Double?
+        var precipitationProbability: Double? = nil
         enum CodingKeys: String, CodingKey {
             case latitude, longitude
             case windSpeed = "wind_speed_10m"
             case direction = "wind_direction_10m"
             case pressure = "pressure_msl"
             case precipitation
+            case precipitationProbability = "precipitation_probability"
         }
     }
     let schema: String
@@ -65,7 +67,8 @@ struct ForecastGrid: Codable {
             (p.windSpeed == nil || p.windSpeed! >= 0) &&
             (p.direction == nil || (0...360).contains(p.direction!)) &&
             (p.pressure == nil || (800...1200).contains(p.pressure!)) &&
-            (p.precipitation == nil || p.precipitation! >= 0)
+            (p.precipitation == nil || p.precipitation! >= 0) &&
+            (p.precipitationProbability == nil || (0...100).contains(p.precipitationProbability!))
         }
     }
 }
@@ -106,6 +109,7 @@ struct ForecastGrid: Codable {
         let wind_direction_10m: [Double?]
         let pressure_msl: [Double?]
         let precipitation: [Double?]
+        let precipitation_probability: [Double?]?
     }
     private struct OpenMeteoGridPoint: Decodable { let hourly: OpenMeteoHour }
     private struct Region {
@@ -144,11 +148,12 @@ struct ForecastGrid: Codable {
         return Region(west: west, south: south, east: east, north: north)
     }
     private func cachePath(region: Region, date: Date) -> URL {
-        cacheDirectory.appendingPathComponent("v2_\(region.key)_\(Int(date.timeIntervalSince1970 / 3600)).json")
+        cacheDirectory.appendingPathComponent("v3_\(region.key)_\(Int(date.timeIntervalSince1970 / 3600)).json")
     }
     private func cachedGrid(region: Region, date: Date) -> ForecastGrid? {
         let file = cachePath(region: region, date: date)
-        guard let data = try? Data(contentsOf: file),
+        let legacy = cacheDirectory.appendingPathComponent(file.lastPathComponent.replacingOccurrences(of: "v3_", with: "v2_"))
+        guard let data = (try? Data(contentsOf: file)) ?? (try? Data(contentsOf: legacy)),
               let value = try? JSONDecoder().decode(ForecastGrid.self, from: data),
               value.validated(), let time = value.forecastDate,
               abs(time.timeIntervalSince(date)) < 60 else { return nil }
@@ -181,7 +186,7 @@ struct ForecastGrid: Codable {
     func load(latitude: Double = 48, longitude: Double = 70, hourOffset: Int, allowNetwork: Bool = true) {
         load(hourOffset: hourOffset, allowNetwork: allowNetwork)
     }
-    /// Starts with one lightweight request (6x4), then refines to 12x8 asynchronously.
+    /// Starts with a 3x3 grid, then refines to 8x6 asynchronously.
     /// A forecast is model data, not real-time sensor measurements.
     private func fetchGrid(region: Region, at date: Date) async throws -> ForecastGrid {
         var points: [(Double, Double)] = []
@@ -209,7 +214,7 @@ struct ForecastGrid: Codable {
                     url.queryItems = [
                         URLQueryItem(name: "latitude", value: batch.map { String(format: "%.5f", $0.0) }.joined(separator: ",")),
                         URLQueryItem(name: "longitude", value: batch.map { String(format: "%.5f", $0.1) }.joined(separator: ",")),
-                        URLQueryItem(name: "hourly", value: "wind_speed_10m,wind_direction_10m,pressure_msl,precipitation"),
+                        URLQueryItem(name: "hourly", value: "wind_speed_10m,wind_direction_10m,pressure_msl,precipitation,precipitation_probability"),
                         URLQueryItem(name: "timezone", value: "UTC"),
                         URLQueryItem(name: "wind_speed_unit", value: "kmh"),
                         URLQueryItem(name: "start_hour", value: targetHour),
@@ -263,7 +268,8 @@ struct ForecastGrid: Codable {
                   hour.precipitation.indices.contains(hourIndex) else { throw URLError(.cannotParseResponse) }
             samples.append(ForecastGrid.Point(latitude: points[index].0, longitude: points[index].1,
                 windSpeed: hour.wind_speed_10m[hourIndex], direction: hour.wind_direction_10m[hourIndex],
-                pressure: hour.pressure_msl[hourIndex], precipitation: hour.precipitation[hourIndex]))
+                pressure: hour.pressure_msl[hourIndex], precipitation: hour.precipitation[hourIndex],
+                precipitationProbability: hour.precipitation_probability.flatMap { $0.indices.contains(hourIndex) ? $0[hourIndex] : nil }))
         }
         let value = ForecastGrid(schema: "hunt-weather-grid-v1", kind: "model_forecast_not_radar",
                                  forecastTimeUTC: timestamp, gridWidth: region.width,
@@ -285,7 +291,7 @@ struct ForecastGrid: Codable {
         if loading && lastRequestedKey == key { return }
         // Avoid hammering the provider on every SwiftUI redraw after a temporary error.
         if lastFailedKey == key && Date().timeIntervalSince(lastFailedAt) < 40 { return }
-        if !loading && lastRequestedKey == key && !cached &&
+        if !loading && lastRequestedKey == key && !cached && grid?.points.contains(where: { $0.precipitationProbability != nil }) == true &&
            Date().timeIntervalSince(lastSuccessfulRefresh) < 900 { return }
         stop()
         lastRequestedKey = key
@@ -326,7 +332,7 @@ struct ForecastGrid: Codable {
                     guard !Task.isCancelled, self.requestGeneration == generation, self.lastRequestedKey == key else { return }
                     self.grid = value
                     self.cached = false
-                    self.status = "Ветер отображается · уточняем детализацию…"
+                    self.status = "Прогноз отображается · уточняем детализацию…"
                     try? JSONEncoder().encode(value).write(to: self.cachePath(region: coarse, date: date), options: .atomic)
                 }
                 let value = try await self.fetchGrid(region: detailed, at: date)
@@ -349,7 +355,7 @@ struct ForecastGrid: Codable {
                 self.lastFailedKey = key
                 self.lastFailedAt = Date()
                 AppDiagnosticLog.shared.recordError(subsystem: "Погода",
-                    operation: "Загрузка карты ветра", error: error,
+                    operation: "Загрузка погодной карты", error: error,
                     endpoint: "/v1/forecast", usedCache: self.grid != nil)
                 self.status = self.grid == nil
                     ? "Прогноз недоступен: \(error.localizedDescription)"

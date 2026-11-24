@@ -223,3 +223,16 @@ def test_weather_uses_lightweight_overlay_without_maplibre_shape_flood():
     assert 'for subY in 0..<2' in overlay
     assert 'private let particleCount = 85' in wind
     assert 'link.preferredFramesPerSecond = 15' in wind
+
+
+def test_weather_probability_contract():
+    grid = (IOS / "WeatherGridService.swift").read_text()
+    overlay = (IOS / "WeatherFieldOverlay.swift").read_text()
+    sheet = (IOS / "WeatherMapSheet.swift").read_text()
+    assert 'pressure_msl,precipitation,precipitation_probability' in grid
+    assert 'let precipitation_probability: [Double?]?' in grid
+    assert '(0...100).contains(p.precipitationProbability!)' in grid
+    assert 'case .probability: return point.precipitationProbability' in overlay
+    assert 'case .probability: return "%"' in sheet
+    assert 'Для выбранного слоя нет данных.' in sheet
+    assert 'Осадки не прогнозируются: карта прозрачная.' in sheet

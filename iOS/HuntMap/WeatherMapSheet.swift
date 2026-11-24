@@ -35,8 +35,8 @@ struct WeatherMapSheet: View {
                         Text("Погода на карте").font(.title3.bold())
                         Picker("Слой", selection: $layer) {
                             ForEach(WeatherMapLayer.allCases) { choice in Text(choice.rawValue).tag(choice) }
-                        }.pickerStyle(.segmented)
-                        Text("Прогноз модели, не погодный радар. Цветные участки вычислены интерполяцией внутри полученной сетки. Стрелки показывают направление ветра, а изобары — расчётные линии давления.")
+                        }.pickerStyle(.menu)
+                        Text("Прогноз модели, не погодный радар. Цветные участки вычислены интерполяцией внутри полученной сетки. Движение частиц показывает направление ветра.")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     .padding(16)
@@ -125,6 +125,25 @@ struct WeatherMapSheet: View {
                         .buttonStyle(.borderedProminent).tint(FBTheme.green)
                         if service.loading { ProgressView() }
                         Text(service.status).font(.footnote)
+                        if let grid = service.grid, layer != .none {
+                            let values = grid.points.compactMap { point -> Double? in
+                                switch layer {
+                                case .none: return nil
+                                case .wind: return point.windSpeed
+                                case .pressure: return point.pressure
+                                case .precipitation: return point.precipitation
+                                case .probability: return point.precipitationProbability
+                                }
+                            }
+                            if let minimum = values.min(), let maximum = values.max() {
+                                Text(String(format: "Диапазон сетки: %.1f–%.1f %@", minimum, maximum, legendUnit)).font(.caption)
+                                if layer == .precipitation && maximum < 0.1 {
+                                    Text("Осадки не прогнозируются: карта прозрачная.").font(.caption).foregroundStyle(.secondary)
+                                }
+                            } else {
+                                Text("Для выбранного слоя нет данных.").font(.caption).foregroundStyle(.orange)
+                            }
+                        }
                         if service.grid != nil {
                             HStack(spacing: 7) {
                                 Image(systemName: "calendar")
@@ -172,21 +191,23 @@ struct WeatherMapSheet: View {
     }
 
     private var legendUnit: String {
-        switch layer { case .wind: return "км/ч"; case .pressure: return "гПа"; case .precipitation: return "мм/час"; case .none: return "" }
+        switch layer { case .wind: return "км/ч"; case .pressure: return "гПа"; case .precipitation: return "мм/час"; case .probability: return "%"; case .none: return "" }
     }
     private var legend: [(String, Color)] {
         switch layer {
         case .wind: return [("<15", .teal), ("15–35", .yellow), (">35", .red)]
         case .pressure: return [("<1000", .blue), ("1000–1020", .green), (">1020", .orange)]
         case .precipitation: return [("<0,1", .clear), ("0,1–2", .blue), ("2–8", .purple), (">8", .red)]
+        case .probability: return [("0–19", .gray), ("20–39", .cyan), ("40–59", .blue), ("60–79", .purple), ("80–100", .red)]
         case .none: return []
         }
     }
     private var legendExplanation: String {
         switch layer {
         case .wind: return "Цвет показывает скорость на высоте 10 м. Стрелки показывают направление «куда дует». Порывы — в карточке погоды."
-        case .pressure: return "Атмосферное давление на уровне моря, не давление у поверхности. Изобары рассчитаны по разреженной сетке модели (шаг 5 гПа)."
+        case .pressure: return "Атмосферное давление на уровне моря, не давление у поверхности. Цвет показывает диапазон давления в гПа."
         case .precipitation: return "Прогнозное количество осадков за час. Это не метеорадар и не измерение на местности."
+        case .probability: return "Вероятность осадков за выбранный час, от 0 до 100%. Не количество осадков и не доля площади карты."
         case .none: return ""
         }
     }

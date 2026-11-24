@@ -41,7 +41,7 @@ final class WeatherFieldOverlay: UIView {
         let first = grid.points.first
         let last = grid.points.last
         let signature = "\(layer.rawValue)|\(grid.forecastTimeUTC)|\(grid.bounds.west)|\(grid.bounds.south)|\(grid.bounds.east)|\(grid.bounds.north)|\(grid.gridWidth)x\(grid.gridHeight)|\(first?.windSpeed ?? -1)|\(first?.pressure ?? -1)|\(last?.precipitation ?? -1)"
-        if signature != lastSignature {
+        if signature != lastSignature || layer != .wind {
             forecast = grid
             selectedLayer = layer
             lastSignature = signature
@@ -54,6 +54,7 @@ final class WeatherFieldOverlay: UIView {
         case .wind: return point.windSpeed
         case .pressure: return point.pressure
         case .precipitation: return point.precipitation
+        case .probability: return point.precipitationProbability
         case .none: return nil
         }
     }
@@ -73,6 +74,12 @@ final class WeatherFieldOverlay: UIView {
             if measurement < 2 { return UIColor(red: 0.19, green: 0.60, blue: 1, alpha: 0.40) }
             if measurement < 8 { return UIColor(red: 0.58, green: 0.32, blue: 0.92, alpha: 0.48) }
             return UIColor(red: 0.96, green: 0.29, blue: 0.45, alpha: 0.53)
+        case .probability:
+            if measurement < 20 { return UIColor(red: 0.45, green: 0.65, blue: 0.85, alpha: 0.20) }
+            if measurement < 40 { return UIColor(red: 0.15, green: 0.75, blue: 0.85, alpha: 0.35) }
+            if measurement < 60 { return UIColor(red: 0.15, green: 0.45, blue: 0.95, alpha: 0.45) }
+            if measurement < 80 { return UIColor(red: 0.55, green: 0.30, blue: 0.95, alpha: 0.50) }
+            return UIColor(red: 0.95, green: 0.25, blue: 0.45, alpha: 0.55)
         case .none: return .clear
         }
     }
@@ -115,6 +122,7 @@ final class WeatherFieldOverlay: UIView {
                                 longitude: forecast.bounds.west + (Double(column) + u) * lonStep)
                             return mapView.convert(location, toPointTo: self)
                         }
+                        guard points.allSatisfy({ $0.x.isFinite && $0.y.isFinite }) else { continue }
                         context.move(to: points[0])
                         for p in points.dropFirst() { context.addLine(to: p) }
                         context.closePath()
