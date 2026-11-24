@@ -26,6 +26,7 @@ struct OfflineMapView: UIViewRepresentable {
     var protomapsOfflineStyleURL: URL? = nil
     var protomapsHybridStyleURL: URL? = nil
     let online: Bool
+    var active = true
     @Binding var selectedZone: GeoZone?
     let weatherGrid: ForecastGrid?
     let weatherLayer: WeatherMapLayer
@@ -110,6 +111,12 @@ struct OfflineMapView: UIViewRepresentable {
 
     func updateUIView(_ container: UIView, context: Context) {
         guard let view = context.coordinator.map else { return }
+        view.isHidden = !active
+        guard active else {
+            context.coordinator.windOverlay?.configure(grid: nil, enabled: false)
+            context.coordinator.fieldOverlay?.configure(grid: nil, layer: .none)
+            return
+        }
         let requestedOnline = online
         let targetStyle = requestedOnline ? (mapStyle == MapBasemap.protomaps.rawValue ? (protomapsOnlineStyleURL ?? selectedStyle) : selectedStyle)
                                           : (mapStyle == MapBasemap.hybrid.rawValue && !tileFiles.isEmpty ? (protomapsHybridStyleURL ?? protomapsOfflineStyleURL ?? OfflineMapStyle.url) : (protomapsOfflineStyleURL ?? OfflineMapStyle.url))
