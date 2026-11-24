@@ -22,11 +22,13 @@
 
 ```bash
 swift test --package-path Core
-python -m pip install -r server/requirements.txt pytest httpx
-python -m pytest -q server/tests
+python -m pip install -r server/requirements.txt -r tools/requirements.txt pytest httpx
+PYTHONPATH=tools python -m pytest -q server/tests tools/test_*.py
+python scripts/verify_iphone_layout.py
+python scripts/check_ui_structure.py
 ```
 
-Актуальный статус релиза и ограничения: [IMPLEMENTATION_STATUS](docs/IMPLEMENTATION_STATUS.md). Мастер-спецификация UI: [v4](docs/HUNT_MAP_KZ_v4_MASTER_UI_SPEC_RU.md).
+Актуальный аудит оптимизации и критерии приёмки: [OPTIMIZATION_RELEASE_2026-11-24](docs/OPTIMIZATION_RELEASE_2026-11-24.md). Исторический статус: [IMPLEMENTATION_STATUS](docs/IMPLEMENTATION_STATUS.md). Мастер-спецификация UI: [v4](docs/HUNT_MAP_KZ_v4_MASTER_UI_SPEC_RU.md).
 Аудит и удалённые файлы: [отчёт об очистке](docs/REPOSITORY_AUDIT_2026-11-23.md).
 
 Интеграция статических карт и маршрутов: `https://create.web-works.kz/maps/` (для опубликованных пакетов требуется реальное наличие файлов). Генерация IPA и тесты на iPhone должны проверяться по фактическому результату GitHub Actions.
