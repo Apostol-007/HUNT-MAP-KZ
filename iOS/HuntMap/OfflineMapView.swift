@@ -295,6 +295,31 @@ struct OfflineMapView: UIViewRepresentable {
         }
 
         func mapView(_ mapView: MLNMapView, imageFor annotation: MLNAnnotation) -> MLNAnnotationImage? {
+            // GPS beacon only: saved markers retain their own icons and colors.
+            if annotation.title == "GPS · текущая позиция" {
+                let reuse = "hunt-gps-beacon-v1"
+                if let cached = mapView.dequeueReusableAnnotationImage(withIdentifier: reuse) { return cached }
+                let size = CGSize(width: 80, height: 80)
+                let image = UIGraphicsImageRenderer(size: size).image { renderer in
+                    let ctx = renderer.cgContext
+                    let center = CGPoint(x: 40, y: 40)
+                    let green = UIColor(red: 0.18, green: 0.98, blue: 0.40, alpha: 1)
+                    for (radius, opacity) in [(CGFloat(37), CGFloat(0.07)), (28, 0.12), (19, 0.20), (11, 0.60)] {
+                        let circle = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+                        ctx.setFillColor(green.withAlphaComponent(opacity).cgColor)
+                        ctx.fillEllipse(in: circle)
+                        ctx.setStrokeColor(green.withAlphaComponent(opacity * 0.85).cgColor)
+                        ctx.setLineWidth(1)
+                        ctx.strokeEllipse(in: circle)
+                    }
+                    ctx.saveGState()
+                    ctx.setShadow(offset: .zero, blur: 6, color: green.cgColor)
+                    ctx.setFillColor(UIColor.white.cgColor)
+                    ctx.fillEllipse(in: CGRect(x: 34, y: 34, width: 12, height: 12))
+                    ctx.restoreGState()
+                }
+                return MLNAnnotationImage(image: image, reuseIdentifier: reuse)
+            }
             guard let marker = markerAppearance[ObjectIdentifier(annotation as AnyObject)] else { return nil }
             let symbol = marker.symbol ?? MarkerStyle.defaultSymbol(for: marker.kind)
             let color = UIColor(hex: marker.colorHex ?? "#24DA66")
