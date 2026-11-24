@@ -44,12 +44,15 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
     @Published var paused = false
     @Published var status = "GPS не запущен"
     @Published var lastWarning = "Границы не загружены"
-    @Published var zones: [GeoZone] = []
+    @Published var zones: [GeoZone] = [] { didSet { zoneRevision += 1 } }
     @Published var strictOffline = true
     @Published var gpsAuthorization = "не определено"
     @Published var lastError = ""
     private let manager=CLLocationManager()
-    private let engine=BoundaryEngine()
+    private let boundaryWorker = BoundaryWorker()
+    private var boundaryTask: Task<Void, Never>?
+    private var pendingBoundaryFix: GPSFix?
+    private var zoneRevision = 0
     private var lastFix: CLLocation?
     private let trackJournal = TrackPointJournal()
     private var documentURL:URL {
@@ -206,7 +209,29 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
             if !trackJournal.append(point) { persist() }
         }
         lastFix=fix
-        for event in engine.process(GPSFix(position:p,accuracyMeters:fix.horizontalAccuracy,timestamp:fix.timestamp),zones:zones) {
+        pendingBoundaryFix = GPSFix(position:p,accuracyMeters:fix.horizontalAccuracy,timestamp:fix.timestamp)
+        scheduleBoundaryCheck()
+    }
+
+    private func scheduleBoundaryCheck() {
+        guard boundaryTask == nil else { return }
+        boundaryTask = Task { [weak self] in
+            guard let self else { return }
+            while let fix = self.pendingBoundaryFix {
+                self.pendingBoundaryFix = nil
+                let revision = self.zoneRevision
+                let snapshot = self.zones
+                let events = await self.boundaryWorker.process(fix, zones: snapshot, revision: revision)
+                guard !Task.isCancelled else { break }
+                if revision == self.zoneRevision {
+                    for event in events { self.publishBoundaryEvent(event) }
+                }
+            }
+            self.boundaryTask = nil
+        }
+    }
+
+    private func publishBoundaryEvent(_ event: BoundaryEvent) {
             let message:String
             switch event {
             case .approaching(_,let meters):message="Граница на расстоянии около \(meters) м"
@@ -218,7 +243,6 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
             let notification=UNMutableNotificationContent()
             notification.title="HUNT MAP KZ";notification.body=message;notification.sound = .default
             UNUserNotificationCenter.current().add(UNNotificationRequest(identifier:UUID().uuidString,content:notification,trigger:nil))
-        }
     }
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         status = "Ошибка GPS: \(error.localizedDescription)"
@@ -329,5 +353,18 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         let data="<?xml version=\"1.0\" encoding=\"UTF-8\"?><gpx version=\"1.1\" creator=\"HUNT MAP KZ\" xmlns=\"http://www.topografix.com/GPX/1/1\"><trk><name>\(xml(track.name))</name><trkseg>\(points)</trkseg></trk></gpx>"
         let url=FileManager.default.temporaryDirectory.appendingPathComponent("route-\(track.id).gpx")
         do {try data.write(to:url,atomically:true,encoding:.utf8);return url} catch {return nil}
+    }
+}
+
+// A single actor owns mutable crossing state. GPS and UIKit never wait synchronously.
+private actor BoundaryWorker {
+    private var engine = BoundaryEngine()
+    private var revision = -1
+    func process(_ fix: GPSFix, zones: [GeoZone], revision: Int) -> [BoundaryEvent] {
+        if self.revision != revision {
+            engine = BoundaryEngine()
+            self.revision = revision
+        }
+        return engine.process(fix, zones: zones)
     }
 }
