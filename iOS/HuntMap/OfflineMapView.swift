@@ -126,7 +126,9 @@ struct OfflineMapView: UIViewRepresentable {
         context.coordinator.selectedGridCells = selectedGridCells
         context.coordinator.onGridTap = onGridTap
         context.coordinator.onViewportChanged = onViewportChanged
-        let needsRoadRefresh = context.coordinator.isOffline != !online ||
+        let modeChanged = context.coordinator.isOffline != !online
+        if modeChanged { context.coordinator.invalidateRasterLayout() }
+        let needsRoadRefresh = modeChanged ||
                                context.coordinator.routingGeneration != routingGeneration
         context.coordinator.isOffline = !online
         let nextHybrid = !online && mapStyle == MapBasemap.hybrid.rawValue
@@ -317,37 +319,50 @@ struct OfflineMapView: UIViewRepresentable {
             configure(style: style, files: latestFiles)
         }
 
+        private var rasterRequest = 0
+        private var rasterLayerCount = 0
+        private weak var rasterStyle: MLNStyle?
+
         private func configure(style: MLNStyle, files: [URL]) {
-            // Localize visible vector labels on every style load or style change.
-            // Source data can omit name:ru; retain its original value rather than hide it.
-            RussianMapLabels.apply(to: style)
-            // Remove only layers created here; preserve any other application layers.
-            for index in 0..<max(files.count, 32) {
+            rasterRequest += 1
+            let request = rasterRequest
+            if rasterStyle !== style {
+                rasterStyle = style
+                rasterLayerCount = 0
+                RussianMapLabels.apply(to: style)
+            }
+            let hasProtomaps = style.source(withIdentifier: "protomaps_0") != nil
+            if !isOffline || (hasProtomaps && !hybridOffline) || files.isEmpty {
+                removeRasterLayers(from: style)
+                return
+            }
+            LocalMBTilesServer.shared.prepareTemplates(files, revision: lastRevision) { [weak self, weak style] templates in
+                guard let self, let style, self.rasterRequest == request,
+                      self.map?.style === style else { return }
+                self.removeRasterLayers(from: style)
+                for (index, template) in templates.enumerated() {
+                    let id = "hunt-raster-\(index)"
+                    let source = MLNRasterTileSource(identifier: id, tileURLTemplates: [template])
+                    style.addSource(source)
+                    let raster = MLNRasterStyleLayer(identifier: id, source: source)
+                    if hasProtomaps && self.hybridOffline,
+                       let vector = style.layer(withIdentifier: "highways_0") {
+                        style.insertLayer(raster, below: vector)
+                    } else {
+                        style.addLayer(raster)
+                    }
+                }
+                self.rasterLayerCount = templates.count
+            }
+        }
+
+        private func removeRasterLayers(from style: MLNStyle) {
+            for index in 0..<rasterLayerCount {
                 let id = "hunt-raster-\(index)"
                 if let layer = style.layer(withIdentifier: id) { style.removeLayer(layer) }
                 if let source = style.source(withIdentifier: id) { style.removeSource(source) }
             }
-            // Hybrid only: use local MBTiles below Protomaps road/trail labels.
-            let hasProtomaps = style.source(withIdentifier: "protomaps_0") != nil
-            if hasProtomaps && !hybridOffline { return }
-            // Raster MBTiles are served by the existing loopback-only tile service.
-            // MapLibre cannot open arbitrary mbtiles:// files using a generic HTTP source.
-            let server = LocalMBTilesServer.shared
-            let registered = server.register(files)
-            for (index, entry) in registered.enumerated() {
-                let (key, _) = entry
-                guard let template = server.tileTemplate(for: key) else { continue }
-                let id = "hunt-raster-\(index)"
-                let source = MLNRasterTileSource(identifier: id, tileURLTemplates: [template])
-                style.addSource(source)
-                let raster = MLNRasterStyleLayer(identifier: id, source: source)
-                if hasProtomaps && hybridOffline,
-                   let vector = style.layer(withIdentifier: "highways_0") {
-                    style.insertLayer(raster, below: vector)
-                } else {
-                    style.addLayer(raster)
-                }
-            }
+            rasterLayerCount = 0
         }
 
         func mapView(_ mapView: MLNMapView, regionDidChangeAnimated animated: Bool) {
@@ -532,12 +547,20 @@ struct OfflineMapView: UIViewRepresentable {
             }
             // Keep GPS independent from editable markers (never assign a marker UUID).
             if let position, position.valid {
-                if let gpsAnnotation { view.removeAnnotation(gpsAnnotation) }
-                let gps = MLNPointAnnotation()
-                gps.title = "GPS · текущая позиция"
-                gps.coordinate = CLLocationCoordinate2D(latitude: position.latitude, longitude: position.longitude)
-                gpsAnnotation = gps
-                view.addAnnotation(gps)
+                let coordinate = CLLocationCoordinate2D(latitude: position.latitude, longitude: position.longitude)
+                let gps: MLNPointAnnotation
+                if let existing = gpsAnnotation {
+                    gps = existing
+                    if gps.coordinate.latitude != coordinate.latitude || gps.coordinate.longitude != coordinate.longitude {
+                        gps.coordinate = coordinate
+                    }
+                } else {
+                    gps = MLNPointAnnotation()
+                    gps.title = "GPS · текущая позиция"
+                    gps.coordinate = coordinate
+                    gpsAnnotation = gps
+                    view.addAnnotation(gps)
+                }
                 if !centeredOnGPS { view.setCenter(gps.coordinate, animated: false); centeredOnGPS = true }
             } else if let gpsAnnotation {
                 view.removeAnnotation(gpsAnnotation)
