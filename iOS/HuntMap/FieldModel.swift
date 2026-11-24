@@ -108,7 +108,7 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         }
         lastFix=nil // Do not reuse the last fix from a previous recording session.
         currentTrack=Track(name:"Маршрут \(Date.now.formatted(date:.numeric,time:.shortened))")
-        if let currentTrack { trackJournal.begin(trackID: currentTrack.id) }
+        if let currentTrack { trackJournal.begin(track: currentTrack) }
         recording=true;paused=false
         // Background updates are enabled ONLY after Always authorization; foreground-only
         // recording must never terminate the app because the user denied Always access.
@@ -238,7 +238,17 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         if manager.authorizationStatus == .denied {status="Нет разрешения геолокации"; lastError=status}
     }
     private func load() {
-        guard let bytes=try? Data(contentsOf:documentURL),let obj=try? JSONDecoder().decode(LocalData.self,from:bytes) else {return}
+        guard let bytes = try? Data(contentsOf: documentURL),
+              let obj = try? JSONDecoder().decode(LocalData.self, from: bytes) else {
+            // Never overwrite a malformed legacy file without preserving it.
+            if FileManager.default.fileExists(atPath: documentURL.path) {
+                let destination = documentURL.deletingLastPathComponent()
+                    .appendingPathComponent("field-unreadable-\(Int(Date().timeIntervalSince1970)).json")
+                try? FileManager.default.copyItem(at: documentURL, to: destination)
+            }
+            recoverOrphanedJournal()
+            return
+        }
         markers=obj.markers;tracks=obj.tracks;zones=obj.zones
         // An interrupted recording is restored exactly once. Clear pendingTrack on disk
         // immediately, otherwise every relaunch would duplicate the recovered route.
@@ -257,6 +267,27 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
             if let data = try? Data(contentsOf: documentURL),
                let saved = try? JSONDecoder().decode(LocalData.self, from: data),
                saved.pendingTrack == nil { trackJournal.clear() }
+        } else {
+            // A previous JSON commit may not contain pendingTrack if it was
+            // interrupted. Recover surviving SQLite rows exactly once by UUID.
+            recoverOrphanedJournal()
+        }
+    }
+
+    private func recoverOrphanedJournal() {
+        guard var recovered = trackJournal.recoverableTrack() else { return }
+        guard !tracks.contains(where: { $0.id == recovered.id }) else {
+            trackJournal.clear()
+            return
+        }
+        recovered.name += " (восстановлен)"
+        tracks.insert(recovered, at: 0)
+        lastWarning = "GPS-маршрут восстановлен из журнала после сбоя"
+        persist()
+        if let data = try? Data(contentsOf: documentURL),
+           let saved = try? JSONDecoder().decode(LocalData.self, from: data),
+           saved.tracks.contains(where: { $0.id == recovered.id }) {
+            trackJournal.clear()
         }
     }
     private func persist() {

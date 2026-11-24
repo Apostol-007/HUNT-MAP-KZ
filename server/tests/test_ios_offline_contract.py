@@ -374,3 +374,15 @@ def test_privacy_safe_launch_health_markers():
     assert 'LaunchHealth.firstScreenReady()' in ui
     assert 'hunt.launch.pending' in launch
     assert 'hunt.diag.launchSeconds' in launch
+
+
+def test_orphaned_sqlite_gps_journal_recovery_on_missing_legacy_json():
+    model = (IOS / "FieldModel.swift").read_text()
+    journal = (IOS / "TrackPointJournal.swift").read_text()
+    assert 'func recoverableTrack() -> Track?' in journal
+    assert 'CREATE TABLE IF NOT EXISTS active_track' in journal
+    assert 'CREATE INDEX IF NOT EXISTS idx_fixes_track_id' in journal
+    assert 'trackJournal.begin(track: currentTrack)' in model
+    assert 'recoverOrphanedJournal()' in model
+    assert 'field-unreadable-' in model
+    assert 'saved.tracks.contains(where: { $0.id == recovered.id })' in model
