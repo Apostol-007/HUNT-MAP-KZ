@@ -125,9 +125,24 @@ final class WeatherFieldOverlay: UIView {
             let b = forecast.points[row * width + column + 1]
             let c = forecast.points[(row + 1) * width + column]
             let d = forecast.points[(row + 1) * width + column + 1]
-            guard let av = value(a), let bv = value(b),
-                  let cv = value(c), let dv = value(d) else { return nil }
-            return (1-u)*(1-v)*av + u*(1-v)*bv + (1-u)*v*cv + u*v*dv
+            // Provider may omit individual readings. Keep painting with the
+            // available neighbours instead of dropping the entire screen cell.
+            let corners: [(Double?, Double)] = [
+                (value(a), (1-u)*(1-v)),
+                (value(b), u*(1-v)),
+                (value(c), (1-u)*v),
+                (value(d), u*v)
+            ]
+            let usable = corners.compactMap { point -> (Double, Double)? in
+                guard let reading = point.0, reading.isFinite else { return nil }
+                return (reading, point.1)
+            }
+            let totalWeight = usable.reduce(0.0) { $0 + $1.1 }
+            if totalWeight > 0.000001 {
+                return usable.reduce(0.0) { $0 + $1.0 * $1.1 } / totalWeight
+            }
+            // Exactly on a missing model-node boundary: nearest available value.
+            return [value(a), value(b), value(c), value(d)].compactMap { $0 }.first
         }
 
         let pixelStep: CGFloat = 20

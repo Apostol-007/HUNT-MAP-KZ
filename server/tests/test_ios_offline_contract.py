@@ -192,7 +192,8 @@ def test_wind_prefetches_on_launch_and_progressively_refines():
     ui = (IOS / "MainView.swift").read_text()
     wind = (IOS / "WeatherGridService.swift").read_text()
     assert 'weatherGrid.load(hourOffset: 0)' in ui
-    assert 'coarse.width = 6' in wind and 'coarse.height = 4' in wind
+    assert 'coarse.width = 3' in wind and 'coarse.height = 3' in wind
+    assert 'var width: Int = 6' in wind and 'var height: Int = 4' in wind
     assert 'self.fetchGrid(region: coarse' in wind
     assert 'self.fetchGrid(region: detailed' in wind
 
@@ -250,3 +251,12 @@ def test_weather_layer_above_maplibre_gl_view():
     assert 'mapView.addSubview(self)' not in field and 'mapView.addSubview(self)' not in wind
     assert 'trailingAnchor.constraint(equalTo: hostView.trailingAnchor)' in field
     assert 'superview?.bringSubviewToFront(self)' in wind
+
+
+def test_partial_forecast_does_not_blank_weather():
+    canvas = (IOS / "WeatherFieldOverlay.swift").read_text()
+    wind = (IOS / "WindParticlesOverlay.swift").read_text()
+    assert 'let usable = corners.compactMap' in canvas
+    assert 'totalWeight > 0.000001' in canvas
+    assert 'let neighbours:' in wind
+    assert 'forecast = grid' in wind

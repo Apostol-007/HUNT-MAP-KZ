@@ -193,7 +193,7 @@ struct ForecastGrid: Codable {
     func load(latitude: Double = 48, longitude: Double = 70, hourOffset: Int, allowNetwork: Bool = true) {
         load(hourOffset: hourOffset, allowNetwork: allowNetwork)
     }
-    /// Starts with one lightweight request (6x4), then refines to 12x8 asynchronously.
+    /// Starts with a 3x3 request, then refines to 6x4 asynchronously.
     /// A forecast is model data, not real-time sensor measurements.
     private func fetchGrid(region: Region, at date: Date) async throws -> ForecastGrid {
         var points: [(Double, Double)] = []
