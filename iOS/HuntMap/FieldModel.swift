@@ -263,6 +263,30 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         guard let encoded=try? JSONEncoder().encode(LocalData(markers:markers,tracks:tracks,pendingTrack:currentTrack,zones:zones)) else {return}
         try? encoded.write(to:documentURL,options:[.atomic,.completeFileProtectionUnlessOpen])
     }
+    /// Explicit user-controlled export. Includes an active recording from
+    /// the crash-safe SQLite journal and leaves all local files unchanged.
+    func exportBackup() -> URL? {
+        var active = currentTrack
+        if var pending = active {
+            let saved = trackJournal.read(trackID: pending.id)
+            if saved.count > pending.fixes.count { pending.fixes = saved }
+            active = pending
+        }
+        let snapshot = LocalData(markers: markers, tracks: tracks,
+                                 pendingTrack: active, zones: zones)
+        guard let bytes = try? JSONEncoder().encode(snapshot) else { return nil }
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("HUNT_MAP_KZ_Backup_\(Int(Date().timeIntervalSince1970)).json")
+        do {
+            try bytes.write(to: destination, options: .atomic)
+            return destination
+        } catch {
+            AppDiagnosticLog.shared.recordError(subsystem: "Данные",
+                operation: "Резервная копия", error: error)
+            return nil
+        }
+    }
+
     func exportGPX(_ track:Track)->URL? {
         func xml(_ s:String)->String {s.replacingOccurrences(of:"&",with:"&amp;").replacingOccurrences(of:"<",with:"&lt;").replacingOccurrences(of:">",with:"&gt;").replacingOccurrences(of:"\"",with:"&quot;")}
         let formatter = ISO8601DateFormatter()

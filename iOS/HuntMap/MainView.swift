@@ -39,6 +39,7 @@ struct MainView: View {
     @State private var showAbout = false
     @State private var showLegalLibrary = false
     @State private var showDiagnostics = false
+    @State private var backupFile: URL?
     @State private var showGBIF = false
     @State private var showSearch = false
     @State private var searchText = ""
@@ -1632,6 +1633,20 @@ struct MainView: View {
                 ReferenceMenuRow(symbol: "books.vertical", title: "Библиотека охотника") { showLegalLibrary = true }
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "waveform.path.ecg", title: "Диагностика") { showDiagnostics = true }
+                Divider().overlay(HuntReference.separator)
+                ReferenceMenuRow(symbol: "externaldrive", title: "Создать резервную копию") {
+                    backupFile = model.exportBackup()
+                }
+                if let backupFile {
+                    ShareLink(item: backupFile) {
+                        Label("Сохранить копию маршрутов, меток и границ",
+                              systemImage: "square.and.arrow.up")
+                            .font(.subheadline.bold())
+                            .foregroundStyle(HuntReference.green)
+                            .padding(14)
+                    }
+                    .accessibilityIdentifier("export_complete_backup")
+                }
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "gearshape", title: "Настройки") { showLayers = true }
                 Divider().overlay(HuntReference.separator)

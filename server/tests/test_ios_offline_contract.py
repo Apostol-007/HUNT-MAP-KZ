@@ -348,3 +348,12 @@ def test_verified_package_receipts_prevent_repeat_hashing_on_main_actor():
     assert 'saveReceipt(file, key: "zone:"' in src
     sync = src.split('func needsRouteUpdate(_ pack:', 1)[1].split('func installRoute(', 1)[0]
     assert 'Self.digest(' not in sync
+
+
+def test_user_can_export_full_data_backup_without_deleting_storage():
+    model = (IOS / "FieldModel.swift").read_text()
+    ui = (IOS / "MainView.swift").read_text()
+    assert 'func exportBackup() -> URL?' in model
+    assert 'LocalData(markers: markers, tracks: tracks,' in model
+    assert 'trackJournal.read(trackID:' in model
+    assert 'ShareLink(item: backupFile)' in ui
