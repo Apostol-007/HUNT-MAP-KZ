@@ -551,7 +551,10 @@ struct MainView: View {
                         circleMapButton(gridMode ? "square.grid.3x3.fill" : "square.grid.3x3", label: "Выбор сетки") {
                             gridMode.toggle()
                         }
-                        circleMapButton("cloud.sun.fill", label: "Погода") { showWeatherLayers = true }
+                        circleMapButton("cloud.sun.fill", label: "Погода") {
+                                    if weatherLayer == .none { weatherLayer = .wind }
+                                    showWeatherLayers = true
+                                }
                         circleMapButton("location.fill", label: "Моё местоположение") {
                             mapFocus = nil
                             model.requestGPS()

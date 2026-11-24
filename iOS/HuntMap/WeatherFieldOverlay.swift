@@ -48,13 +48,22 @@ final class WeatherFieldOverlay: UIView {
 
     func configure(grid: ForecastGrid?, layer: WeatherMapLayer) {
         syncMapGeometry()
-        guard layer != .none, let grid, grid.validated() else {
+        guard layer != .none else {
+            UserDefaults.standard.set("disabled: no weather layer selected", forKey: "hunt.diag.weatherPaint")
             if !isHidden {
                 forecast = nil
                 lastSignature = ""
                 isHidden = true
                 setNeedsDisplay()
             }
+            return
+        }
+        guard let grid, grid.validated() else {
+            UserDefaults.standard.set("waiting: no validated forecast grid for \(layer.rawValue)", forKey: "hunt.diag.weatherPaint")
+            forecast = nil
+            lastSignature = ""
+            isHidden = true
+            setNeedsDisplay()
             return
         }
         isHidden = false
@@ -104,7 +113,10 @@ final class WeatherFieldOverlay: UIView {
     override func draw(_ rect: CGRect) {
         guard let forecast, let mapView, let context = UIGraphicsGetCurrentContext(),
               bounds.width > 0, bounds.height > 0 else {
-            UserDefaults.standard.set("Canvas or forecast not ready", forKey: "hunt.diag.weatherPaint")
+            let reason = forecast == nil ? "forecast unavailable" :
+                (mapView == nil ? "MapLibre view missing" :
+                    (bounds.width <= 0 || bounds.height <= 0 ? "zero-sized canvas" : "drawing context unavailable"))
+            UserDefaults.standard.set("not rendered: \(reason)", forKey: "hunt.diag.weatherPaint")
             return
         }
         let width = forecast.gridWidth, height = forecast.gridHeight
