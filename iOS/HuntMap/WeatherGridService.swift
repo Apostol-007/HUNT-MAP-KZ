@@ -85,6 +85,7 @@ struct ForecastGrid: Codable {
         return date < Date().addingTimeInterval(-3600)
     }
     private var task: Task<Void, Never>?
+    private var requestGeneration = UUID()
     private var viewportTask: Task<Void, Never>?
     private var visibleBounds: [Double] = [46, 40, 88, 56]
     private var lastRequestedKey = ""
@@ -197,7 +198,10 @@ struct ForecastGrid: Codable {
         return latest?.1
     }
     func stop() {
+        // No completion from a superseded request may change a newer state.
+        requestGeneration = UUID()
         task?.cancel()
+        task = nil
         loading = false
     }
     func clear() {
@@ -342,6 +346,7 @@ struct ForecastGrid: Codable {
         if !loading && lastRequestedKey == key && !cached &&
            Date().timeIntervalSince(lastSuccessfulRefresh) < 900 { return }
         stop()
+        let generation = requestGeneration
         lastRequestedKey = key
         if let detailedCache = cachedGrid(region: detailed, date: date) {
             grid = detailedCache
@@ -372,23 +377,25 @@ struct ForecastGrid: Codable {
             status = cached ? "Офлайн · сохранённый прогноз" : "Нет прогноза для этого района и часа"
             return
         }
+        loading = true
         task = Task { [weak self] in
-            guard let self else { return }
-            self.loading = true
-            defer { self.loading = false }
+            guard let self, self.requestGeneration == generation, !Task.isCancelled else { return }
+            defer {
+                if self.requestGeneration == generation { self.loading = false }
+            }
             do {
                 // Replace a stale fallback immediately with the correct target hour.
                 let currentHourAvailable = self.grid?.forecastDate.map { abs($0.timeIntervalSince(date)) < 60 } ?? false
                 if !currentHourAvailable {
                     let value = try await self.fetchGrid(region: coarse, at: date)
-                    guard !Task.isCancelled, self.lastRequestedKey == key else { return }
+                    guard !Task.isCancelled, self.lastRequestedKey == key, self.requestGeneration == generation else { return }
                     self.grid = value
                     self.cached = false
                     self.status = "Ветер отображается · уточняем детализацию…"
                     try? JSONEncoder().encode(value).write(to: self.cachePath(region: coarse, date: date), options: .atomic)
                 }
                 let value = try await self.fetchGrid(region: detailed, at: date)
-                guard !Task.isCancelled, self.lastRequestedKey == key else { return }
+                guard !Task.isCancelled, self.lastRequestedKey == key, self.requestGeneration == generation else { return }
                 self.grid = value
                 self.cached = false
                 self.lastSuccessfulRefresh = Date()
@@ -402,7 +409,7 @@ struct ForecastGrid: Codable {
                 self.status = "Прогноз обновлён · Open-Meteo · \(value.forecastTimeUTC)"
                 try? JSONEncoder().encode(value).write(to: self.cachePath(region: detailed, date: date), options: .atomic)
             } catch {
-                guard !Task.isCancelled, self.lastRequestedKey == key else { return }
+                guard !Task.isCancelled, self.lastRequestedKey == key, self.requestGeneration == generation else { return }
                 self.cached = self.grid != nil
                 self.lastFailedKey = key
                 self.lastFailedAt = Date()
