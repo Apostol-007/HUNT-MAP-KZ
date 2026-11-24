@@ -396,3 +396,12 @@ def test_release_pipeline_covers_map_tools_and_launch_layout():
     assert 'python scripts/check_ui_structure.py' in workflow
     assert 'MARKETING_VERSION: 4.8.0' not in layout
     assert 'GENERATE_INFOPLIST_FILE: NO' in layout
+
+
+def test_weather_cancelled_request_cannot_mutate_successor():
+    source = (IOS / "WeatherGridService.swift").read_text()
+    assert 'private var requestGeneration = UUID()' in source
+    assert 'let generation = requestGeneration' in source
+    assert 'self.requestGeneration == generation' in source
+    assert 'if self.requestGeneration == generation { self.loading = false }' in source
+    assert 'requestGeneration = UUID()' in source.split('func stop()', 1)[1]
