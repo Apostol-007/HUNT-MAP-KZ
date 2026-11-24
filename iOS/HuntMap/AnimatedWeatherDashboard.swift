@@ -37,13 +37,7 @@ private enum WeatherScene: Equatable {
         }
     }
     func colors(_ night: Bool) -> [Color] {
-        switch self {
-        case .sun: return night ? [Color(hex: "#101C38"), Color(hex: "#253958")] : [Color(hex: "#2879AF"), Color(hex: "#76BED7")]
-        case .snow: return [Color(hex: "#658198"), Color(hex: "#283F55")]
-        case .fog: return [Color(hex: "#657783"), Color(hex: "#293C48")]
-        case .storm: return [Color(hex: "#353950"), Color(hex: "#121D32")]
-        default: return [Color(hex: "#3B5068"), Color(hex: "#1B2C40")]
-        }
+        [HuntReference.card, HuntReference.background]
     }
 }
 
@@ -66,7 +60,7 @@ private struct SkyMotion: View {
                         let r = w * (0.24 + 0.015 * sin(t))
                         let point = CGPoint(x: w * 0.77, y: h * 0.12)
                         let glow = Path(ellipseIn: CGRect(x: point.x - r, y: point.y - r, width: r * 2, height: r * 2))
-                        context.fill(glow, with: .radialGradient(Gradient(colors: [night ? Color.white.opacity(0.5) : Color.yellow.opacity(0.6), .clear]), center: point, startRadius: 0, endRadius: r))
+                        context.fill(glow, with: .radialGradient(Gradient(colors: [night ? Color.white.opacity(0.5) : HuntReference.mint.opacity(0.35), .clear]), center: point, startRadius: 0, endRadius: r))
                         if night {
                             for i in 0..<35 {
                                 let x = Double((i * 137 + 19) % 997) / 997 * w
@@ -122,7 +116,7 @@ struct AnimatedWeatherDashboard: View {
     let onDetails: () -> Void
     @State private var mode = ForecastMode.temperature
     @State private var selected: Date?
-    private let cyan = Color(hex: "#58CDE7")
+    private let accent = HuntReference.green
     private enum ForecastMode: String, CaseIterable {
         case temperature = "Погодные условия", rain = "Осадки", wind = "Ветер"
         var icon: String {
@@ -151,7 +145,7 @@ struct AnimatedWeatherDashboard: View {
     private func unit(_ value: Double?, _ suffix: String) -> String { value == nil ? "—" : n(value) + suffix }
     private func surface<C: View>(@ViewBuilder content: () -> C) -> some View {
         content().padding(14).frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(hex: "#293E55").opacity(0.88), in: RoundedRectangle(cornerRadius: 19))
+            .background(HuntReference.card, in: RoundedRectangle(cornerRadius: 19))
     }
     var body: some View {
         VStack(spacing: 12) {
@@ -179,20 +173,16 @@ struct AnimatedWeatherDashboard: View {
         let temps = hours.compactMap(\.temperatureC)
         let scene = WeatherScene(weather.current.weatherCode)
         return VStack(spacing: 12) {
-            VStack(spacing: 6) {
-                Label("ПОГОДА ПО GPS", systemImage: "location.fill").font(.caption.bold())
-                Text(String(format: "%.3f°, %.3f°", weather.latitude, weather.longitude)).font(.headline)
-                Text(unit(weather.temperatureC, "°")).font(.system(size: 88, weight: .ultraLight)).monospacedDigit()
-                Text(scene.name).font(.title3.bold())
-                Text("Макс.: " + unit(today.compactMap(\.temperatureC).max(), "°") + " · мин.: " + unit(today.compactMap(\.temperatureC).min(), "°")).font(.subheadline)
-                if service.isCached || Date().timeIntervalSince(weather.retrievedAt) > 10800 {
-                    Label("Сохранённый прогноз", systemImage: "clock.badge.exclamationmark").font(.caption).foregroundStyle(.yellow)
-                }
-            }.frame(maxWidth: .infinity).padding(.vertical, 28)
+            ReferencePageHeader(title: "Погода")
+            Label("По текущей GPS-позиции", systemImage: "mappin.circle.fill")
+                .font(.caption)
+                .foregroundStyle(HuntReference.muted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            currentConditions(weather, today: today, scene: scene)
             hourly(upcoming)
             surface {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("ПРОГНОЗ ПО ДНЯМ").font(.caption.bold()).foregroundStyle(.white.opacity(0.65))
+                    Text("ПРОГНОЗ ПО ДНЯМ").font(.caption.bold()).foregroundStyle(HuntReference.muted)
                     ForEach(days, id: \.self) { day in
                         daily(day, hours: groups[day] ?? [], now: now, minimum: temps.min() ?? 0, maximum: temps.max() ?? 0)
                         if day != days.last { Divider() }
@@ -217,9 +207,58 @@ struct AnimatedWeatherDashboard: View {
                     HuntAction(title: "Подробный прогноз", symbol: "calendar") { onDetails() }
                 }
             }
-            Text("Open-Meteo · UTC+5 · " + dateText(weather.retrievedAt, "dd.MM HH:mm")).font(.caption2).foregroundStyle(.white.opacity(0.7))
-        }.padding(12)
-        .background { SkyMotion(scene: scene, night: weather.current.isDay == 0, windy: (weather.current.windSpeedKmh ?? 0) >= 25).clipShape(RoundedRectangle(cornerRadius: 24)) }
+            Text("Open-Meteo · UTC+5 · " + dateText(weather.retrievedAt, "dd.MM HH:mm")).font(.caption2).foregroundStyle(HuntReference.muted)
+        }
+    }
+
+    private func currentConditions(_ weather: PointWeather, today: [WeatherHour], scene: WeatherScene) -> some View {
+        let temperatures = today.compactMap(\.temperatureC)
+        let maxLabel = unit(temperatures.max(), "°")
+        let minLabel = unit(temperatures.min(), "°")
+        let nighttime = weather.current.isDay == 0
+        let windy = (weather.current.windSpeedKmh ?? 0) >= 25
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Image(systemName: scene.icon(nighttime))
+                        .font(.system(size: 36))
+                        .foregroundStyle(HuntReference.mint)
+                    Text(unit(weather.temperatureC, "°"))
+                        .font(.system(size: 46, weight: .light, design: .rounded))
+                        .monospacedDigit()
+                    Text(scene.name).font(.subheadline.bold())
+                }
+                Spacer(minLength: 8)
+                VStack(alignment: .leading, spacing: 12) {
+                    currentMetric("Ветер", n(weather.current.windSpeedKmh, 1) + " км/ч", "wind")
+                    currentMetric("Давление", n(weather.current.pressureMSLHpa) + " гПа", "barometer")
+                    currentMetric("Осадки", n(weather.current.precipitationMm, 1) + " мм", "cloud.rain")
+                }
+            }
+            Text("Макс.: " + maxLabel + " · мин.: " + minLabel)
+                .font(.caption)
+                .foregroundStyle(HuntReference.muted)
+            if service.isCached || Date().timeIntervalSince(weather.retrievedAt) > 10800 {
+                Label("Сохранённый прогноз", systemImage: "clock.badge.exclamationmark")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            SkyMotion(scene: scene, night: nighttime, windy: windy)
+                .clipShape(RoundedRectangle(cornerRadius: 22))
+        }
+    }
+
+    private func currentMetric(_ title: String, _ value: String, _ symbol: String) -> some View {
+        HStack(spacing: 9) {
+            Image(systemName: symbol).foregroundStyle(HuntReference.green).frame(width: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.caption2).foregroundStyle(HuntReference.muted)
+                Text(value).font(.caption.bold())
+            }
+        }
     }
     private func hourly(_ hours: [WeatherHour]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -229,14 +268,14 @@ struct AnimatedWeatherDashboard: View {
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(hex: "#293E55").opacity(0.88), in: RoundedRectangle(cornerRadius: 19))
+        .background(HuntReference.card, in: RoundedRectangle(cornerRadius: 19))
     }
 
     private var hourlyHeading: some View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
                 Text(mode.rawValue).font(.headline)
-                Text(mode.subtitle).font(.caption2).foregroundStyle(Color.white.opacity(0.75))
+                Text(mode.subtitle).font(.caption2).foregroundStyle(HuntReference.muted)
             }
             Spacer(minLength: 0)
             modeControls
@@ -249,13 +288,14 @@ struct AnimatedWeatherDashboard: View {
                 modeButton(item)
             }
         }
-        .background(Color.black.opacity(0.14), in: Capsule())
+        .background(HuntReference.background, in: Capsule())
     }
 
     private func modeButton(_ item: ForecastMode) -> some View {
-        let fill: Color = mode == item ? Color.white.opacity(0.18) : Color.clear
+        let fill: Color = mode == item ? HuntReference.green : Color.clear
         return Button { mode = item } label: {
             Image(systemName: item.icon)
+                .foregroundStyle(mode == item ? Color.black : HuntReference.green)
                 .frame(width: 36, height: 40)
                 .background(fill, in: Capsule())
         }
@@ -306,19 +346,19 @@ struct AnimatedWeatherDashboard: View {
                 switch mode {
                 case .temperature:
                     Image(systemName: WeatherScene(hour.weatherCode).icon(hour.isDay == 0)).font(.title2)
-                    Text(unit(hour.precipitationProbabilityPercent, "%")).font(.caption2).foregroundStyle(cyan)
+                    Text(unit(hour.precipitationProbabilityPercent, "%")).font(.caption2).foregroundStyle(accent)
                     Text(unit(hour.temperatureC, "°")).font(.subheadline.bold())
                 case .rain:
                     WeatherRainBar(value: hour.precipitationMm, maxValue: 5).frame(width: 26, height: 30)
                     Text(n(hour.precipitationMm, 1) + " мм").font(.caption2)
-                    Text(unit(hour.precipitationProbabilityPercent, "%")).font(.caption).foregroundStyle(cyan)
+                    Text(unit(hour.precipitationProbabilityPercent, "%")).font(.caption).foregroundStyle(accent)
                 case .wind:
                     Text(n(hour.windSpeedKmh)).font(.title3.bold())
                     Text("км/ч").font(.caption2)
-                    Text("↑ " + n(hour.windGustKmh)).font(.caption2).foregroundStyle(cyan)
+                    Text("↑ " + n(hour.windGustKmh)).font(.caption2).foregroundStyle(accent)
                 }
             }.frame(width: 60, height: 98)
-                .background(selected == hour.timestamp ? Color.white.opacity(0.10) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+                .background(selected == hour.timestamp ? HuntReference.green.opacity(0.15) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
         }.buttonStyle(.plain)
     }
     private func daily(_ date: Date, hours: [WeatherHour], now: Date, minimum: Double, maximum: Double) -> some View {
@@ -333,9 +373,9 @@ struct AnimatedWeatherDashboard: View {
             case .temperature:
                 VStack(spacing: 3) {
                     Image(systemName: WeatherScene(code).icon(false))
-                    Text(unit(probability, "%")).font(.caption2).foregroundStyle(cyan)
+                    Text(unit(probability, "%")).font(.caption2).foregroundStyle(accent)
                 }.frame(width: 32)
-                Text(unit(temperatures.min(), "°")).font(.caption).foregroundStyle(.white.opacity(0.65))
+                Text(unit(temperatures.min(), "°")).font(.caption).foregroundStyle(HuntReference.muted)
                 WeatherTemperatureBand(low: temperatures.min(), high: temperatures.max(), minValue: minimum, maxValue: maximum).frame(height: 8)
                 Text(unit(temperatures.max(), "°")).font(.caption.bold())
             case .rain:
@@ -345,7 +385,7 @@ struct AnimatedWeatherDashboard: View {
                     }
                 }.frame(height: 26)
                 Text(rain.count == hours.count && !hours.isEmpty ? n(rain.reduce(0, +), 1) + " мм" : "— мм").font(.caption)
-                Text(unit(probability, "%")).font(.caption.bold()).foregroundStyle(cyan)
+                Text(unit(probability, "%")).font(.caption.bold()).foregroundStyle(accent)
             case .wind:
                 WeatherTrend(values: hours.map(\.windSpeedKmh), gusts: hours.map(\.windGustKmh)).frame(height: 34)
                 Text(n(wind.min()) + "–" + n(wind.max()) + " км/ч").font(.caption.bold())
@@ -353,7 +393,7 @@ struct AnimatedWeatherDashboard: View {
         }.padding(.vertical, 12)
     }
     private func metric(_ title: String, _ value: String, _ icon: String) -> some View {
-        HStack { Label(title, systemImage: icon).foregroundStyle(.white.opacity(0.75)); Spacer(); Text(value).fontWeight(.semibold) }.font(.subheadline)
+        HStack { Label(title, systemImage: icon).foregroundStyle(HuntReference.muted); Spacer(); Text(value).fontWeight(.semibold) }.font(.subheadline)
     }
 }
 
@@ -365,7 +405,7 @@ private struct WeatherRainBar: View {
             ZStack(alignment: .bottom) {
                 RoundedRectangle(cornerRadius: 3).fill(.white.opacity(0.08))
                 if let value, value.isFinite, value > 0 {
-                    RoundedRectangle(cornerRadius: 3).fill(Color(hex: "#58CDE7"))
+                    RoundedRectangle(cornerRadius: 3).fill(HuntReference.green)
                         .frame(height: max(2, proxy.size.height * CGFloat(min(1, value / maxValue))))
                 }
             }
@@ -383,7 +423,7 @@ private struct WeatherTemperatureBand: View {
             ZStack(alignment: .leading) {
                 Capsule().fill(.black.opacity(0.2))
                 if let low, let high {
-                    Capsule().fill(LinearGradient(colors: [Color(hex: "#58CDE7"), Color(hex: "#A3D68B")], startPoint: .leading, endPoint: .trailing))
+                    Capsule().fill(LinearGradient(colors: [HuntReference.green, HuntReference.mint], startPoint: .leading, endPoint: .trailing))
                         .frame(width: max(2, geo.size.width * CGFloat((high - low) / span)))
                         .offset(x: geo.size.width * CGFloat((low - minValue) / span))
                 }
@@ -410,8 +450,8 @@ private struct WeatherTrend: View {
                 }
                 return path
             }
-            context.stroke(line(gusts), with: .color(Color(hex: "#58CDE7").opacity(0.3)), lineWidth: 3)
-            context.stroke(line(values), with: .color(Color(hex: "#58CDE7")), lineWidth: 2)
+            context.stroke(line(gusts), with: .color(HuntReference.green.opacity(0.3)), lineWidth: 3)
+            context.stroke(line(values), with: .color(HuntReference.green), lineWidth: 2)
         }
     }
 }
