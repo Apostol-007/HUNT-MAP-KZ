@@ -49,9 +49,11 @@ struct OfflineMapView: UIViewRepresentable {
         let container = UIView(frame: .zero)
         container.backgroundColor = UIColor(red: 0.06, green: 0.12, blue: 0.16, alpha: 1)
         container.clipsToBounds = true
-        let styleURL = online ? (mapStyle == MapBasemap.protomaps.rawValue ? (protomapsOnlineStyleURL ?? selectedStyle) : selectedStyle)
+        let styleURL = online ? (mapStyle == MapBasemap.protomaps.rawValue ? (protomapsOfflineStyleURL ?? protomapsOnlineStyleURL ?? selectedStyle) : selectedStyle)
                               : (mapStyle == MapBasemap.hybrid.rawValue && !tileFiles.isEmpty ? (protomapsHybridStyleURL ?? protomapsOfflineStyleURL ?? OfflineMapStyle.url) : (protomapsOfflineStyleURL ?? OfflineMapStyle.url))
+        UserDefaults.standard.set("native-map-init", forKey: "hunt.diag.mapStage")
         let view = MLNMapView(frame: .zero, styleURL: styleURL)
+        UserDefaults.standard.set("native-map-created", forKey: "hunt.diag.mapStage")
         context.coordinator.requestedStyleURL = styleURL
         // Critical: MapLibre is the bottom sibling. Weather overlays are separate
         // siblings and cannot disappear behind GL subviews when the style reloads.
@@ -104,6 +106,7 @@ struct OfflineMapView: UIViewRepresentable {
         view.setCenter(CLLocationCoordinate2D(latitude: 43.24, longitude: 76.91), zoomLevel: 11, animated: false)
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
         context.coordinator.renderGrid(in: view)
+        UserDefaults.standard.set("native-map-mounted", forKey: "hunt.diag.mapStage")
         DispatchQueue.main.async { [weak coordinator = context.coordinator, weak view] in
             if let coordinator, let view { coordinator.reportViewport(in: view) }
         }
@@ -119,7 +122,7 @@ struct OfflineMapView: UIViewRepresentable {
             return
         }
         let requestedOnline = online
-        let targetStyle = requestedOnline ? (mapStyle == MapBasemap.protomaps.rawValue ? (protomapsOnlineStyleURL ?? selectedStyle) : selectedStyle)
+        let targetStyle = requestedOnline ? (mapStyle == MapBasemap.protomaps.rawValue ? (protomapsOfflineStyleURL ?? protomapsOnlineStyleURL ?? selectedStyle) : selectedStyle)
                                           : (mapStyle == MapBasemap.hybrid.rawValue && !tileFiles.isEmpty ? (protomapsHybridStyleURL ?? protomapsOfflineStyleURL ?? OfflineMapStyle.url) : (protomapsOfflineStyleURL ?? OfflineMapStyle.url))
         if context.coordinator.requestedStyleURL != targetStyle {
             context.coordinator.requestedStyleURL = targetStyle
@@ -217,7 +220,7 @@ struct OfflineMapView: UIViewRepresentable {
         var onViewportChanged: ([Double]) -> Void = { _ in }
         var isOffline = false
         var hybridOffline = false
-        func invalidateRasterLayout() { lastRevision = -1 }
+        func invalidateRasterLayout() { lastRevision = -1; rasterRequest += 1 }
         var routingGeneration = 0
         private var gridAnnotations: [MLNShape] = []
         private var markerAnnotations: [ObjectIdentifier: UUID] = [:]
@@ -348,6 +351,7 @@ struct OfflineMapView: UIViewRepresentable {
         }
 
         func mapView(_ mapView: MLNMapView, didFinishLoading style: MLNStyle) {
+            UserDefaults.standard.set("style-loaded", forKey: "hunt.diag.mapStage")
             configure(style: style, files: latestFiles)
             lastStyle = style
             fieldOverlay?.syncMapGeometry()
@@ -368,7 +372,9 @@ struct OfflineMapView: UIViewRepresentable {
             if rasterStyle !== style {
                 rasterStyle = style
                 rasterLayerCount = 0
-                RussianMapLabels.apply(to: style)
+                // Keep the provider's original expressions. Rewriting arbitrary symbol
+                // layers through NSExpression can raise an Objective-C exception.
+                // The generated Protomaps style already contains Russian-first labels.
             }
             let hasProtomaps = style.source(withIdentifier: "protomaps_0") != nil
             if (hasProtomaps && !hybridOffline) || files.isEmpty {
@@ -712,20 +718,4 @@ private enum OfflineMapStyle {
 
 /// MapLibre's style labels must be localized separately from the iOS interface.
 /// A satellite raster may contain burned-in text that cannot be rewritten.
-private enum RussianMapLabels {
-    static func apply(to style: MLNStyle) {
-        for case let symbol as MLNSymbolStyleLayer in style.layers {
-            // Do not replace motorway numbers, route shields or other symbol-only layers.
-            let identifier = symbol.identifier.lowercased()
-            guard identifier.contains("label") || identifier.contains("name") ||
-                  identifier.contains("place") || identifier.contains("country") ||
-                  identifier.contains("settlement") || identifier.contains("road") ||
-                  identifier.contains("street") || identifier.contains("poi") else { continue }
-            guard symbol.text != nil else { continue }
-            symbol.text = NSExpression(
-                format: "mgl_coalesce({%K, %K, %K})",
-                "name:ru", "name", "name:en"
-            )
-        }
-    }
-}
+private
