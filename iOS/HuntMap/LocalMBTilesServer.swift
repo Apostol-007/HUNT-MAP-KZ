@@ -32,41 +32,44 @@ final class LocalMBTilesServer {
         } catch { NSLog("HUNT MBTiles server: %@", error.localizedDescription) }
     }
 
-    func register(_ urls: [URL]) -> [(String, URL)] {
-        queue.sync {
-            // Remove obsolete registrations when a pack is deleted or replaced.
-            // Otherwise old URLs could remain reachable after switching maps.
-            // All reads run on this serial queue. Close the previous readers
-            // before switching the active package manifest.
-            for (_, db) in readers { sqlite3_close(db) }
-            readers.removeAll()
-            files.removeAll()
-            supportedFiles.removeAll()
-            var registered: [(String, URL)] = []
-            for (index, file) in urls.enumerated() where file.isFileURL && file.pathExtension.lowercased() == "mbtiles" {
-                guard FileManager.default.fileExists(atPath: file.path) else { continue }
-                let key = "p\(index)"
-                guard isRasterMBTiles(file) else { continue }
-                var db: OpaquePointer?
-                guard sqlite3_open_v2(file.path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil) == SQLITE_OK,
-                      let db else {
-                    if let db { sqlite3_close(db) }
-                    continue
-                }
-                files[key] = file
-                readers[key] = db
-                supportedFiles.insert(key)
-                registered.append((key, file))
-            }
-            return registered
-        }
-    }
+    private var registeredURLs: [URL]?
+    private var registeredRevision: Int?
 
-    func tileTemplate(for key: String) -> String? {
-        queue.sync {
-            guard let port else { return nil }
-            guard supportedFiles.contains(key) else { return nil }
-            return "http://127.0.0.1:\(port)/tiles/\(key)/{z}/{x}/{y}"
+    // SQLite and tile-serving share a serial queue. Never wait for it on UIKit.
+    func prepareTemplates(_ urls: [URL], revision: Int, completion: @escaping ([String]) -> Void) {
+        queue.async { [self] in
+            if registeredURLs != urls || registeredRevision != revision {
+                for (_, db) in readers { sqlite3_close(db) }
+                readers.removeAll()
+                files.removeAll()
+                supportedFiles.removeAll()
+                for (index, file) in urls.enumerated() where file.isFileURL && file.pathExtension.lowercased() == "mbtiles" {
+                    guard FileManager.default.fileExists(atPath: file.path), isRasterMBTiles(file) else { continue }
+                    var db: OpaquePointer?
+                    guard sqlite3_open_v2(file.path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil) == SQLITE_OK,
+                          let db else {
+                        if let db { sqlite3_close(db) }
+                        continue
+                    }
+                    let key = "p\(index)-\(revision)"
+                    files[key] = file
+                    readers[key] = db
+                    supportedFiles.insert(key)
+                }
+                registeredURLs = urls
+                registeredRevision = revision
+            }
+            let templates: [String]
+            if let port {
+                templates = urls.indices.compactMap { index in
+                    let key = "p\(index)-\(revision)"
+                    guard supportedFiles.contains(key) else { return nil }
+                    return "http://127.0.0.1:\(port)/tiles/\(key)/{z}/{x}/{y}"
+                }
+            } else {
+                templates = []
+            }
+            DispatchQueue.main.async { completion(templates) }
         }
     }
 
