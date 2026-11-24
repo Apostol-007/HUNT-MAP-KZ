@@ -87,6 +87,7 @@ struct ForecastGrid: Codable {
     private var task: Task<Void, Never>?
     private var viewportTask: Task<Void, Never>?
     private var visibleBounds: [Double] = [46, 40, 88, 56]
+    private var requestGeneration = UUID()
     private var lastRequestedKey = ""
     private var lastSuccessfulRefresh = Date.distantPast
     private var lastFailedKey = ""
@@ -154,7 +155,9 @@ struct ForecastGrid: Codable {
         return value
     }
     func stop() {
+        requestGeneration = UUID()
         task?.cancel()
+        task = nil
         loading = false
     }
     func clear() {
@@ -215,7 +218,16 @@ struct ForecastGrid: Codable {
                     guard let endpoint = url.url else { throw URLError(.badURL) }
                     var request = URLRequest(url: endpoint)
                     request.timeoutInterval = 16
-                    let (data, response) = try await URLSession.shared.data(for: request)
+                    var (data, response) = try await URLSession.shared.data(for: request)
+                    if let http = response as? HTTPURLResponse, http.statusCode == 400 {
+                        var fallback = url
+                        fallback.queryItems?.removeAll { $0.name == "start_hour" || $0.name == "end_hour" }
+                        fallback.queryItems?.append(URLQueryItem(name: "forecast_days", value: "8"))
+                        if let fallbackURL = fallback.url {
+                            request.url = fallbackURL
+                            (data, response) = try await URLSession.shared.data(for: request)
+                        }
+                    }
                     guard let http = response as? HTTPURLResponse else {
                         throw URLError(.badServerResponse)
                     }
@@ -256,7 +268,7 @@ struct ForecastGrid: Codable {
         let value = ForecastGrid(schema: "hunt-weather-grid-v1", kind: "model_forecast_not_radar",
                                  forecastTimeUTC: timestamp, gridWidth: region.width,
                                  gridHeight: region.height, bounds: region.bbox, points: samples)
-        guard value.validated() else { throw URLError(.cannotParseResponse) }
+        guard value.validated(), samples.contains(where: { $0.windSpeed != nil || $0.pressure != nil || $0.precipitation != nil }) else { throw URLError(.cannotParseResponse) }
         return value
     }
 
@@ -267,8 +279,8 @@ struct ForecastGrid: Codable {
             .addingTimeInterval(TimeInterval(hourOffset * 3600))
         let detailed = regionForViewport()
         var coarse = detailed
-        coarse.width = 6
-        coarse.height = 4
+        coarse.width = 3
+        coarse.height = 3
         let key = detailed.key + ":" + String(Int(date.timeIntervalSince1970 / 3600))
         if loading && lastRequestedKey == key { return }
         // Avoid hammering the provider on every SwiftUI redraw after a temporary error.
@@ -302,22 +314,23 @@ struct ForecastGrid: Codable {
             status = cached ? "Офлайн · сохранённый прогноз" : "Нет прогноза для этого района и часа"
             return
         }
+        let generation = requestGeneration
+        loading = true
         task = Task { [weak self] in
             guard let self else { return }
-            self.loading = true
-            defer { self.loading = false }
+            defer { if self.requestGeneration == generation { self.loading = false } }
             do {
                 // Show a low-cost grid first, then refine without blanking the map.
                 if self.grid == nil {
                     let value = try await self.fetchGrid(region: coarse, at: date)
-                    guard !Task.isCancelled, self.lastRequestedKey == key else { return }
+                    guard !Task.isCancelled, self.requestGeneration == generation, self.lastRequestedKey == key else { return }
                     self.grid = value
                     self.cached = false
                     self.status = "Ветер отображается · уточняем детализацию…"
                     try? JSONEncoder().encode(value).write(to: self.cachePath(region: coarse, date: date), options: .atomic)
                 }
                 let value = try await self.fetchGrid(region: detailed, at: date)
-                guard !Task.isCancelled, self.lastRequestedKey == key else { return }
+                guard !Task.isCancelled, self.requestGeneration == generation, self.lastRequestedKey == key else { return }
                 self.grid = value
                 self.cached = false
                 self.lastSuccessfulRefresh = Date()
@@ -331,7 +344,7 @@ struct ForecastGrid: Codable {
                 self.status = "Прогноз обновлён · Open-Meteo · \(value.forecastTimeUTC)"
                 try? JSONEncoder().encode(value).write(to: self.cachePath(region: detailed, date: date), options: .atomic)
             } catch {
-                guard !Task.isCancelled, self.lastRequestedKey == key else { return }
+                guard !Task.isCancelled, self.requestGeneration == generation, self.lastRequestedKey == key else { return }
                 self.cached = self.grid != nil
                 self.lastFailedKey = key
                 self.lastFailedAt = Date()
