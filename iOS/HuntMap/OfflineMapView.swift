@@ -216,7 +216,10 @@ struct OfflineMapView: UIViewRepresentable {
         private var stableMarkers: [UUID: MLNPointAnnotation] = [:]
         private var gpsAnnotation: MLNPointAnnotation?
         private var transientAnnotations: [MLNAnnotation] = []
-        private var lastTransientKey: String?
+        private var lastTransientKey: Int?
+        private var zoneAnnotations: [MLNAnnotation] = []
+        private var lastZones: [GeoZone]?
+        private var replayAnnotation: MLNPointAnnotation?
         private var markerCoordinates: [(UUID, CLLocationCoordinate2D)] = []
         init(selectedZone: Binding<GeoZone?>) { self.selectedZone = selectedZone }
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -287,7 +290,7 @@ struct OfflineMapView: UIViewRepresentable {
         }
 
         private var lastRevision = -1
-        private var lastStyle: MLNStyle?
+        private weak var lastStyle: MLNStyle?
         private var latestFiles: [URL] = []
         private var centeredOnGPS = false
         private var appliedCenterRequest = 0
@@ -456,22 +459,6 @@ struct OfflineMapView: UIViewRepresentable {
             // String(describing:) serialised entire arrays on every GPS/SwiftUI update.
             var geometryHash = Hasher()
             geometryHash.combine(offlineRoadRevision)
-            geometryHash.combine(zones.count)
-            for zone in zones {
-                geometryHash.combine(zone.id)
-                geometryHash.combine(zone.name)
-                geometryHash.combine(zone.verified)
-                for polygon in zone.polygons {
-                    geometryHash.combine(polygon.rings.count)
-                    for ring in polygon.rings {
-                        geometryHash.combine(ring.count)
-                        for point in ring {
-                            geometryHash.combine(point.latitude)
-                            geometryHash.combine(point.longitude)
-                        }
-                    }
-                }
-            }
             if let track {
                 geometryHash.combine(track.id)
                 geometryHash.combine(track.fixes.count)
@@ -485,19 +472,46 @@ struct OfflineMapView: UIViewRepresentable {
                 geometryHash.combine(point.latitude)
                 geometryHash.combine(point.longitude)
             }
-            if let replayPosition {
-                geometryHash.combine(replayPosition.latitude)
-                geometryHash.combine(replayPosition.longitude)
-            }
-            let transientKey = String(geometryHash.finalize())
-            if transientKey != lastTransientKey {
+            let transientKey = geometryHash.finalize()
+            let geometryChanged = transientKey != lastTransientKey
+            if geometryChanged {
                 if !transientAnnotations.isEmpty { view.removeAnnotations(transientAnnotations) }
                 transientAnnotations.removeAll()
                 lastTransientKey = transientKey
             }
+            if lastZones != zones {
+                lastZones = zones
+                if !zoneAnnotations.isEmpty { view.removeAnnotations(zoneAnnotations) }
+                zoneAnnotations.removeAll()
+                for zone in zones {
+                    for polygon in zone.polygons {
+                        for ring in polygon.rings where ring.count >= 3 {
+                            var coordinates = ring.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+                            let line = MLNPolyline(coordinates: &coordinates, count: UInt(coordinates.count))
+                            line.title = zone.verified ? "Граница: \(zone.name)" : "НЕ ПРОВЕРЕНО: \(zone.name)"
+                            zoneAnnotations.append(line)
+                        }
+                    }
+                }
+                if !zoneAnnotations.isEmpty { view.addAnnotations(zoneAnnotations) }
+            }
+            if let replayPosition, replayPosition.valid {
+                let coordinate = CLLocationCoordinate2D(latitude: replayPosition.latitude, longitude: replayPosition.longitude)
+                if let pin = replayAnnotation { pin.coordinate = coordinate }
+                else {
+                    let pin = MLNPointAnnotation()
+                    pin.coordinate = coordinate
+                    pin.title = "REPLAY|LOCATION"
+                    replayAnnotation = pin
+                    view.addAnnotation(pin)
+                }
+            } else if let pin = replayAnnotation {
+                view.removeAnnotation(pin)
+                replayAnnotation = nil
+            }
             var updated: [MLNAnnotation] = []
             // Hold transient annotation building behind a change check; GPS is refreshed separately.
-            if transientAnnotations.isEmpty && transientKey == lastTransientKey {
+            if geometryChanged {
             // Weather shades are drawn by WeatherFieldOverlay in a lightweight canvas.
             // Never add hundreds of weather polygons/arrow annotations to MapLibre.
             for road in offlineRoadLines where road.points.count >= 2 {
@@ -506,27 +520,11 @@ struct OfflineMapView: UIViewRepresentable {
                 line.title = road.isTrail ? "OFFLINE|TRAIL" : "OFFLINE|ROAD"
                 updated.append(line)
             }
-            for zone in zones {
-                for polygon in zone.polygons {
-                    for ring in polygon.rings where ring.count >= 3 {
-                        var coordinates = ring.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
-                        let line = MLNPolyline(coordinates: &coordinates, count: UInt(coordinates.count))
-                        line.title = zone.verified ? "Граница: \(zone.name)" : "НЕ ПРОВЕРЕНО: \(zone.name)"
-                        updated.append(line)
-                    }
-                }
-            }
             if let track, track.fixes.count > 1 {
                 var coordinates = track.fixes.map { CLLocationCoordinate2D(latitude: $0.point.latitude, longitude: $0.point.longitude) }
                 let line = MLNPolyline(coordinates: &coordinates, count: UInt(coordinates.count))
                 line.title = "Записанный маршрут"
                 updated.append(line)
-            }
-            if let replayPosition {
-                let pin = MLNPointAnnotation()
-                pin.coordinate = CLLocationCoordinate2D(latitude: replayPosition.latitude, longitude: replayPosition.longitude)
-                pin.title = "REPLAY|LOCATION"
-                updated.append(pin)
             }
             if navigationPath.count >= 2 {
                 var routeCoords = navigationPath.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
