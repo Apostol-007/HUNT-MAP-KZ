@@ -62,6 +62,7 @@ struct DiagnosticsView: View {
         Build: \(releaseVersion)
         \(screenGeometry)
         Captured UTC: \(ISO8601DateFormatter().string(from: Date()))
+        Launch readiness s: \(UserDefaults.standard.object(forKey: "hunt.diag.launchSeconds").map { String(format: "%.2f", UserDefaults.standard.double(forKey: "hunt.diag.launchSeconds")) } ?? "not measured")
         iOS: \(UIDevice.current.systemVersion)
         Device: \(UIDevice.current.model)
         GPS state: \(model.status)
