@@ -36,8 +36,14 @@ jobs:
           cache-dependency-path: server/requirements.txt
       - name: Install server test dependencies
         run: python -m pip install -r server/requirements.txt pytest httpx
-      - name: Test server
-        run: python -m pytest -q server/tests
+      - name: Test server and offline-map preparation tools
+        env:
+          PYTHONPATH: tools
+        run: python -m pytest -q server/tests tools/test_*.py
+      - name: Validate iOS layout contract
+        run: python scripts/verify_iphone_layout.py
+      - name: Validate map UI structure
+        run: python scripts/check_ui_structure.py
       - name: Scan tracked text files for common credential formats
         run: python tools/check_repository_secrets.py
 

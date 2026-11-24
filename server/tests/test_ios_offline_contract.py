@@ -386,3 +386,13 @@ def test_orphaned_sqlite_gps_journal_recovery_on_missing_legacy_json():
     assert 'recoverOrphanedJournal()' in model
     assert 'field-unreadable-' in model
     assert 'saved.tracks.contains(where: { $0.id == recovered.id })' in model
+
+
+def test_release_pipeline_covers_map_tools_and_launch_layout():
+    workflow = (ROOT / ".github/workflows/ios-unsigned-ipa.yml").read_text()
+    layout = (ROOT / "scripts/verify_iphone_layout.py").read_text()
+    assert 'pytest -q server/tests tools/test_*.py' in workflow
+    assert 'python scripts/verify_iphone_layout.py' in workflow
+    assert 'python scripts/check_ui_structure.py' in workflow
+    assert 'MARKETING_VERSION: 4.8.0' not in layout
+    assert 'GENERATE_INFOPLIST_FILE: NO' in layout
