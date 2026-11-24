@@ -20,15 +20,26 @@ import Network
                protomaps: ProtomapsOfflineStore, model: FieldModel,
                valhalla: ValhallaRoutingStore) {
         guard startupTask == nil else { return }
+        // Do not gate the map on multi-gigabyte downloads or an unresponsive host.
+        // The sync task continues independently after the launch screen disappears.
         startupTask = Task {
             await start(hosting: hosting, tiles: tiles, protomaps: protomaps,
                         model: model, valhalla: valhalla)
         }
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            guard let self, !Task.isCancelled else { return }
+            if self.presented {
+                self.presented = false
+                if self.isDownloading {
+                    self.detail = "Обновление карт продолжается без блокировки"
+                }
+            }
+        }
     }
 
     func skip() {
-        cancelled = true
-        startupTask?.cancel()
+        // Opening the map must not discard an in-flight partial package.
         presented = false
     }
 
