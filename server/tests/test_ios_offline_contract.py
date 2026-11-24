@@ -260,3 +260,13 @@ def test_partial_forecast_does_not_blank_weather():
     assert 'totalWeight > 0.000001' in canvas
     assert 'let neighbours:' in wind
     assert 'forecast = grid' in wind
+
+
+def test_startup_does_not_gate_map_on_downloads():
+    startup = (IOS / "StartupSync.swift").read_text()
+    assert 'Task.sleep(for: .seconds(5))' in startup
+    assert 'self.presented = false' in startup
+    assert 'func skip()' in startup
+    skip = startup.split('func skip()', 1)[1].split('private func internetAvailable', 1)[0]
+    assert 'startupTask?.cancel()' not in skip
+    assert 'presented = false' in skip
