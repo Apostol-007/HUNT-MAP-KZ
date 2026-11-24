@@ -84,8 +84,8 @@ struct MarkerEditor: View {
                                     Text(choice.1).font(.system(size: 9)).lineLimit(1)
                                 }
                                 .frame(maxWidth: .infinity, minHeight: 54)
-                                .foregroundStyle((marker.symbol ?? MarkerStyle.defaultSymbol(for: marker.kind)) == choice.0 ? Color.white : Color.primary)
-                                .background((marker.symbol ?? MarkerStyle.defaultSymbol(for: marker.kind)) == choice.0 ? Color.accentColor : Color.gray.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                                .foregroundStyle((marker.symbol ?? MarkerStyle.defaultSymbol(for: marker.kind)) == choice.0 ? Color.black : Color.primary)
+                                .background((marker.symbol ?? MarkerStyle.defaultSymbol(for: marker.kind)) == choice.0 ? HuntReference.green : HuntReference.card, in: RoundedRectangle(cornerRadius: 10))
                             }.buttonStyle(.plain)
                         }
                     }.padding(.vertical, 8)
@@ -120,8 +120,10 @@ struct MarkerEditor: View {
                 }
             }
             .scrollContentBackground(.hidden)
-            .background(FBTheme.background)
+            .background(HuntReference.background)
             .navigationTitle(isNew ? "Новая метка" : "Редактор метки")
+            .navigationBarTitleDisplayMode(.inline)
+            .tint(HuntReference.green)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {

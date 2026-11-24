@@ -67,6 +67,7 @@ struct GroundsCatalogView: View {
     @State private var importing = false
     @State private var error = ""
     @State private var admin = false
+    @State private var showManagement = false
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -81,18 +82,24 @@ struct GroundsCatalogView: View {
                 }.foregroundStyle(Color(red: 0.35, green: 0.78, blue: 0.52))
             }
             Text("Контуры покрытия, не официальные границы").font(.caption).foregroundStyle(.orange)
-            TextField("Поиск по названию", text: $search).textFieldStyle(.roundedBorder)
-            Text(model.groundMonitorStatus).font(.caption).foregroundStyle(.green)
-            if model.monitoredGroundID != nil { Button("Отключить контроль") { model.stopGroundMonitor() } }
+            HuntSearchField(text: $search, placeholder: "Поиск по названию")
+            HStack {
+                Label(model.groundMonitorStatus, systemImage: "location.circle").font(.caption).foregroundStyle(HuntReference.muted)
+                Spacer()
+                if model.monitoredGroundID != nil { Button("Отключить") { model.stopGroundMonitor() }.font(.caption.bold()) }
+            }.huntSurface()
             if model.zones.isEmpty { Text("Загрузка встроенного каталога…").font(.caption) }
-            Button("Импорт дополнительного GeoJSON") { importing = true }
-            Button("Локальный администратор") { unlock() }
-            if admin {
-                Button("Добавить угодья из GeoJSON") { importing = true }
-                if let file = GroundsExport.file(model.zones) {
-                    ShareLink(item: file) { Label("Экспорт / резервная копия GeoJSON", systemImage: "square.and.arrow.up") }
-                }
-            }
+            DisclosureGroup(isExpanded: $showManagement) {
+                VStack(spacing: 8) {
+                    HuntAction(title: "Импорт GeoJSON", symbol: "square.and.arrow.down") { importing = true }
+                    HuntAction(title: admin ? "Администратор разблокирован" : "Локальный администратор", symbol: "lock.shield") { unlock() }
+                    if admin, let file = GroundsExport.file(model.zones) {
+                        ShareLink(item: file) { HuntRow(title: "Резервная копия", subtitle: "Экспорт GeoJSON", symbol: "square.and.arrow.up") }
+                    }
+                }.padding(.top, 10)
+            } label: {
+                Label("Управление каталогом", systemImage: "gearshape").font(.subheadline.bold())
+            }.huntSurface()
             if !error.isEmpty { Text(error).font(.caption).foregroundStyle(.orange) }
             LazyVStack(alignment: .leading, spacing: 10) {
                 ForEach(model.zones.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }) { ground in
@@ -126,12 +133,12 @@ private struct GroundCatalogCard: View {
     let onDetails: () -> Void
     let onMap: () -> Void
     let onRoute: () -> Void
-    private let accent = Color(red: 0.35, green: 0.78, blue: 0.52)
+    private let accent = HuntReference.green
     var body: some View {
-        VStack(alignment: .leading, spacing: 17) {
+        VStack(alignment: .leading, spacing: 12) {
             Button(action: onDetails) {
                 HStack(alignment: .top) {
-                    Text(ground.name).font(.system(size: 24, weight: .bold)).foregroundStyle(.white)
+                    Text(ground.name).font(.title3.bold()).foregroundStyle(.white)
                     Spacer(minLength: 6)
                     Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(accent)
                 }
@@ -146,26 +153,22 @@ private struct GroundCatalogCard: View {
             }
             Divider().overlay(accent.opacity(0.22))
             HStack(spacing: 8) {
-                Button(action: onRoute) { Label("Маршрут", systemImage: "location.fill").frame(maxWidth: .infinity) }
-                    .buttonStyle(.borderedProminent).tint(accent).foregroundStyle(.black)
-                Button(action: onMap) { Label("На карте", systemImage: "map.fill").frame(maxWidth: .infinity) }
-                    .buttonStyle(.bordered).tint(accent)
+                HuntAction(title: "Маршрут", symbol: "location.fill", primary: true, action: onRoute)
+                HuntAction(title: "На карте", symbol: "map.fill", action: onMap)
                 if let link = ground.groundRouteLink {
                     ShareLink(item: link) { Image(systemName: "square.and.arrow.up").frame(width: 44, height: 44) }
                         .foregroundStyle(accent).accessibilityLabel("Поделиться маршрутом")
                 }
             }.font(.caption.bold()).controlSize(.large)
         }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(red: 0.075, green: 0.20, blue: 0.18), in: RoundedRectangle(cornerRadius: 24))
+        .huntSurface()
         .environment(\.colorScheme, .dark)
     }
     private func field(_ symbol: String, _ value: String) -> some View {
         HStack(alignment: .top, spacing: 13) {
             Image(systemName: symbol).font(.system(size: 19, weight: .medium))
                 .foregroundStyle(accent).frame(width: 25)
-            Text(value).font(.system(size: 15)).foregroundStyle(.white.opacity(0.93))
+            Text(value).font(.subheadline).foregroundStyle(.white.opacity(0.93))
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -235,9 +238,9 @@ struct GroundDetailsSheet: View {
                     }
                     if !error.isEmpty { Text(error).foregroundStyle(.orange) }
                 }
-            }.navigationTitle(current.name).navigationBarTitleDisplayMode(.inline)
+            }.scrollContentBackground(.hidden).background(HuntReference.background).navigationTitle(current.name).navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Закрыть") { dismiss() } } }
-            .sheet(isPresented: $editing) { GroundEditor(zone: current, model: model) }
+            .sheet(isPresented: $editing) { GroundEditor(zone: current, model: model).huntModal() }
         }
     }
 }
@@ -276,7 +279,7 @@ struct GroundEditor: View {
                     }
                 }
                 Button("Удалить угодье", role: .destructive) { deleting = true }
-            }.navigationTitle("Редактор угодья")
+            }.scrollContentBackground(.hidden).background(HuntReference.background).navigationTitle("Редактор угодья")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {

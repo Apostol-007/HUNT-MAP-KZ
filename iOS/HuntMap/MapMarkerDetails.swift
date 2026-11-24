@@ -24,13 +24,13 @@ struct MapMarkerDetails: View {
             Group {
                 if let marker {
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 18) {
+                        VStack(alignment: .leading, spacing: 12) {
                             HStack(spacing: 13) {
                                 Image(systemName: marker.symbol ?? MarkerStyle.defaultSymbol(for: marker.kind))
                                     .font(.system(size: 27, weight: .bold))
                                     .foregroundStyle(Color(hex: marker.colorHex ?? "#24DA66"))
                                     .frame(width: 54, height: 54)
-                                    .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 16))
+                                    .background(HuntReference.card, in: RoundedRectangle(cornerRadius: 16))
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(marker.title).font(.title3.bold()).foregroundStyle(.white)
                                     Text(marker.kind).font(.caption).foregroundStyle(.secondary)
@@ -41,12 +41,12 @@ struct MapMarkerDetails: View {
                                 Text(String(format: "%.7f, %.7f", marker.coordinate.latitude, marker.coordinate.longitude))
                                     .font(.system(.body, design: .monospaced))
                                     .textSelection(.enabled)
-                                Text("Создана: \(marker.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                                Text("Создана: \(marker.createdAt.formatted(.dateTime.day().month().year().hour().minute().locale(Locale(identifier: "ru_KZ"))))")
                                     .font(.caption).foregroundStyle(.secondary)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(15)
-                            .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 16))
+                            .background(HuntReference.card, in: RoundedRectangle(cornerRadius: 16))
 
                             NavigationLink {
                                 MarkerEditor(marker: marker,
@@ -77,7 +77,7 @@ struct MapMarkerDetails: View {
                     ContentUnavailableView("Метка удалена", systemImage: "mappin.slash")
                 }
             }
-            .background(Color(hex: "#050808").ignoresSafeArea())
+            .background(HuntReference.background.ignoresSafeArea())
             .navigationTitle("Управление меткой")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Закрыть") { dismiss() } } }
@@ -101,7 +101,7 @@ struct MapMarkerDetails: View {
         }
         .foregroundStyle(destructive ? Color.red : Color.white)
         .padding(13)
-        .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 13))
+        .background(HuntReference.card, in: RoundedRectangle(cornerRadius: 14))
         .contentShape(Rectangle())
     }
 

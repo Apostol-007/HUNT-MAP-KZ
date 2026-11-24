@@ -117,7 +117,7 @@ struct MainView: View {
             if tab != .map { themedScreen }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay(alignment: .bottom) { navigation }
+        .safeAreaInset(edge: .bottom, spacing: 0) { navigation }
         .overlay {
             if startupSync.presented {
                 StartupSyncScreen(sync: startupSync, hosting: hosting, protomaps: protomaps)
@@ -126,6 +126,8 @@ struct MainView: View {
         }
         .background(HuntReference.background.ignoresSafeArea())
         .preferredColorScheme(.dark)
+        .tint(HuntReference.green)
+        .environment(\.locale, Locale(identifier: "ru_KZ"))
         .background(ShakeDetector().frame(width: 1, height: 1))
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
         .onAppear {
@@ -208,8 +210,8 @@ struct MainView: View {
         .alert("Маршрутизация", isPresented: Binding(get: { routingError != nil }, set: { if !$0 { routingError = nil } })) {
             Button("Понятно") { routingError = nil }
         } message: { Text(routingError ?? "") }
-        .sheet(isPresented: $showLayers) { layerSheet }
-        .sheet(isPresented: $showSearch) { mapSearchSheet }
+        .sheet(isPresented: $showLayers) { layerSheet.huntModal() }
+        .sheet(isPresented: $showSearch) { mapSearchSheet.huntModal() }
         .sheet(item: $selectedMapMarker) { selection in
             MapMarkerDetails(markerID: selection.id, model: model,
                 onShowOnMap: { point in
@@ -226,7 +228,8 @@ struct MainView: View {
                     selectedMapMarker = nil
                     startNavigation(to: id)
                 })
-                .presentationDetents([.medium, .large])
+                .huntModal()
+                .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
         }
         .confirmationDialog("Точка на карте", isPresented: $showMapPointActions, titleVisibility: .visible) {
@@ -263,12 +266,12 @@ struct MainView: View {
                              model.insertMarker(changed)
                              showMarkersOnMap = true
                          },
-                         onDelete: { _ in })
+                         onDelete: { _ in }).huntModal()
         }
         .sheet(item: $editingMarker) { marker in
             MarkerEditor(marker: marker,
                          onSave: { model.saveMarker($0) },
-                         onDelete: { model.deleteMarker(id: $0) })
+                         onDelete: { model.deleteMarker(id: $0) }).huntModal()
         }
         .confirmationDialog("Удалить метку?", isPresented: Binding(
             get: { markerToDelete != nil },
@@ -290,6 +293,7 @@ struct MainView: View {
         }
         .sheet(isPresented: $showWeather) {
             WeatherPanel(service: weather, coordinate: model.coordinate, online: online)
+                .huntModal()
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
@@ -297,11 +301,12 @@ struct MainView: View {
             WeatherMapSheet(service: weatherGrid, layer: $weatherLayer,
                             coordinate: model.coordinate, online: online,
                             onShowKazakhstan: { tab = .map; overviewCommand += 1 })
+                .huntModal()
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
         .sheet(item: $zone) { ground in
-            GroundDetailsSheet(zone: ground, model: model, onMap: { showGround($0) }, onRoute: { routeGround($0) })
+            GroundDetailsSheet(zone: ground, model: model, onMap: { showGround($0) }, onRoute: { routeGround($0) }).huntModal()
         }
         .sheet(isPresented: $showDiagnostics) {
             DiagnosticsView(model: model, mapCount: maps.installed.count,
@@ -313,10 +318,10 @@ struct MainView: View {
                             weatherLayer: weatherLayer.rawValue,
                             navigationStatus: navigationKind,
                             protomapsStatus: protomaps.status,
-                            valhallaStatus: valhalla.status)
+                            valhallaStatus: valhalla.status).huntModal()
         }
-        .sheet(isPresented: $showAbout) { AboutHuntView() }
-        .sheet(isPresented: $showLegalLibrary) { LegalLibraryView() }
+        .sheet(isPresented: $showAbout) { AboutHuntView().huntModal() }
+        .sheet(isPresented: $showLegalLibrary) { LegalLibraryView().huntModal() }
     }
 
     // MARK: - Root layout
@@ -333,7 +338,7 @@ struct MainView: View {
             }
             .padding(.horizontal, 18)
             .padding(.top, 14)
-            .padding(.bottom, 112)
+            .padding(.bottom, 18)
         }
         .scrollIndicators(.hidden)
         .background(HuntReference.background.ignoresSafeArea())
@@ -353,7 +358,7 @@ struct MainView: View {
         .padding(.horizontal, 7)
         .padding(.top, 8)
         .padding(.bottom, 5)
-        .background(HuntReference.background.opacity(0.98))
+        .background(HuntReference.background.ignoresSafeArea(edges: .bottom))
         .overlay(alignment: .top) { Rectangle().fill(HuntReference.separator).frame(height: 1) }
         .padding(.bottom, 0)
     }
@@ -401,11 +406,33 @@ struct MainView: View {
                     }
                     .padding(20)
                 }
-                .frame(height: 190)
+                .frame(height: 150)
                 .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             }
             .buttonStyle(.plain)
 
+            VStack(alignment: .leading, spacing: 12) {
+                Button { dataSection = .grounds; tab = .data } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "map.fill").font(.title2.bold())
+                            .foregroundStyle(HuntReference.green)
+                            .frame(width: 48, height: 48)
+                            .background(HuntReference.green.opacity(0.13), in: RoundedRectangle(cornerRadius: 14))
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Охотугодья").font(.headline.bold()).foregroundStyle(.white)
+                            Text("\(model.zones.count) территорий · каталог офлайн")
+                                .font(.caption).foregroundStyle(HuntReference.muted)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right").foregroundStyle(HuntReference.green)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                }.buttonStyle(.plain).accessibilityIdentifier("grounds_home")
+                Text(model.groundMonitorStatus).font(.caption).foregroundStyle(HuntReference.muted)
+                HStack(spacing: 8) {
+                    HuntAction(title: "Каталог", symbol: "list.bullet", primary: true) { dataSection = .grounds; tab = .data }
+                    HuntAction(title: "Карта", symbol: "map") { showGrounds = true; tab = .map }
+                }
+            }.huntSurface()
             Button { showLegalLibrary = true } label: {
                 HStack(spacing: 14) {
                     Image(systemName: "books.vertical.fill")
@@ -431,10 +458,12 @@ struct MainView: View {
             .accessibilityIdentifier("legal_library_home")
             Text("Быстрые действия").font(.headline.bold())
             LazyVGrid(columns: [.init(.flexible()), .init(.flexible())], spacing: 10) {
-                ReferenceActionCard(title: "Карта и угодья", subtitle: "Открыть карту", symbol: "map") { tab = .map }
+                ReferenceActionCard(title: "Карта", subtitle: "Открыть карту", symbol: "map") { tab = .map }
                 ReferenceActionCard(title: "Офлайн-карты", subtitle: "Обновляются автоматически", symbol: "checkmark.icloud") { tab = .map }
                 ReferenceActionCard(title: "Мои маршруты", subtitle: "Треки и GPX", symbol: "mappin.and.ellipse") { dataSection = .routes; tab = .data }
-                ReferenceActionCard(title: "Слои и погода", subtitle: "Прогноз и карта", symbol: "square.3.layers.3d") { tab = .map; showLayers = true }
+                ReferenceActionCard(title: "Метки", subtitle: "Сохранённые точки", symbol: "mappin.circle") { dataSection = .markers; tab = .data }
+                ReferenceActionCard(title: "Погода", subtitle: "Прогноз и карта", symbol: "cloud.sun") { serviceSection = .weather; tab = .services }
+                ReferenceActionCard(title: "Животные", subtitle: "Справочник", symbol: "pawprint") { serviceSection = .wildlife; tab = .services }
             }
 
             VStack(alignment: .leading, spacing: 14) {
@@ -558,8 +587,7 @@ struct MainView: View {
                 .padding(.top, 8)
                 HStack {
                     Spacer()
-                    VStack(spacing: 9) {
-                        circleMapButton("square.3.layers.3d", label: "Слои") { showLayers = true }
+                    VStack(spacing: 7) {
                         circleMapButton(gridMode ? "square.grid.3x3.fill" : "square.grid.3x3", label: "Выбор сетки") {
                             gridMode.toggle()
                         }
@@ -577,7 +605,7 @@ struct MainView: View {
                         circleMapButton("minus", label: "Отдалить") { zoomCommand -= 1 }
                     }
                 }
-                .padding(.top, 16)
+                .padding(.top, 10)
                 .padding(.horizontal, 13)
                 Spacer(minLength: 0)
                 if !online {
@@ -617,12 +645,12 @@ struct MainView: View {
                     .padding(.bottom, 8)
                     .accessibilityIdentifier("marker_move_mode")
                 }
-                if showGrounds, let ground = model.zones.first(where: { $0.id == highlightedGroundID }) {
+                if routeDestination == nil, recordedRoute == nil, !gridMode, showGrounds, let ground = model.zones.first(where: { $0.id == highlightedGroundID }) {
                     selectedGroundBanner(ground)
                         .padding(.horizontal, 12)
                         .padding(.bottom, 8)
                 }
-                if weatherLayer != .none {
+                if routeDestination == nil, recordedRoute == nil, weatherLayer != .none {
                     Button { showWeatherLayers = true } label: {
                         Label("\(weatherLayer.rawValue) · \(weatherGrid.forecastLabel)", systemImage: "cloud.fill")
                             .font(.caption.bold())
@@ -670,7 +698,7 @@ struct MainView: View {
                     }
                 }
                 .padding(.horizontal, 12)
-                .padding(.bottom, 84)
+                .padding(.bottom, 12)
             }
         }
     }
@@ -1064,38 +1092,33 @@ struct MainView: View {
 
     private var mapSearchSheet: some View {
         NavigationStack {
-            List {
-                Section("Охотугодья · локальный каталог") {
-                    ForEach(model.zones.filter { searchText.isEmpty || $0.name.localizedCaseInsensitiveContains(searchText) }) { ground in
-                        Button {
-                            showSearch = false
-                            tab = .map
-                            zone = ground
-                        } label: {
-                            Label(ground.name, systemImage: "map")
-                        }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    HuntSearchField(text: $searchText, placeholder: "Название угодья или метки")
+                    let grounds = model.zones.filter { searchText.isEmpty || $0.name.localizedCaseInsensitiveContains(searchText) }
+                    let marks = model.markers.filter { searchText.isEmpty || $0.title.localizedCaseInsensitiveContains(searchText) }
+                    Text("Охотугодья · \(grounds.count)").font(.subheadline.bold()).foregroundStyle(HuntReference.muted)
+                    ForEach(grounds) { ground in
+                        Button { showSearch = false; showGround(ground) } label: {
+                            HuntRow(title: ground.name, subtitle: ground.groundRegion, symbol: "map")
+                        }.buttonStyle(.plain)
                     }
-                }
-                Section("Метки · сохранённые") {
-                    ForEach(model.markers.filter { searchText.isEmpty || $0.title.localizedCaseInsensitiveContains(searchText) }) { marker in
+                    Text("Метки · \(marks.count)").font(.subheadline.bold()).foregroundStyle(HuntReference.muted)
+                    ForEach(marks) { marker in
                         Button {
-                            showSearch = false
-                            tab = .map
-                            mapFocus = marker.coordinate
-                            centerRequest += 1
+                            showSearch = false; tab = .map; mapFocus = marker.coordinate; centerRequest += 1
                         } label: {
-                            HStack {
-                                Label(marker.title, systemImage: "mappin.circle")
-                                Spacer()
-                                Text(String(format: "%.4f, %.4f", marker.coordinate.latitude, marker.coordinate.longitude))
-                                    .font(.caption2).foregroundStyle(.secondary)
-                            }
-                        }
+                            HuntRow(title: marker.title, subtitle: String(format: "%.4f, %.4f", marker.coordinate.latitude, marker.coordinate.longitude), symbol: "mappin.circle")
+                        }.buttonStyle(.plain)
                     }
-                }
+                    if grounds.isEmpty && marks.isEmpty {
+                        ReferenceEmptyCard(title: "Ничего не найдено", detail: "Измените поисковый запрос", symbol: "magnifyingglass")
+                    }
+                }.padding(16)
             }
-            .searchable(text: $searchText, prompt: "Название охотугодья или метки")
+            .background(HuntReference.background)
             .navigationTitle("Поиск на карте")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Закрыть") { showSearch = false } } }
         }
     }
@@ -1592,10 +1615,17 @@ struct MainView: View {
                 }
             }
             if selectedWildlifeMode == "По угодьям" {
-                if animals.packs.isEmpty {
+                let knownGrounds = model.zones.filter { $0.groundAnimals != "Нет данных о животных" }
+                if animals.packs.isEmpty && knownGrounds.isEmpty {
                     ReferenceEmptyCard(title: "Каталоги животных не загружены",
                                        detail: "Импортируй подтверждённые сведения об угодье",
                                        symbol: "pawprint")
+                }
+                if !knownGrounds.isEmpty {
+                    Text("Виды, упомянутые в источниках. Не подтверждение разрешения на охоту.").font(.caption).foregroundStyle(HuntReference.muted)
+                    ForEach(knownGrounds) { ground in
+                        Button { zone = ground } label: { HuntRow(title: ground.name, subtitle: ground.groundAnimals, symbol: "pawprint") }.buttonStyle(.plain)
+                    }
                 }
                 ForEach(Array(animals.packs.enumerated()), id: \.offset) { _, pack in
                     VStack(alignment: .leading, spacing: 11) {

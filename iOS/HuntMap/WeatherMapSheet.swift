@@ -37,15 +37,15 @@ struct WeatherMapSheet: View {
                             ForEach(WeatherMapLayer.allCases) { choice in Text(choice.rawValue).tag(choice) }
                         }.pickerStyle(.menu)
                         Text("Прогноз модели, не погодный радар. Цветные участки вычислены интерполяцией внутри полученной сетки. Движение частиц показывает направление ветра.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.caption).foregroundStyle(HuntReference.muted)
                     }
                     .padding(16)
-                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
+                    .background(HuntReference.card, in: RoundedRectangle(cornerRadius: 18))
 
                     if layer != .none {
                         VStack(alignment: .leading, spacing: 12) {
                             HStack {
-                                Image(systemName: "clock.arrow.circlepath").foregroundStyle(.orange)
+                                Image(systemName: "clock.arrow.circlepath").foregroundStyle(HuntReference.green)
                                 Text("Время прогноза").font(.headline)
                             }
                             Picker("Период", selection: $forecastMode) {
@@ -63,7 +63,7 @@ struct WeatherMapSheet: View {
                                         } label: {
                                             Text(date.formatted(.dateTime.weekday(.abbreviated).day().locale(Locale(identifier: "ru_RU"))))
                                                 .font(.caption.bold()).padding(.vertical, 9).padding(.horizontal, 12)
-                                                .background(selectedDay == day ? FBTheme.green.opacity(0.24) : Color.secondary.opacity(0.12), in: Capsule())
+                                                .background(selectedDay == day ? HuntReference.green.opacity(0.24) : Color.secondary.opacity(0.12), in: Capsule())
                                         }.buttonStyle(.plain)
                                     }
                                 }
@@ -74,7 +74,7 @@ struct WeatherMapSheet: View {
                                     Button { hoursAhead = max(0, hoursAhead - 1); selectedDay = Int(hoursAhead) / 24 } label: {
                                         Image(systemName: "minus").frame(width: 44, height: 44)
                                     }.disabled(hoursAhead == 0)
-                                    Slider(value: $hoursAhead, in: 0...maximumHour, step: 1).tint(FBTheme.green)
+                                    Slider(value: $hoursAhead, in: 0...maximumHour, step: 1).tint(HuntReference.green)
                                         .accessibilityLabel("Час прогноза")
                                         .onChange(of: hoursAhead) { _, value in selectedDay = Int(value) / 24 }
                                     Button { hoursAhead = min(maximumHour, hoursAhead + 1); selectedDay = Int(hoursAhead) / 24 } label: {
@@ -83,16 +83,16 @@ struct WeatherMapSheet: View {
                                 }
                             } else if forecastMode == 1 {
                                 Text("Выбран день \(selectedDay + 1). Час для карты: \(Int(hoursAhead) % 24):00 от начала прогноза. Для точного выбора переключись на «По часам».")
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .font(.caption).foregroundStyle(HuntReference.muted)
                             } else {
                                 Text("Недельный обзор. Выбери день выше для просмотра погодного слоя на карте.")
-                                    .font(.caption).foregroundStyle(.secondary)
+                                    .font(.caption).foregroundStyle(HuntReference.muted)
                             }
                             Text("Прогноз до 7 дней (168 часов). Отображаемая сетка загружается отдельно для выбранного часа.")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .font(.caption).foregroundStyle(HuntReference.muted)
                         }
                         .padding(16)
-                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
+                        .background(HuntReference.card, in: RoundedRectangle(cornerRadius: 18))
 
                         VStack(alignment: .leading, spacing: 10) {
                             Text("Легенда · \(legendUnit)").font(.headline)
@@ -105,16 +105,16 @@ struct WeatherMapSheet: View {
                                     }.frame(maxWidth: .infinity)
                                 }
                             }
-                            Text(legendExplanation).font(.caption).foregroundStyle(.secondary)
+                            Text(legendExplanation).font(.caption).foregroundStyle(HuntReference.muted)
                         }
                         .padding(16)
-                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
+                        .background(HuntReference.card, in: RoundedRectangle(cornerRadius: 18))
                     }
 
                     VStack(alignment: .leading, spacing: 12) {
                         Label("Прогноз · Open-Meteo", systemImage: "cloud.sun.fill").font(.headline)
                         Text("Слой появляется автоматически при выборе, а при изменении часа и масштаба данные обновляются без кнопок. Без интернета доступен сохранённый кеш.")
-                            .font(.caption).foregroundStyle(.secondary)
+                            .font(.caption).foregroundStyle(HuntReference.muted)
                         Button {
                             onShowKazakhstan()
                             dismiss()
@@ -122,7 +122,7 @@ struct WeatherMapSheet: View {
                             Label("Весь Казахстан на карте", systemImage: "globe.europe.africa.fill")
                                 .font(.headline).frame(maxWidth: .infinity).frame(minHeight: 46)
                         }
-                        .buttonStyle(.borderedProminent).tint(FBTheme.green)
+                        .buttonStyle(.borderedProminent).tint(HuntReference.green)
                         if service.loading { ProgressView() }
                         Text(service.status).font(.footnote)
                         if let grid = service.grid, layer != .none {
@@ -138,7 +138,7 @@ struct WeatherMapSheet: View {
                             if let minimum = values.min(), let maximum = values.max() {
                                 Text(String(format: "Диапазон сетки: %.1f–%.1f %@", minimum, maximum, legendUnit)).font(.caption)
                                 if layer == .precipitation && maximum < 0.1 {
-                                    Text("Осадки не прогнозируются: карта прозрачная.").font(.caption).foregroundStyle(.secondary)
+                                    Text("Осадки не прогнозируются: карта прозрачная.").font(.caption).foregroundStyle(HuntReference.muted)
                                 }
                             } else {
                                 Text("Для выбранного слоя нет данных.").font(.caption).foregroundStyle(.orange)
@@ -156,7 +156,7 @@ struct WeatherMapSheet: View {
                         }
                     }
                     .padding(16)
-                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18))
+                    .background(HuntReference.card, in: RoundedRectangle(cornerRadius: 18))
                     Button("Убрать погодный слой", role: .destructive) {
                         layer = .none
                         dismiss()
