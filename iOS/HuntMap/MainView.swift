@@ -113,7 +113,9 @@ struct MainView: View {
     private enum DataSection: String, CaseIterable { case routes = "Маршруты", markers = "Метки" }
     private enum ServiceSection: String, CaseIterable { case weather = "Погода", wildlife = "Животные" }
 
-    var body: some View {
+    var body: some View { serviceSheetsView }
+
+    private var rootLayout: some View {
         ZStack {
             // MapLibre, PMTiles and style parsing can consume substantial memory.
             // Never construct the native map behind the Home screen on cold launch.
@@ -141,6 +143,10 @@ struct MainView: View {
         .background(HuntReference.background.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .background(ShakeDetector().frame(width: 1, height: 1))
+    }
+
+    private var lifecycleView: some View {
+        rootLayout
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
         .onAppear {
             LaunchHealth.started()
@@ -175,6 +181,10 @@ struct MainView: View {
             if tab != .map { mapOpened = false }
         }
         .onChange(of: online) { _, enabled in if enabled { offlineRoads.clear() } }
+    }
+
+    private var gpsView: some View {
+        lifecycleView
         .onChange(of: model.coordinate) { _, newPoint in
             if let point = newPoint {
                 weather.updateIfNeeded(latitude: point.latitude, longitude: point.longitude)
@@ -216,6 +226,10 @@ struct MainView: View {
                 }
             }
         }
+    }
+
+    private var importView: some View {
+        gpsView
         .fileImporter(isPresented: $importingValhallaTiles,
                       allowedContentTypes: [UTType(filenameExtension: "tar") ?? .data],
                       allowsMultipleSelection: false) { result in
@@ -242,6 +256,10 @@ struct MainView: View {
         .alert("Маршрутизация", isPresented: Binding(get: { routingError != nil }, set: { if !$0 { routingError = nil } })) {
             Button("Понятно") { routingError = nil }
         } message: { Text(routingError ?? "") }
+    }
+
+    private var mapDialogsView: some View {
+        importView
         .sheet(isPresented: $showLayers) { layerSheet }
         .sheet(isPresented: $showSearch) { mapSearchSheet }
         .sheet(item: $selectedMapMarker) { selection in
@@ -291,6 +309,10 @@ struct MainView: View {
                 Text(String(format: "Широта %.6f, долгота %.6f", point.latitude, point.longitude))
             }
         }
+    }
+
+    private var markerDialogsView: some View {
+        mapDialogsView
         .sheet(item: $creatingMapMarker) { marker in
             MarkerEditor(marker: marker, isNew: true,
                          onSave: { changed in
@@ -322,6 +344,10 @@ struct MainView: View {
             }
             Button("Отмена", role: .cancel) { trackToDelete = nil }
         }
+    }
+
+    private var serviceSheetsView: some View {
+        markerDialogsView
         .sheet(isPresented: $showWeather) {
             WeatherPanel(service: weather, coordinate: model.coordinate, online: online)
                 .presentationDetents([.medium, .large])
