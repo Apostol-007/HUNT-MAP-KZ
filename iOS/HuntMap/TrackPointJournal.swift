@@ -1,5 +1,6 @@
 import Foundation
 import SQLite3
+import HuntCore
 
 /// Crash-recoverable append-only GPS journal. The existing field.json remains
 /// the compatibility and export format; finished tracks are still persisted there.
