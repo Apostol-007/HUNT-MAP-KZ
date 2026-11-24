@@ -33,9 +33,11 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: server/requirements.txt
-      - name: Install server test dependencies
-        run: python -m pip install -r server/requirements.txt pytest httpx
+          cache-dependency-path: |
+            server/requirements.txt
+            tools/requirements.txt
+      - name: Install server and map-tool test dependencies
+        run: python -m pip install -r server/requirements.txt -r tools/requirements.txt pytest httpx
       - name: Test server and offline-map preparation tools
         env:
           PYTHONPATH: tools
