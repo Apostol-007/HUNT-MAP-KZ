@@ -16,7 +16,13 @@ public struct GeoPolygon: Codable, Equatable, Sendable {
         return !rings.dropFirst().contains { GeoMath.inRing(point, ring: $0) }
     }
     public func distanceToBoundaryMeters(_ point: GeoPoint) -> Double {
-        rings.flatMap { GeoMath.segments($0) }.map { GeoMath.segmentDistance(point, $0.0, $0.1) }.min() ?? .infinity
+        var nearest = Double.infinity
+        for ring in rings where ring.count >= 3 {
+            for index in ring.indices {
+                nearest = min(nearest, GeoMath.segmentDistance(point, ring[index], ring[(index + 1) % ring.count]))
+            }
+        }
+        return nearest
     }
 }
 
@@ -72,7 +78,8 @@ public enum GeoMath {
         guard ring.count >= 3 else { return false }
         var inside = false
         let x = p.longitude, y = p.latitude
-        for (a, b) in segments(ring) {
+        for index in ring.indices {
+            let a = ring[index], b = ring[(index + 1) % ring.count]
             let ax = unwrap(a.longitude, around: x), bx = unwrap(b.longitude, around: x)
             let cross = (bx-ax)*(y-a.latitude)-(b.latitude-a.latitude)*(x-ax)
             if abs(cross) < 1e-11 && x >= min(ax,bx)-1e-11 && x <= max(ax,bx)+1e-11 && y >= min(a.latitude,b.latitude)-1e-11 && y <= max(a.latitude,b.latitude)+1e-11 { return true }
