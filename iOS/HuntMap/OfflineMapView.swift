@@ -50,6 +50,7 @@ struct OfflineMapView: UIViewRepresentable {
         let styleURL = online ? (mapStyle == MapBasemap.protomaps.rawValue ? (protomapsOnlineStyleURL ?? selectedStyle) : selectedStyle)
                               : (mapStyle == MapBasemap.hybrid.rawValue && !tileFiles.isEmpty ? (protomapsHybridStyleURL ?? protomapsOfflineStyleURL ?? OfflineMapStyle.url) : (protomapsOfflineStyleURL ?? OfflineMapStyle.url))
         let view = MLNMapView(frame: .zero, styleURL: styleURL)
+        context.coordinator.requestedStyleURL = styleURL
         // Critical: MapLibre is the bottom sibling. Weather overlays are separate
         // siblings and cannot disappear behind GL subviews when the style reloads.
         view.translatesAutoresizingMaskIntoConstraints = false
@@ -112,7 +113,9 @@ struct OfflineMapView: UIViewRepresentable {
         let requestedOnline = online
         let targetStyle = requestedOnline ? (mapStyle == MapBasemap.protomaps.rawValue ? (protomapsOnlineStyleURL ?? selectedStyle) : selectedStyle)
                                           : (mapStyle == MapBasemap.hybrid.rawValue && !tileFiles.isEmpty ? (protomapsHybridStyleURL ?? protomapsOfflineStyleURL ?? OfflineMapStyle.url) : (protomapsOfflineStyleURL ?? OfflineMapStyle.url))
-        if view.styleURL != targetStyle {
+        if context.coordinator.requestedStyleURL != targetStyle {
+            context.coordinator.requestedStyleURL = targetStyle
+            context.coordinator.invalidateRasterLayout()
             view.styleURL = targetStyle
         }
         context.coordinator.zones = zones
@@ -169,6 +172,14 @@ struct OfflineMapView: UIViewRepresentable {
         context.coordinator.fitCountryIfNeeded(view: view, command: overviewCommand)
     }
 
+    static func dismantleUIView(_ uiView: UIView, coordinator: Coordinator) {
+        coordinator.windOverlay?.configure(grid: nil, enabled: false)
+        coordinator.fieldOverlay?.configure(grid: nil, layer: .none)
+        coordinator.map?.delegate = nil
+        coordinator.cancelPendingUpdates()
+        coordinator.map = nil
+    }
+
     final class Coordinator: NSObject, MLNMapViewDelegate, UIGestureRecognizerDelegate {
         var selectedZone: Binding<GeoZone?>
         var tilesReadyObserver: NSObjectProtocol?
@@ -176,6 +187,14 @@ struct OfflineMapView: UIViewRepresentable {
             if let tilesReadyObserver { NotificationCenter.default.removeObserver(tilesReadyObserver) }
         }
         weak var map: MLNMapView?
+        var requestedStyleURL: URL?
+        private var viewportWork: DispatchWorkItem?
+        func cancelPendingUpdates() {
+            rasterRequest += 1
+            viewportWork?.cancel()
+            viewportWork = nil
+            if let observer = tilesReadyObserver { NotificationCenter.default.removeObserver(observer); tilesReadyObserver = nil }
+        }
         var windOverlay: WindParticlesOverlay?
         var fieldOverlay: WeatherFieldOverlay?
         var zones: [GeoZone] = []
@@ -332,7 +351,7 @@ struct OfflineMapView: UIViewRepresentable {
                 RussianMapLabels.apply(to: style)
             }
             let hasProtomaps = style.source(withIdentifier: "protomaps_0") != nil
-            if !isOffline || (hasProtomaps && !hybridOffline) || files.isEmpty {
+            if (hasProtomaps && !hybridOffline) || files.isEmpty {
                 removeRasterLayers(from: style)
                 return
             }
@@ -380,7 +399,13 @@ struct OfflineMapView: UIViewRepresentable {
                           max(area.sw.longitude, area.ne.longitude),
                           max(area.sw.latitude, area.ne.latitude)]
             guard bounds.allSatisfy({ $0.isFinite }) else { return }
-            onViewportChanged(bounds)
+            viewportWork?.cancel()
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.map != nil else { return }
+                self.onViewportChanged(bounds)
+            }
+            viewportWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
         }
 
         func renderGrid(in view: MLNMapView) {
