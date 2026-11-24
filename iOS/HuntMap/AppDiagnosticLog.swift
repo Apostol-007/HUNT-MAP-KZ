@@ -17,6 +17,8 @@ struct AppDiagnosticEvent: Codable, Identifiable, Sendable {
     static let shared = AppDiagnosticLog()
     @Published private(set) var events: [AppDiagnosticEvent] = []
     private let limit = 250
+    private let diskQueue = DispatchQueue(label: "kz.huntmap.diagnostics.disk", qos: .utility)
+    private var pendingWrite: DispatchWorkItem?
     private let storage: URL
 
     private init() {
@@ -41,9 +43,15 @@ struct AppDiagnosticEvent: Codable, Identifiable, Sendable {
                                         endpoint: String(endpoint.prefix(120)))
         events.append(record)
         if events.count > limit { events.removeFirst(events.count - limit) }
-        if let data = try? JSONEncoder().encode(events) {
-            try? data.write(to: storage, options: .atomic)
+        pendingWrite?.cancel()
+        let snapshot = events, destination = storage
+        let work = DispatchWorkItem {
+            if let data = try? JSONEncoder().encode(snapshot) {
+                try? data.write(to: destination, options: .atomic)
+            }
         }
+        pendingWrite = work
+        diskQueue.asyncAfter(deadline: .now() + 0.25, execute: work)
     }
 
     func recordHTTP(subsystem: String, operation: String, code: Int,
@@ -118,6 +126,8 @@ struct AppDiagnosticEvent: Codable, Identifiable, Sendable {
 
     func clear() {
         events = []
-        try? FileManager.default.removeItem(at: storage)
+        pendingWrite?.cancel()
+        let destination = storage
+        diskQueue.async { try? FileManager.default.removeItem(at: destination) }
     }
 }
