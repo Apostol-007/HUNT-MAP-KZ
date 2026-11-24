@@ -275,3 +275,17 @@ def test_startup_does_not_gate_map_on_downloads():
     assert 'loadRoutingNetwork()' not in main.split('.onAppear {', 1)[1].split('.onChange(of: scenePhase)', 1)[0]
     assert 'try? await Task.sleep(for: .seconds(1))' in main
     assert 'let recentFiles = files.filter' in (IOS / "WeatherGridService.swift").read_text()
+
+
+def test_cold_start_does_not_build_hidden_map_or_hash_on_main_actor():
+    ui = (IOS / "MainView.swift").read_text()
+    hosting = (IOS / "HostingOfflineDownloads.swift").read_text()
+    maps = (IOS / "ProtomapsOfflineStore.swift").read_text()
+    startup = (IOS / "StartupSync.swift").read_text()
+    assert 'if tab == .map {' in ui
+    assert 'if tab != .map { themedScreen }' not in ui
+    assert 'Task.detached(priority: .utility)' in maps
+    assert 'nonisolated private static func digest' in hosting
+    assert 'func needsRouteUpdateAsync' in hosting
+    assert 'hosting.needsRouteUpdateAsync(pack)' in startup
+    assert 'Task.sleep(for: .seconds(8))' in startup

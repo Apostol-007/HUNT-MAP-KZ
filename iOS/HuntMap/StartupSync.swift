@@ -26,7 +26,7 @@ import Network
         presented = false
         startupTask = Task(priority: .utility) { [weak self] in
             // UIKit and MapLibre get the initial frame before any package checks.
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(for: .seconds(8))
             guard let self, !Task.isCancelled else { return }
             await self.start(hosting: hosting, tiles: tiles, protomaps: protomaps,
                              model: model, valhalla: valhalla)
@@ -79,8 +79,16 @@ import Network
         let maps = hosting.maps.filter { pack in
             !tiles.installed.contains { $0.sha256.lowercased() == pack.sha256.lowercased() }
         }
-        let roads = hosting.routes.filter { hosting.needsRouteUpdate($0) }
-        let zones = hosting.zones.filter { hosting.needsZoneUpdate($0) }
+        var roads: [HostingRoutingPack] = []
+        for pack in hosting.routes where await hosting.needsRouteUpdateAsync(pack) {
+            roads.append(pack)
+            await Task.yield()
+        }
+        var zones: [HostingZonePack] = []
+        for pack in hosting.zones where await hosting.needsZoneUpdateAsync(pack) {
+            zones.append(pack)
+            await Task.yield()
+        }
         let protos = protomaps.available.filter { pack in
             !protomaps.installed.contains { $0.id == pack.id && $0.sha256.lowercased() == pack.sha256.lowercased() }
         }
@@ -109,7 +117,7 @@ import Network
             title = "Загружаем дороги и тропы"
             detail = pack.name
             await hosting.installRoute(pack)
-            if hosting.needsRouteUpdate(pack) { errors.append("Маршрутная сеть «\(pack.name)»: \(hosting.status)") }
+            if await hosting.needsRouteUpdateAsync(pack) { errors.append("Маршрутная сеть «\(pack.name)»: \(hosting.status)") }
             tick()
         }
         for pack in zones {
@@ -117,7 +125,7 @@ import Network
             title = "Загружаем охотугодья"
             detail = pack.name
             await hosting.installZones(pack, model: model)
-            if hosting.needsZoneUpdate(pack) { errors.append("Границы «\(pack.name)»: \(hosting.status)") }
+            if await hosting.needsZoneUpdateAsync(pack) { errors.append("Границы «\(pack.name)»: \(hosting.status)") }
             tick()
         }
         if !protos.isEmpty {
