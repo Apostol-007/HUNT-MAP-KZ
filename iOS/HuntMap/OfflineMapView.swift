@@ -27,6 +27,7 @@ struct OfflineMapView: UIViewRepresentable {
     var protomapsHybridStyleURL: URL? = nil
     let online: Bool
     var active = true
+    var zonesRevision = 0
     @Binding var selectedZone: GeoZone?
     let weatherGrid: ForecastGrid?
     let weatherLayer: WeatherMapLayer
@@ -171,7 +172,7 @@ struct OfflineMapView: UIViewRepresentable {
             UserDefaults.standard.set("\(Int(mapFrame.minX)),\(Int(mapFrame.minY)),\(Int(mapFrame.width))x\(Int(mapFrame.height))", forKey: "hunt.diag.mapFrame")
             UserDefaults.standard.set(matches, forKey: "hunt.diag.fullscreenMap")
         }
-        context.coordinator.updateAnnotations(view: view, zones: zones, markers: markers, position: position, track: track, navigationPath: navigationPath, replayPosition: replayPosition,
+        context.coordinator.updateAnnotations(view: view, zones: zones, zonesRevision: zonesRevision, markers: markers, position: position, track: track, navigationPath: navigationPath, replayPosition: replayPosition,
                                               weatherGrid: weatherGrid, weatherLayer: weatherLayer,
                                               offlineRoadLines: online ? [] : offlineRoadLines, offlineRoadRevision: offlineRoadRevision)
         context.coordinator.applyCameraCommands(view: view, position: focusCoordinate ?? position,
@@ -233,7 +234,8 @@ struct OfflineMapView: UIViewRepresentable {
             let title: String
             let points: [GeoPoint]
         }
-        private var lastZones: [GeoZone]?
+        private var lastZonesRevision: Int?
+        private var lastZonesVisible = false
         private var replayAnnotation: MLNPointAnnotation?
         private var markerCoordinates: [(UUID, CLLocationCoordinate2D)] = []
         init(selectedZone: Binding<GeoZone?>) { self.selectedZone = selectedZone }
@@ -523,7 +525,7 @@ struct OfflineMapView: UIViewRepresentable {
             }
         }
 
-        func updateAnnotations(view: MLNMapView, zones: [GeoZone], markers: [Marker], position: GeoPoint?, track: Track?, navigationPath: [GeoPoint], replayPosition: GeoPoint?,
+        func updateAnnotations(view: MLNMapView, zones: [GeoZone], zonesRevision: Int, markers: [Marker], position: GeoPoint?, track: Track?, navigationPath: [GeoPoint], replayPosition: GeoPoint?,
                                weatherGrid: ForecastGrid?, weatherLayer: WeatherMapLayer,
                                offlineRoadLines: [OfflineRoadLine], offlineRoadRevision: Int) {
             // Persistent MLNPointAnnotation identity is critical for tapping. Recreating
@@ -552,8 +554,9 @@ struct OfflineMapView: UIViewRepresentable {
                 transientAnnotations.removeAll()
                 lastTransientKey = transientKey
             }
-            if lastZones != zones {
-                lastZones = zones
+            if lastZonesRevision != zonesRevision || lastZonesVisible != !zones.isEmpty {
+                lastZonesRevision = zonesRevision
+                lastZonesVisible = !zones.isEmpty
                 prepareZones(zones, in: view)
             }
             if let replayPosition, replayPosition.valid {
