@@ -33,7 +33,8 @@ struct MainView: View {
     @State private var serviceSection: ServiceSection = .weather
     @State private var weatherLayer: WeatherMapLayer = .none
     @State private var zone: GeoZone?
-    @State private var groundSearch = ""
+    @State private var highlightedGroundID: String?
+    @State private var groundFitRequest = 0
     @State private var showLayers = false
     @State private var showWeather = false
     @State private var showWeatherLayers = false
@@ -482,6 +483,8 @@ struct MainView: View {
                            zoomCommand: zoomCommand,
                            overviewCommand: overviewCommand,
                            focusCoordinate: mapFocus,
+                           highlightedGroundID: highlightedGroundID,
+                           groundFitRequest: groundFitRequest,
                            onMapTap: { point in
                                if let id = movingMarkerID {
                                    if var marker = model.markers.first(where: { $0.id == id }) {
@@ -493,7 +496,13 @@ struct MainView: View {
                                } else {
                                    pendingMapPoint = point
                                    pendingMapZone = model.zones.first(where: { $0.contains(point) })
-                                   if showGrounds, let ground = pendingMapZone { zone = ground } else { showMapPointActions = true }
+                                   if showGrounds, let ground = pendingMapZone {
+                                       highlightedGroundID = ground.id
+                                       zone = ground
+                                   } else {
+                                       highlightedGroundID = nil
+                                       showMapPointActions = true
+                                   }
                                }
                            },
                            onMarkerTap: { id in
@@ -607,6 +616,11 @@ struct MainView: View {
                     .padding(.horizontal, 12)
                     .padding(.bottom, 8)
                     .accessibilityIdentifier("marker_move_mode")
+                }
+                if showGrounds, let ground = model.zones.first(where: { $0.id == highlightedGroundID }) {
+                    selectedGroundBanner(ground)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 8)
                 }
                 if weatherLayer != .none {
                     Button { showWeatherLayers = true } label: {
@@ -1226,15 +1240,34 @@ struct MainView: View {
     }
 
     private var groundsContent: some View {
-        GroundsCatalogView(model: model, onDetails: { zone = $0 }, onMap: { showGround($0) }, onRoute: { routeGround($0) })
+        GroundsCatalogView(model: model, onDetails: { zone = $0 }, onMap: { showGround($0) }, onRoute: { routeGround($0) }, onOpenMap: { showGrounds = true; tab = .map })
+    }
+
+    private func selectedGroundBanner(_ ground: GeoZone) -> some View {
+        HStack(spacing: 10) {
+            Button { zone = ground } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(ground.name).font(.headline).foregroundStyle(.white)
+                    Text(ground.groundAreaLabel).font(.caption).foregroundStyle(HuntReference.green)
+                }.frame(maxWidth: .infinity, alignment: .leading)
+            }.buttonStyle(.plain)
+            Button { routeGround(ground) } label: { Image(systemName: "location.fill").frame(width: 44, height: 44) }
+                .foregroundStyle(HuntReference.green).accessibilityLabel("Маршрут до угодья")
+            Button { highlightedGroundID = nil } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }
+                .foregroundStyle(.white).accessibilityLabel("Снять выделение")
+        }
+        .padding(12)
+        .background(HuntReference.card.opacity(0.97), in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(HuntReference.green, lineWidth: 1.5))
     }
 
     private func showGround(_ ground: GeoZone) {
-        guard let point = ground.groundDestination else { return }
+        guard let point = ground.groundCenter else { return }
         zone = nil
         showGrounds = true
+        highlightedGroundID = ground.id
         mapFocus = point
-        centerRequest += 1
+        groundFitRequest += 1
         tab = .map
     }
 
@@ -1242,6 +1275,7 @@ struct MainView: View {
         guard let point = ground.groundDestination else { return }
         zone = nil
         showGrounds = true
+        highlightedGroundID = ground.id
         planRoute(to: point, title: ground.name)
     }
 

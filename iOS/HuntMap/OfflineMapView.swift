@@ -33,6 +33,8 @@ struct OfflineMapView: UIViewRepresentable {
     var zoomCommand: Int = 0
     var overviewCommand: Int = 0
     var focusCoordinate: GeoPoint? = nil
+    var highlightedGroundID: String? = nil
+    var groundFitRequest: Int = 0
     var onMapTap: (GeoPoint) -> Void = { _ in }
     var onMarkerTap: (UUID) -> Void = { _ in }
     var gridEnabled = false
@@ -158,12 +160,14 @@ struct OfflineMapView: UIViewRepresentable {
             UserDefaults.standard.set("\(Int(mapFrame.minX)),\(Int(mapFrame.minY)),\(Int(mapFrame.width))x\(Int(mapFrame.height))", forKey: "hunt.diag.mapFrame")
             UserDefaults.standard.set(matches, forKey: "hunt.diag.fullscreenMap")
         }
+        context.coordinator.highlightedGroundID = highlightedGroundID
         context.coordinator.updateAnnotations(view: view, zones: zones, markers: markers, position: position, track: track, navigationPath: navigationPath, replayPosition: replayPosition,
                                               weatherGrid: weatherGrid, weatherLayer: weatherLayer,
                                               offlineRoadLines: online ? [] : offlineRoadLines, offlineRoadRevision: offlineRoadRevision)
         context.coordinator.applyCameraCommands(view: view, position: focusCoordinate ?? position,
                                                 centerRequest: centerRequest, zoomCommand: zoomCommand)
         context.coordinator.fitCountryIfNeeded(view: view, command: overviewCommand)
+        context.coordinator.fitGroundIfNeeded(view: view, command: groundFitRequest, ground: zones.first(where: { $0.id == highlightedGroundID }))
     }
 
     final class Coordinator: NSObject, MLNMapViewDelegate, UIGestureRecognizerDelegate {
@@ -196,13 +200,17 @@ struct OfflineMapView: UIViewRepresentable {
         private var transientAnnotations: [MLNAnnotation] = []
         private var groundAnnotations: [MLNAnnotation] = []
         private var groundKey = ""
+        var highlightedGroundID: String?
+        private var appliedGroundFitRequest = 0
         private func updateGroundAnnotations(_ view: MLNMapView, zones: [GeoZone]) {
-            let key = zones.map { $0.id + ":" + $0.name + ":" + ($0.attributes?["local_revision"] ?? "") }.joined(separator: "|")
+            let key = zones.map { $0.id + ":" + $0.name + ":" + ($0.attributes?["local_revision"] ?? "") }.joined(separator: "|") + "|" + (highlightedGroundID ?? "")
             guard key != groundKey else { return }
             groundKey = key
             if !groundAnnotations.isEmpty { view.removeAnnotations(groundAnnotations) }
             groundAnnotations.removeAll()
-            for zone in zones {
+            let ordered = zones.filter { $0.id != highlightedGroundID } + zones.filter { $0.id == highlightedGroundID }
+            for zone in ordered {
+                let selected = zone.id == highlightedGroundID
                 for polygon in zone.polygons {
                     guard let outer = polygon.rings.first, outer.count >= 3 else { continue }
                     var coordinates = outer.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
@@ -212,8 +220,16 @@ struct OfflineMapView: UIViewRepresentable {
                         return MLNPolygon(coordinates: &points, count: UInt(points.count))
                     }
                     let shape = MLNPolygon(coordinates: &coordinates, count: UInt(coordinates.count), interiorPolygons: holes)
-                    shape.title = "GROUND|" + zone.name
+                    shape.title = selected ? "GROUND_SELECTED|" + zone.name : "GROUND|" + zone.name
                     groundAnnotations.append(shape)
+                    for ring in polygon.rings where ring.count >= 3 {
+                        var closed = ring
+                        if closed.first != closed.last, let first = closed.first { closed.append(first) }
+                        var border = closed.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+                        let line = MLNPolyline(coordinates: &border, count: UInt(border.count))
+                        line.title = selected ? "GROUND_SELECTED_BORDER" : "GROUND_BORDER"
+                        groundAnnotations.append(line)
+                    }
                 }
             }
             if !groundAnnotations.isEmpty { view.addAnnotations(groundAnnotations) }
@@ -295,6 +311,19 @@ struct OfflineMapView: UIViewRepresentable {
         private var appliedCenterRequest = 0
         private var appliedZoomCommand = 0
         private var appliedOverviewCommand = 0
+        func fitGroundIfNeeded(view: MLNMapView, command: Int, ground: GeoZone?) {
+            guard command != appliedGroundFitRequest, let ground,
+                  view.bounds.width > 1, view.bounds.height > 1 else { return }
+            let points = ground.polygons.flatMap { $0.rings.first ?? [] }
+            guard let south = points.map(\.latitude).min(), let north = points.map(\.latitude).max(),
+                  let west = points.map(\.longitude).min(), let east = points.map(\.longitude).max(),
+                  north > south, east > west else { return }
+            appliedGroundFitRequest = command
+            let bounds = MLNCoordinateBounds(sw: CLLocationCoordinate2D(latitude: south, longitude: west),
+                                              ne: CLLocationCoordinate2D(latitude: north, longitude: east))
+            view.setVisibleCoordinateBounds(bounds, edgePadding: UIEdgeInsets(top: 100, left: 35, bottom: 180, right: 75), animated: true)
+        }
+
         func fitCountryIfNeeded(view: MLNMapView, command: Int) {
             guard command != appliedOverviewCommand else { return }
             appliedOverviewCommand = command
@@ -521,10 +550,13 @@ struct OfflineMapView: UIViewRepresentable {
         }
 
         func mapView(_ mapView: MLNMapView, alphaForShapeAnnotation annotation: MLNShape) -> CGFloat {
-            if annotation.title?.hasPrefix("GROUND|") == true { return 0.35 }
+            if annotation.title?.hasPrefix("GROUND_SELECTED|") == true { return 0.46 }
+            if annotation.title?.hasPrefix("GROUND|") == true { return 0.25 }
+            if annotation.title == "GROUND_BORDER" || annotation.title == "GROUND_SELECTED_BORDER" { return 1 }
             return annotation.title?.hasPrefix("WX|") == true ? 0.40 : 0.95
         }
         func mapView(_ mapView: MLNMapView, fillColorForPolygonAnnotation annotation: MLNPolygon) -> UIColor {
+            if annotation.title?.hasPrefix("GROUND_SELECTED|") == true { return UIColor(red: 0.18, green: 1, blue: 0.26, alpha: 1) }
             if annotation.title?.hasPrefix("GROUND|") == true { return .systemGreen }
             guard let title = annotation.title, title.hasPrefix("WX|") else { return .clear }
             let fields = title.split(separator: "|", omittingEmptySubsequences: false)
@@ -540,7 +572,8 @@ struct OfflineMapView: UIViewRepresentable {
             }
         }
         func mapView(_ mapView: MLNMapView, strokeColorForShapeAnnotation annotation: MLNShape) -> UIColor {
-            if annotation.title?.hasPrefix("GROUND|") == true { return .systemGreen }
+            if annotation.title == "GROUND_SELECTED_BORDER" || annotation.title?.hasPrefix("GROUND_SELECTED|") == true { return UIColor(red: 0.48, green: 1, blue: 0.36, alpha: 1) }
+            if annotation.title == "GROUND_BORDER" || annotation.title?.hasPrefix("GROUND|") == true { return UIColor(red: 0.12, green: 0.89, blue: 0.22, alpha: 1) }
             if annotation.title == "GRID|SELECTED" { return .systemGreen }
             if annotation.title == "GRID|AVAILABLE" { return UIColor.white.withAlphaComponent(0.65) }
             if annotation.title?.hasPrefix("WX-ISOBAR|") == true { return .white }
@@ -552,6 +585,8 @@ struct OfflineMapView: UIViewRepresentable {
             return annotation.title?.hasPrefix("НЕ ПРОВЕРЕНО") == true ? .systemYellow : .systemOrange
         }
         func mapView(_ mapView: MLNMapView, lineWidthForPolylineAnnotation annotation: MLNPolyline) -> CGFloat {
+            if annotation.title == "GROUND_SELECTED_BORDER" { return 6 }
+            if annotation.title == "GROUND_BORDER" { return 3.5 }
             if annotation.title == "GRID|SELECTED" { return 3 }
             if annotation.title == "GRID|AVAILABLE" { return 1 }
             if annotation.title?.hasPrefix("WX-ISOBAR|") == true { return 1.8 }
