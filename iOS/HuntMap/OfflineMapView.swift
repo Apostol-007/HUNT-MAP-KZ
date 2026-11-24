@@ -205,7 +205,15 @@ struct OfflineMapView: UIViewRepresentable {
         var highlightedGroundID: String?
         private var appliedGroundFitRequest = 0
         private func updateGroundAnnotations(_ view: MLNMapView, zones: [GeoZone]) {
-            let key = zones.map { $0.id + ":" + $0.name + ":" + ($0.attributes?["local_revision"] ?? "") }.joined(separator: "|") + "|" + (highlightedGroundID ?? "")
+            var components: [String] = []
+            components.reserveCapacity(zones.count + 1)
+            for zone in zones {
+                let revision: String = zone.attributes?["local_revision"] ?? ""
+                let component = "\(zone.id):\(zone.name):\(revision)"
+                components.append(component)
+            }
+            components.append(highlightedGroundID ?? "")
+            let key: String = components.joined(separator: "|")
             groundLabels?.configure(zones: zones, selectedID: highlightedGroundID, key: key)
             guard key != groundKey else { return }
             groundKey = key
