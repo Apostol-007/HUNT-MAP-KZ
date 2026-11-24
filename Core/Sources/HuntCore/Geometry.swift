@@ -7,7 +7,7 @@ public struct GeoPoint: Codable, Hashable, Sendable {
     public var valid: Bool { latitude.isFinite && longitude.isFinite && (-90...90).contains(latitude) && (-180...180).contains(longitude) }
 }
 
-public struct GeoPolygon: Codable, Sendable {
+public struct GeoPolygon: Codable, Equatable, Sendable {
     // First ring is exterior; following rings are holes. Rings may be closed or open.
     public let rings: [[GeoPoint]]
     public init(rings: [[GeoPoint]]) { self.rings = rings }
@@ -21,7 +21,7 @@ public struct GeoPolygon: Codable, Sendable {
 }
 
 public enum ZoneKind: String, Codable, Sendable { case huntingGround, protectedArea }
-public struct GeoZone: Codable, Identifiable, Sendable {
+public struct GeoZone: Codable, Identifiable, Equatable, Sendable {
     public let id: String
     public let name: String
     public let kind: ZoneKind
