@@ -320,7 +320,7 @@ def test_map_geometry_changes_without_stringifying_every_point():
 def test_route_rerouting_uses_segment_distance_and_gps_hysteresis():
     source = (IOS / "MainView.swift").read_text()
     recorded = (IOS / "RecordedTrackFollow.swift").read_text()
-    assert 'GeoMath.segmentDistance(position,' in source
+    assert 'GeoMath.distanceToPolyline(position, navigationPath)' in source
     assert 'offRouteFixes >= 3' in source
     assert 'GeoMath.segmentDistance(gps,' in recorded
 

@@ -84,3 +84,11 @@ final class GroundMetadataTests: XCTestCase {
         XCTAssertNil(old.attributes)
     }
 }
+
+@Test func routePolylineDistanceUsesSegmentsNotOnlyVertices() {
+    let road = [GeoPoint(43.0, 76.0), GeoPoint(43.0, 76.1)]
+    let middle = GeoPoint(43.0001, 76.05)
+    #expect(GeoMath.distanceToPolyline(middle, road) < 20)
+    #expect(GeoMath.distanceToPolyline(middle, []) == .infinity)
+    #expect(GeoMath.distanceToPolyline(road[0], [road[0]]) == 0)
+}

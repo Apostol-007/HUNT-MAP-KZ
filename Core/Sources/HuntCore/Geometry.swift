@@ -46,6 +46,17 @@ public enum GeoMath {
         let h = pow(sin(dp/2), 2) + cos(p1) * cos(p2) * pow(sin(dl/2), 2)
         return 2*r*atan2(sqrt(max(0,h)), sqrt(max(0,1-h)))
     }
+    /// Distance to the nearest polyline segment rather than just its vertices.
+    /// Keeps navigation stable between widely spaced recorded road coordinates.
+    public static func distanceToPolyline(_ position: GeoPoint, _ points: [GeoPoint]) -> Double {
+        guard !points.isEmpty else { return .infinity }
+        guard points.count > 1 else { return meters(position, points[0]) }
+        var nearest = Double.infinity
+        for index in 1..<points.count {
+            nearest = min(nearest, segmentDistance(position, points[index - 1], points[index]))
+        }
+        return nearest
+    }
     public static func segments(_ ring: [GeoPoint]) -> [(GeoPoint, GeoPoint)] {
         guard ring.count >= 3 else { return [] }
         return (0..<ring.count).map { (ring[$0], ring[($0+1)%ring.count]) }
