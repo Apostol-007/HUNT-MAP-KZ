@@ -4,7 +4,8 @@ import Network
 
 /// The launch gate never deletes installed content when the network or a manifest fails.
 @MainActor final class StartupSync: ObservableObject {
-    @Published private(set) var presented = true
+    @Published private(set) var presented = false
+    @Published private(set) var active = false
     @Published private(set) var title = "Проверяем подключение"
     @Published private(set) var detail = "Локальные карты уже доступны"
     @Published private(set) var progress = 0.0
@@ -20,26 +21,20 @@ import Network
                protomaps: ProtomapsOfflineStore, model: FieldModel,
                valhalla: ValhallaRoutingStore) {
         guard startupTask == nil else { return }
-        // Do not gate the map on multi-gigabyte downloads or an unresponsive host.
-        // The sync task continues independently after the launch screen disappears.
-        startupTask = Task {
-            await start(hosting: hosting, tiles: tiles, protomaps: protomaps,
-                        model: model, valhalla: valhalla)
-        }
-        Task { [weak self] in
-            try? await Task.sleep(for: .seconds(5))
+        // Never block the first frame or navigation on network/manifest I/O.
+        active = true
+        presented = false
+        startupTask = Task(priority: .utility) { [weak self] in
+            // UIKit and MapLibre get the initial frame before any package checks.
+            try? await Task.sleep(for: .seconds(2))
             guard let self, !Task.isCancelled else { return }
-            if self.presented {
-                self.presented = false
-                if self.isDownloading {
-                    self.detail = "Обновление карт продолжается без блокировки"
-                }
-            }
+            await self.start(hosting: hosting, tiles: tiles, protomaps: protomaps,
+                             model: model, valhalla: valhalla)
         }
     }
 
     func skip() {
-        // Opening the map must not discard an in-flight partial package.
+        // Package updates never gate the UI; skip is kept for compatibility.
         presented = false
     }
 
@@ -64,6 +59,7 @@ import Network
                valhalla: ValhallaRoutingStore) async {
         guard !started else { return }
         started = true
+        defer { active = false }
         guard await internetAvailable() else {
             AppDiagnosticLog.shared.record(severity: "info", subsystem: "Загрузка",
                 operation: "Проверка сети на старте", code: "OFFLINE",
@@ -260,5 +256,37 @@ struct StartupSyncScreen: View {
             .padding(.horizontal, 24)
         }
         .preferredColorScheme(.dark)
+    }
+}
+ 
+/// Compact non-modal sync status. The map remains tappable while downloads run.
+struct StartupSyncBanner: View {
+    @ObservedObject var sync: StartupSync
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .foregroundStyle(.mint)
+                Text(sync.title).font(.caption.bold()).lineLimit(1)
+                Spacer(minLength: 6)
+                if sync.total > 0 {
+                    Text("\(sync.completed)/\(sync.total)")
+                        .font(.caption2.monospacedDigit())
+                }
+            }
+            Text(sync.detail).font(.caption2)
+                .foregroundStyle(.secondary).lineLimit(1)
+            if sync.total > 0 {
+                ProgressView(value: sync.progress).tint(.mint)
+            } else {
+                ProgressView().controlSize(.mini).tint(.mint)
+            }
+        }
+        .padding(12)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .padding(.horizontal, 16)
+        .allowsHitTesting(false)
+        .accessibilityIdentifier("non_blocking_startup_sync")
     }
 }

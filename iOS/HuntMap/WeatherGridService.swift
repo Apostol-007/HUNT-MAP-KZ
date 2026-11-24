@@ -160,7 +160,13 @@ struct ForecastGrid: Codable {
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: cacheDirectory, includingPropertiesForKeys: nil) else { return nil }
         var latest: (Date, ForecastGrid)?
-        for file in files where file.lastPathComponent.hasPrefix(prefix) && file.pathExtension == "json" {
+        // Never decode every historic hourly grid on the main actor.
+        // Filenames end in an epoch-hour suffix, so descending order picks
+        // the newest cached forecast with a bounded number of file reads.
+        let recentFiles = files.filter {
+            $0.lastPathComponent.hasPrefix(prefix) && $0.pathExtension == "json"
+        }.sorted { $0.lastPathComponent > $1.lastPathComponent }.prefix(8)
+        for file in recentFiles {
             guard let data = try? Data(contentsOf: file),
                   let value = try? JSONDecoder().decode(ForecastGrid.self, from: data),
                   value.validated(), let date = value.forecastDate else { continue }

@@ -40,7 +40,8 @@ def test_maplibre_package_declared_and_local_import_available():
     assert not (IOS / 'LegacyMainView.swift').exists()
     assert 'LegacyMainView' not in ui
     assert 'startupSync.begin(' in ui
-    assert 'StartupSyncScreen(' in ui
+    assert 'StartupSyncBanner(sync: startupSync)' in ui
+    assert 'StartupSyncScreen(sync:' not in ui
     assert 'HostingOfflineSheet' not in ui  # manual download screen is intentionally unreachable
     assert 'MapKit' not in tiles
 
@@ -264,9 +265,13 @@ def test_partial_forecast_does_not_blank_weather():
 
 def test_startup_does_not_gate_map_on_downloads():
     startup = (IOS / "StartupSync.swift").read_text()
-    assert 'Task.sleep(for: .seconds(5))' in startup
-    assert 'self.presented = false' in startup
+    main = (IOS / "MainView.swift").read_text()
+    assert '@Published private(set) var presented = false' in startup
+    assert 'StartupSyncBanner(sync: startupSync)' in main
+    assert 'StartupSyncScreen(sync:' not in main
+    assert 'Task.sleep(for: .seconds(2))' in startup
     assert 'func skip()' in startup
-    skip = startup.split('func skip()', 1)[1].split('private func internetAvailable', 1)[0]
-    assert 'startupTask?.cancel()' not in skip
-    assert 'presented = false' in skip
+    assert 'active = true' in startup and 'defer { active = false }' in startup
+    assert 'loadRoutingNetwork()' not in main.split('.onAppear {', 1)[1].split('.onChange(of: scenePhase)', 1)[0]
+    assert 'try? await Task.sleep(for: .seconds(1))' in main
+    assert 'let recentFiles = files.filter' in (IOS / "WeatherGridService.swift").read_text()
