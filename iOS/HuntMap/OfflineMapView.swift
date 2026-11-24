@@ -91,6 +91,7 @@ struct OfflineMapView: UIViewRepresentable {
         context.coordinator.fieldOverlay?.configure(grid: weatherGrid, layer: weatherLayer)
         context.coordinator.windOverlay = WindParticlesOverlay(mapView: view, hostView: container)
         context.coordinator.windOverlay?.configure(grid: weatherGrid, enabled: weatherLayer == .wind)
+        context.coordinator.groundLabels = GroundLabelsOverlay(mapView: view, hostView: container)
         context.coordinator.tilesReadyObserver = NotificationCenter.default.addObserver(
             forName: .huntMBTilesReady, object: nil, queue: .main
         ) { [weak coordinator = context.coordinator, weak view] _ in
@@ -179,6 +180,7 @@ struct OfflineMapView: UIViewRepresentable {
         weak var map: MLNMapView?
         var windOverlay: WindParticlesOverlay?
         var fieldOverlay: WeatherFieldOverlay?
+        var groundLabels: GroundLabelsOverlay?
         var zones: [GeoZone] = []
         var onMapTap: (GeoPoint) -> Void = { _ in }
         var onMarkerTap: (UUID) -> Void = { _ in }
@@ -204,6 +206,7 @@ struct OfflineMapView: UIViewRepresentable {
         private var appliedGroundFitRequest = 0
         private func updateGroundAnnotations(_ view: MLNMapView, zones: [GeoZone]) {
             let key = zones.map { $0.id + ":" + $0.name + ":" + ($0.attributes?["local_revision"] ?? "") }.joined(separator: "|") + "|" + (highlightedGroundID ?? "")
+            groundLabels?.configure(zones: zones, selectedID: highlightedGroundID, key: key)
             guard key != groundKey else { return }
             groundKey = key
             if !groundAnnotations.isEmpty { view.removeAnnotations(groundAnnotations) }
@@ -363,6 +366,7 @@ struct OfflineMapView: UIViewRepresentable {
             lastStyle = style
             fieldOverlay?.setNeedsDisplay()
             windOverlay?.setNeedsDisplay()
+            groundLabels?.cameraChanged(force: true)
         }
 
         func refreshOfflineTiles(style: MLNStyle) {
@@ -402,7 +406,12 @@ struct OfflineMapView: UIViewRepresentable {
             }
         }
 
+        func mapViewRegionIsChanging(_ mapView: MLNMapView) {
+            groundLabels?.cameraChanged()
+        }
+
         func mapView(_ mapView: MLNMapView, regionDidChangeAnimated animated: Bool) {
+            groundLabels?.cameraChanged(force: true)
             fieldOverlay?.setNeedsDisplay()
             if gridEnabled { renderGrid(in: mapView) }
             reportViewport(in: mapView)

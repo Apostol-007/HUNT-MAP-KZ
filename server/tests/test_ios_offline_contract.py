@@ -236,3 +236,16 @@ def test_weather_probability_contract():
     assert 'case .probability: return "%"' in sheet
     assert 'Для выбранного слоя нет данных.' in sheet
     assert 'Осадки не прогнозируются: карта прозрачная.' in sheet
+
+
+def test_ground_labels_offline_and_camera_contract():
+    labels = (IOS / "GroundLabelsOverlay.swift").read_text()
+    map_view = (IOS / "OfflineMapView.swift").read_text()
+    assert 'isUserInteractionEnabled = false' in labels
+    assert 'hostView.addSubview(self)' in labels
+    assert 'polygon.contains(center)' in labels
+    assert 'zoom >= 6.5' in labels
+    assert 'occupied.contains' in labels
+    assert 'groundLabels?.configure(zones: zones, selectedID: highlightedGroundID, key: key)' in map_view
+    assert 'groundLabels?.cameraChanged(force: true)' in map_view
+    assert 'GroundLabelsOverlay(mapView: view, hostView: container)' in map_view
