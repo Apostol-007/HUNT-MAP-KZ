@@ -92,3 +92,47 @@ final class GroundMetadataTests: XCTestCase {
     #expect(GeoMath.distanceToPolyline(middle, []) == .infinity)
     #expect(GeoMath.distanceToPolyline(road[0], [road[0]]) == 0)
 }
+
+@Test func boundaryQueuePreservesThreeConsecutiveFixes() {
+    var queue = BoundaryFixQueue()
+    let zone = GeoZone(id: "z", name: "Test", kind: .huntingGround, verified: false, source: "test", polygons: [square()])
+    let engine = BoundaryEngine()
+    let t = Date()
+    let inside = GPSFix(position: GeoPoint(43.005, 77.005), accuracyMeters: 5, timestamp: t)
+    _ = engine.process(inside, zones: [zone], now: t)
+    for index in 1...3 {
+        let fix = GPSFix(position: GeoPoint(43.015, 77.005), accuracyMeters: 5, timestamp: t.addingTimeInterval(Double(index)))
+        let overflow = queue.append(fix)
+        #expect(!overflow)
+    }
+    var transitions = 0
+    var index = 0
+    while let fix = queue.popFirst() {
+        index += 1
+        #expect(fix.timestamp == t.addingTimeInterval(Double(index)))
+        let events = engine.process(fix, zones: [zone], now: fix.timestamp)
+        if events.contains(.exited(zoneID: "z")) { transitions += 1; #expect(index == 3) }
+    }
+    #expect(index == 3)
+    #expect(transitions == 1)
+}
+
+@Test func boundaryQueueSignalsDiscontinuityOnOverflow() {
+    var queue = BoundaryFixQueue(capacity: 2)
+    let t = Date()
+    func fix(_ n: Double) -> GPSFix { GPSFix(position: GeoPoint(43, 77), accuracyMeters: 5, timestamp: t.addingTimeInterval(n)) }
+    let first = queue.append(fix(1))
+    let second = queue.append(fix(2))
+    let third = queue.append(fix(3))
+    #expect(!first)
+    #expect(!second)
+    #expect(third)
+    let newest = queue.popFirst()
+    let empty = queue.popFirst()
+    #expect(newest?.timestamp == fix(3).timestamp)
+    #expect(empty == nil)
+    _ = queue.append(fix(4))
+    queue.removeAll()
+    let cleared = queue.popFirst()
+    #expect(cleared == nil)
+}
