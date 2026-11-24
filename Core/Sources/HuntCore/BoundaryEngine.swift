@@ -59,7 +59,6 @@ public final class BoundaryEngine {
     }
 }
 
-
 /// Bounded FIFO for GPS processing. On overload, the caller must reset its
 /// crossing state: fixes separated by a dropped interval are not consecutive.
 public struct BoundaryFixQueue: Sendable {
