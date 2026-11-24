@@ -646,6 +646,18 @@ struct MainView: View {
                         .background(HuntReference.card.opacity(0.96), in: RoundedRectangle(cornerRadius: 10))
                         .padding(.horizontal, 12)
                     } else {
+                        if weatherLayer == .precipitation, let active = weatherGrid.grid {
+                            let knownRainfall = active.points.compactMap(\.precipitation)
+                            if knownRainfall.isEmpty {
+                                Label("Нет данных об осадках для выбранной области",
+                                      systemImage: "cloud.slash")
+                                    .font(.caption2).foregroundStyle(.orange)
+                            } else if knownRainfall.allSatisfy({ $0 < 0.1 }) {
+                                Label("Осадков не ожидается · 0 мм/ч",
+                                      systemImage: "sun.max")
+                                    .font(.caption2).foregroundStyle(.white)
+                            }
+                        }
                         Text("Прогноз загружен · \(weatherLayer.rawValue)")
                             .font(.caption2.bold())
                             .foregroundStyle(.white)
