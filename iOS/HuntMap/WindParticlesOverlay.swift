@@ -26,24 +26,33 @@ final class WindParticlesOverlay: UIView {
     private let maximumTrail = 9
     private let particleCount = 85
 
-    init(mapView: MLNMapView) {
+    init(mapView: MLNMapView, hostView: UIView) {
         self.mapView = mapView
-        super.init(frame: mapView.bounds)
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
         backgroundColor = .clear
         isOpaque = false
         isUserInteractionEnabled = false
-        autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        mapView.addSubview(self)
+        hostView.addSubview(self)
+        NSLayoutConstraint.activate([
+            leadingAnchor.constraint(equalTo: hostView.leadingAnchor),
+            trailingAnchor.constraint(equalTo: hostView.trailingAnchor),
+            topAnchor.constraint(equalTo: hostView.topAnchor),
+            bottomAnchor.constraint(equalTo: hostView.bottomAnchor)
+        ])
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
 
     func syncMapGeometry() {
         guard let mapView, mapView.bounds.width > 0, mapView.bounds.height > 0 else { return }
-        if frame != mapView.bounds {
-            frame = mapView.bounds
-            setNeedsDisplay()
-        }
-        mapView.bringSubviewToFront(self)
+        // The sibling canvas is laid out by Auto Layout, never by MapLibre.
+        if bounds.size != mapView.bounds.size { setNeedsDisplay() }
+        superview?.bringSubviewToFront(self)
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        setNeedsDisplay()
     }
 
     override func didMoveToWindow() {
