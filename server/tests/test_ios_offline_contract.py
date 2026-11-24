@@ -201,8 +201,10 @@ def test_weather_grid_hourly_query_has_no_conflicting_forecast_days():
     source = (IOS / "WeatherGridService.swift").read_text()
     assert 'URLQueryItem(name: "start_hour", value: targetHour)' in source
     assert 'URLQueryItem(name: "end_hour", value: targetHour)' in source
-    # Open-Meteo rejects forecast_days together with an explicit hour window (HTTP 400).
-    assert 'URLQueryItem(name: "forecast_days"' not in source
+    # forecast_days is only allowed on fallback after removing the explicit hours.
+    assert 'fallback.queryItems?.removeAll' in source
+    assert '$0.name == "start_hour" || $0.name == "end_hour"' in source
+    assert 'fallback.queryItems?.append(URLQueryItem(name: "forecast_days", value: "8"))' in source
     assert 'http.statusCode != 200' in source
 
 
