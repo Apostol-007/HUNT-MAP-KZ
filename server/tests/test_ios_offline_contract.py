@@ -330,3 +330,11 @@ def test_offline_package_validation_is_detached_from_ui():
     assert 'let valid = try await Task.detached(priority: .utility)' in src
     assert 'let imported = try await Task.detached(priority: .utility)' in src
     assert 'try Task.checkCancellation()' in src
+
+
+def test_local_mbtiles_server_reuses_read_only_sqlite_readers():
+    source = (IOS / "LocalMBTilesServer.swift").read_text()
+    assert 'private var readers: [String: OpaquePointer]' in source
+    assert 'for (_, db) in readers { sqlite3_close(db) }' in source
+    assert 'readers[key] = db' in source
+    assert 'guard let key = files.first(where:' in source

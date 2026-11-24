@@ -9,6 +9,7 @@ final class LocalMBTilesServer {
     private var listener: NWListener?
     private var files: [String: URL] = [:]
     private var supportedFiles: Set<String> = []
+    private var readers: [String: OpaquePointer] = [:]
     private(set) var port: UInt16?
 
     private init() { start() }
@@ -35,6 +36,10 @@ final class LocalMBTilesServer {
         queue.sync {
             // Remove obsolete registrations when a pack is deleted or replaced.
             // Otherwise old URLs could remain reachable after switching maps.
+            // All reads run on this serial queue. Close the previous readers
+            // before switching the active package manifest.
+            for (_, db) in readers { sqlite3_close(db) }
+            readers.removeAll()
             files.removeAll()
             supportedFiles.removeAll()
             var registered: [(String, URL)] = []
@@ -42,7 +47,14 @@ final class LocalMBTilesServer {
                 guard FileManager.default.fileExists(atPath: file.path) else { continue }
                 let key = "p\(index)"
                 guard isRasterMBTiles(file) else { continue }
+                var db: OpaquePointer?
+                guard sqlite3_open_v2(file.path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil) == SQLITE_OK,
+                      let db else {
+                    if let db { sqlite3_close(db) }
+                    continue
+                }
                 files[key] = file
+                readers[key] = db
                 supportedFiles.insert(key)
                 registered.append((key, file))
             }
@@ -87,11 +99,10 @@ final class LocalMBTilesServer {
     }
 
     private func readTile(file: URL, z: Int, x: Int, y: Int) -> Data? {
-        var db: OpaquePointer?
-        guard sqlite3_open_v2(file.path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil) == SQLITE_OK else {
-            if db != nil { sqlite3_close(db) }; return nil
-        }
-        defer { sqlite3_close(db) }
+        // Reuse read-only SQLite handles while panning; this function only
+        // executes on the server's serial queue, never concurrently.
+        guard let key = files.first(where: { $0.value == file })?.key,
+              let db = readers[key] else { return nil }
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, "SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=? LIMIT 1", -1, &statement, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(statement) }
