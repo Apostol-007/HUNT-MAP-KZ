@@ -87,6 +87,10 @@ struct MainView: View {
     @State private var valhallaManeuvers: [ValhallaManeuver] = []
     @State private var nextTurnText = ""
     @State private var nextTurnDistance = 0.0
+    @AppStorage("hunt.voiceGuidance") private var voiceGuidance = false
+    @StateObject private var voice = RouteVoice()
+    @State private var nextTurnTask: Task<Void, Never>?
+    @State private var nextTurnWorker: Task<(Int, Double), Never>?
     @State private var routingError: String?
     @State private var importingRoutingNetwork = false
     @State private var routeGraph: OfflineRouteGraph?
@@ -779,6 +783,9 @@ struct MainView: View {
         planRoute(to: marker.coordinate, title: marker.title, markerID: id)
     }
     private func planRoute(to destination: GeoPoint, title: String, markerID: UUID? = nil) {
+        nextTurnTask?.cancel()
+        nextTurnWorker?.cancel()
+        voice.stop()
         if recordedRoute != nil { stopRecordedTrack() }
         if !routeGuidance { navigationPath = [] }
         routeDestination = destination
@@ -862,26 +869,49 @@ struct MainView: View {
     }
 
     private func refreshNextTurn(at location: GeoPoint) {
-        guard navigationPath.count >= 2, !valhallaManeuvers.isEmpty else { return }
-        // Progress is projected onto the received road geometry, not a straight-line route.
-        var closestIndex = 0
-        var closestMeters = Double.infinity
-        for (index, point) in navigationPath.enumerated() {
-            let d = GeoMath.meters(location, point)
-            if d < closestMeters { closestMeters = d; closestIndex = index }
+        let path = navigationPath
+        let maneuvers = valhallaManeuvers
+        guard path.count >= 2, !maneuvers.isEmpty else { return }
+        nextTurnTask?.cancel()
+        nextTurnWorker?.cancel()
+        let previous = nextTurnWorker
+        let indices = maneuvers.map(\.beginIndex)
+        let worker = Task.detached(priority: .userInitiated) {
+            _ = await previous?.value
+            var closestIndex = 0
+            var closestMeters = Double.infinity
+            for (index, point) in path.enumerated() {
+                if Task.isCancelled { return (-1, 0.0) }
+                let distance = GeoMath.meters(location, point)
+                if distance < closestMeters { closestMeters = distance; closestIndex = index }
+            }
+            let maneuverIndex = indices.firstIndex(where: { $0 > closestIndex }) ?? indices.count - 1
+            let end = min(path.count - 1, max(0, indices[maneuverIndex]))
+            var distance = 0.0
+            if closestIndex < end {
+                for index in (closestIndex + 1)...end {
+                    distance += GeoMath.meters(path[index - 1], path[index])
+                }
+            }
+            return (maneuverIndex, distance)
         }
-        let upcoming = valhallaManeuvers.first(where: { $0.beginIndex > closestIndex }) ??
-            valhallaManeuvers.last!
-        nextTurnText = upcoming.instruction
-        nextTurnDistance = 0
-        if closestIndex < upcoming.beginIndex {
-            for index in (closestIndex + 1)...upcoming.beginIndex {
-                nextTurnDistance += GeoMath.meters(navigationPath[index - 1], navigationPath[index])
+        nextTurnWorker = worker
+        let request = routeRequestID
+        nextTurnTask = Task { @MainActor in
+            let (index, distance) = await worker.value
+            guard !Task.isCancelled, request == routeRequestID, maneuvers.indices.contains(index) else { return }
+            nextTurnText = maneuvers[index].instruction
+            nextTurnDistance = distance
+            if routeGuidance && voiceGuidance {
+                voice.announce(instruction: nextTurnText, distance: distance, maneuver: index)
             }
         }
     }
 
     private func stopNavigation() {
+        nextTurnTask?.cancel()
+        nextTurnWorker?.cancel()
+        voice.stop()
         valhallaManeuvers = []
         nextTurnText = ""
         routeRequestID = nil
@@ -1066,6 +1096,8 @@ struct MainView: View {
                         .font(.caption.monospacedDigit())
                 }
                 if routeGuidance {
+                    Toggle("Голосовые подсказки", isOn: $voiceGuidance).font(.caption)
+                        .onChange(of: voiceGuidance) { _, enabled in if !enabled { voice.stop() } }
                     Label("Ведение включено", systemImage: "location.north.line.fill")
                         .font(.caption.bold()).foregroundStyle(HuntReference.green)
                     if !nextTurnText.isEmpty {
