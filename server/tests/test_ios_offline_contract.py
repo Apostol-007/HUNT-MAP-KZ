@@ -102,7 +102,15 @@ def test_offline_hybrid_is_file_backed():
     store = (IOS / "ProtomapsOfflineStore.swift").read_text()
     assert "hybrid: Bool = false" in style
     assert "if !hybrid {" in style
-    assert "protomaps-offline-hybrid.json" in style
+    # The local style is immutable and content-addressed so MapLibre reloads
+    # only when the style actually changes. The hybrid variant has its own prefix.
+    assert 'hybrid ? "protomaps-offline-hybrid" : "protomaps-offline-style"' in style
+    assert 'SHA256.hash(data: data)' in style
+    assert r'folder.appendingPathComponent("\(prefix)-\(hash).json")' in style
+    assert 'let address = local ? archive.absoluteString : item.url' in style
+    assert '"pmtiles://' in style
+    assert 'if local && !FileManager.default.fileExists(atPath: archive.path) { continue }' in style
+    assert 'local: true, hybrid: true' in store
     assert "hybridOfflineStyleURL" in store
     assert "protomapsHybridStyleURL" in mapview
     assert "style.insertLayer(raster, below: vector)" in mapview
@@ -282,8 +290,19 @@ def test_cold_start_does_not_build_hidden_map_or_hash_on_main_actor():
     hosting = (IOS / "HostingOfflineDownloads.swift").read_text()
     maps = (IOS / "ProtomapsOfflineStore.swift").read_text()
     startup = (IOS / "StartupSync.swift").read_text()
-    assert 'if tab == .map {' in ui
-    assert 'if tab != .map { themedScreen }' not in ui
+    # Initially the map is absent. Once opened, keep the same instance across
+    # tabs; release it on memory pressure while hidden.
+    assert '@State private var tab: Tab = .home' in ui
+    assert '@State private var mapOpened = false' in ui
+    assert 'if mapOpened || tab == .map {' in ui
+    assert '.allowsHitTesting(tab == .map)' in ui
+    assert 'if value == .map { mapOpened = true }' in ui
+    assert 'UIApplication.didReceiveMemoryWarningNotification' in ui
+    assert 'if tab != .map { mapOpened = false }' in ui
+    assert 'active: tab == .map' in ui
+    native = (IOS / "OfflineMapView.swift").read_text()
+    assert 'view.isHidden = !active' in native
+    assert 'guard active else {' in native
     assert 'Task.detached(priority: .utility)' in maps
     assert 'nonisolated private static func digest' in hosting
     assert 'func needsRouteUpdateAsync' in hosting
