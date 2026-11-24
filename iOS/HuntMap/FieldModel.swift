@@ -1,6 +1,8 @@
 import Foundation
 import CoreLocation
 import UserNotifications
+import AudioToolbox
+import UIKit
 import HuntCore
 
 struct Marker: Identifiable, Codable {
@@ -49,7 +51,12 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
     @Published var gpsAuthorization = "не определено"
     @Published var lastError = ""
     private let manager=CLLocationManager()
-    private let engine=BoundaryEngine()
+    private var engine=BoundaryEngine()
+    @Published private(set) var monitoredGroundID: String?
+    @Published private(set) var groundMonitorStatus = "Контроль выключен"
+    private var groundLastTimestamp: Date?
+    private var groundWasInside = false
+    private var groundOutsideCount = 0
     private var lastFix: CLLocation?
     private var documentURL:URL {
         let dir=FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0]
@@ -88,7 +95,7 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
 
     func stopRecordedRouteGuidance() {
         navigatingRecordedTrack = false
-        if !recording {
+        if !recording && monitoredGroundID == nil {
             manager.allowsBackgroundLocationUpdates = false
             manager.pausesLocationUpdatesAutomatically = true
         }
@@ -130,8 +137,8 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         if let track=currentTrack, !track.fixes.isEmpty {tracks.insert(track,at:0)}
         currentTrack=nil;recording=false;paused=false
         lastFix=nil
-        if manager.allowsBackgroundLocationUpdates && !navigatingRecordedTrack { manager.allowsBackgroundLocationUpdates=false }
-        manager.pausesLocationUpdatesAutomatically = !navigatingRecordedTrack
+        if manager.allowsBackgroundLocationUpdates && !navigatingRecordedTrack && monitoredGroundID == nil { manager.allowsBackgroundLocationUpdates=false }
+        manager.pausesLocationUpdatesAutomatically = !navigatingRecordedTrack && monitoredGroundID == nil
         persist()
     }
     func addMarker(kind:String="Точка") {
@@ -167,7 +174,77 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         tracks.removeAll { $0.id == id }
         persist()
     }
-    func setImportedZones(_ imported:[GeoZone]) { zones=imported; lastWarning="Импортированные границы юридически не проверены"; persist() }
+    func setImportedZones(_ imported:[GeoZone]) {
+        let existing = Dictionary(zones.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var merged = existing
+        for ground in imported where existing[ground.id] == nil { merged[ground.id] = ground }
+        zones = merged.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        lastWarning = "Импортированные границы юридически не проверены"
+        persist()
+    }
+    func saveGround(_ ground: GeoZone) {
+        if let index = zones.firstIndex(where: { $0.id == ground.id }) { zones[index] = ground }
+        else { zones.append(ground) }
+        if monitoredGroundID == ground.id { groundWasInside = false; groundOutsideCount = 0 }
+        persist()
+    }
+    func deleteGround(_ id: String) {
+        if monitoredGroundID == id { stopGroundMonitor() }
+        zones.removeAll { $0.id == id }
+        persist()
+    }
+    func startGroundMonitor(_ ground: GeoZone) {
+        monitoredGroundID = ground.id
+        groundLastTimestamp = nil
+        groundWasInside = false
+        groundOutsideCount = 0
+        groundMonitorStatus = "Ожидание точной GPS-позиции внутри угодья"
+        requestGPS()
+        if manager.authorizationStatus == .authorizedAlways {
+            manager.allowsBackgroundLocationUpdates = true
+            manager.pausesLocationUpdatesAutomatically = false
+        }
+    }
+    func stopGroundMonitor() {
+        monitoredGroundID = nil
+        groundMonitorStatus = "Контроль выключен"
+        if !recording && !navigatingRecordedTrack {
+            manager.allowsBackgroundLocationUpdates = false
+            manager.pausesLocationUpdatesAutomatically = true
+        }
+    }
+    private func checkSelectedGround(_ fix: CLLocation, point: GeoPoint) {
+        guard let id = monitoredGroundID, let ground = zones.first(where: { $0.id == id }) else { return }
+        guard groundLastTimestamp == nil || fix.timestamp > groundLastTimestamp! else { return }
+        groundLastTimestamp = fix.timestamp
+        guard fix.horizontalAccuracy <= 50, ground.distanceToBoundaryMeters(point) > fix.horizontalAccuracy + 20 else {
+            groundOutsideCount = 0
+            groundMonitorStatus = "Уточнение положения у границы"
+            return
+        }
+        if ground.contains(point) {
+            groundWasInside = true
+            groundOutsideCount = 0
+            groundMonitorStatus = "Внутри: " + ground.name
+        } else if groundWasInside {
+            groundOutsideCount += 1
+            if groundOutsideCount >= 3 {
+                groundWasInside = false
+                groundOutsideCount = 0
+                groundMonitorStatus = "Вы вышли за пределы: " + ground.name
+                lastWarning = groundMonitorStatus
+                if UIApplication.shared.applicationState == .active {
+                    AudioServicesPlayAlertSound(1005)
+                    AudioServicesPlaySystemSound(kSystemSoundID_Vibrate)
+                }
+                let notification = UNMutableNotificationContent()
+                notification.title = "Выход из охотугодья"
+                notification.body = ground.name
+                notification.sound = .default
+                UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: notification, trigger: nil))
+            }
+        } else { groundMonitorStatus = "Вне угодья: " + ground.name }
+    }
     func loadDemoZones() {
         // Illustrative polygon only: NOT an actual hunting ground or legal boundary.
         let polygon=GeoPolygon(rings:[[GeoPoint(43.245,76.88),GeoPoint(43.245,76.92),GeoPoint(43.275,76.92),GeoPoint(43.275,76.88)]])
@@ -184,6 +261,7 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         guard p.valid else {return}
         coordinate=p;accuracy=fix.horizontalAccuracy
         status="GPS ±\(Int(fix.horizontalAccuracy)) м"
+        checkSelectedGround(fix, point: p)
         if recording && !paused {
             if let last=lastFix, fix.timestamp.timeIntervalSince(last.timestamp)<1 {return}
             if let last=lastFix {
@@ -194,7 +272,7 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
             persist() // Atomic write of current track after each accepted fix.
         }
         lastFix=fix
-        for event in engine.process(GPSFix(position:p,accuracyMeters:fix.horizontalAccuracy,timestamp:fix.timestamp),zones:zones) {
+        for event in engine.process(GPSFix(position:p,accuracyMeters:fix.horizontalAccuracy,timestamp:fix.timestamp),zones:zones.filter { $0.kind == .protectedArea }) {
             let message:String
             switch event {
             case .approaching(_,let meters):message="Граница на расстоянии около \(meters) м"
@@ -216,7 +294,7 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
     }
     func locationManagerDidChangeAuthorization(_ manager:CLLocationManager) {
         if manager.authorizationStatus == .authorizedAlways || manager.authorizationStatus == .authorizedWhenInUse {
-            if manager.authorizationStatus == .authorizedAlways && navigatingRecordedTrack {
+            if manager.authorizationStatus == .authorizedAlways && (navigatingRecordedTrack || monitoredGroundID != nil) {
                 manager.allowsBackgroundLocationUpdates = true
                 manager.pausesLocationUpdatesAutomatically = false
             }

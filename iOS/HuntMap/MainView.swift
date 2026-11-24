@@ -33,6 +33,7 @@ struct MainView: View {
     @State private var serviceSection: ServiceSection = .weather
     @State private var weatherLayer: WeatherMapLayer = .none
     @State private var zone: GeoZone?
+    @State private var groundSearch = ""
     @State private var showLayers = false
     @State private var showWeather = false
     @State private var showWeatherLayers = false
@@ -102,7 +103,7 @@ struct MainView: View {
             }
         }
     }
-    private enum DataSection: String, CaseIterable { case routes = "Маршруты", markers = "Метки" }
+    private enum DataSection: String, CaseIterable { case routes = "Маршруты", markers = "Метки", grounds = "Угодья" }
     private enum ServiceSection: String, CaseIterable { case weather = "Погода", wildlife = "Животные" }
 
     var body: some View {
@@ -298,7 +299,9 @@ struct MainView: View {
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
         }
-        .sheet(item: $zone) { GroundDetailsSheet(zone: $0) }
+        .sheet(item: $zone) { ground in
+            GroundDetailsSheet(zone: ground, model: model, onMap: { showGround($0) }, onRoute: { routeGround($0) })
+        }
         .sheet(isPresented: $showDiagnostics) {
             DiagnosticsView(model: model, mapCount: maps.installed.count,
                             wildlifeCount: animals.packs.count, onlineMap: online,
@@ -490,7 +493,7 @@ struct MainView: View {
                                } else {
                                    pendingMapPoint = point
                                    pendingMapZone = model.zones.first(where: { $0.contains(point) })
-                                   showMapPointActions = true
+                                   if showGrounds, let ground = pendingMapZone { zone = ground } else { showMapPointActions = true }
                                }
                            },
                            onMarkerTap: { id in
@@ -1212,9 +1215,34 @@ struct MainView: View {
             HStack(spacing: 8) {
                 ReferenceChip(title: "Маршруты", selected: dataSection == .routes) { dataSection = .routes }
                 ReferenceChip(title: "Метки", selected: dataSection == .markers) { dataSection = .markers }
+                ReferenceChip(title: "Угодья", selected: dataSection == .grounds) { dataSection = .grounds }
             }
-            if dataSection == .routes { routesContent } else { markersContent }
+            switch dataSection {
+            case .routes: routesContent
+            case .markers: markersContent
+            case .grounds: groundsContent
+            }
         }
+    }
+
+    private var groundsContent: some View {
+        GroundsCatalogView(model: model, onDetails: { zone = $0 }, onMap: { showGround($0) }, onRoute: { routeGround($0) })
+    }
+
+    private func showGround(_ ground: GeoZone) {
+        guard let point = ground.groundDestination else { return }
+        zone = nil
+        showGrounds = true
+        mapFocus = point
+        centerRequest += 1
+        tab = .map
+    }
+
+    private func routeGround(_ ground: GeoZone) {
+        guard let point = ground.groundDestination else { return }
+        zone = nil
+        showGrounds = true
+        planRoute(to: point, title: ground.name)
     }
 
     private var routesContent: some View {

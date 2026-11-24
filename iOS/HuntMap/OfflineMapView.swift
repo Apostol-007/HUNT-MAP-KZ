@@ -194,6 +194,30 @@ struct OfflineMapView: UIViewRepresentable {
         private var stableMarkers: [UUID: MLNPointAnnotation] = [:]
         private var gpsAnnotation: MLNPointAnnotation?
         private var transientAnnotations: [MLNAnnotation] = []
+        private var groundAnnotations: [MLNAnnotation] = []
+        private var groundKey = ""
+        private func updateGroundAnnotations(_ view: MLNMapView, zones: [GeoZone]) {
+            let key = zones.map { $0.id + ":" + $0.name + ":" + ($0.attributes?["local_revision"] ?? "") }.joined(separator: "|")
+            guard key != groundKey else { return }
+            groundKey = key
+            if !groundAnnotations.isEmpty { view.removeAnnotations(groundAnnotations) }
+            groundAnnotations.removeAll()
+            for zone in zones {
+                for polygon in zone.polygons {
+                    guard let outer = polygon.rings.first, outer.count >= 3 else { continue }
+                    var coordinates = outer.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+                    let holes: [MLNPolygon] = polygon.rings.dropFirst().compactMap { ring in
+                        guard ring.count >= 3 else { return nil }
+                        var points = ring.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+                        return MLNPolygon(coordinates: &points, count: UInt(points.count))
+                    }
+                    let shape = MLNPolygon(coordinates: &coordinates, count: UInt(coordinates.count), interiorPolygons: holes)
+                    shape.title = "GROUND|" + zone.name
+                    groundAnnotations.append(shape)
+                }
+            }
+            if !groundAnnotations.isEmpty { view.addAnnotations(groundAnnotations) }
+        }
         private var lastTransientKey: String?
         private var markerCoordinates: [(UUID, CLLocationCoordinate2D)] = []
         init(selectedZone: Binding<GeoZone?>) { self.selectedZone = selectedZone }
@@ -409,7 +433,8 @@ struct OfflineMapView: UIViewRepresentable {
                                offlineRoadLines: [OfflineRoadLine], offlineRoadRevision: Int) {
             // Persistent MLNPointAnnotation identity is critical for tapping. Recreating
             // every marker on each GPS/SwiftUI update used to cancel selection gestures.
-            let transientKey = String(describing: zones) + "|" + String(describing: track) + "|" + String(describing: navigationPath) + "|" + String(describing: replayPosition) + "|" + String(offlineRoadRevision)
+            updateGroundAnnotations(view, zones: zones)
+            let transientKey = String(describing: track) + "|" + String(describing: navigationPath) + "|" + String(describing: replayPosition) + "|" + String(offlineRoadRevision)
             if transientKey != lastTransientKey {
                 if !transientAnnotations.isEmpty { view.removeAnnotations(transientAnnotations) }
                 transientAnnotations.removeAll()
@@ -425,16 +450,6 @@ struct OfflineMapView: UIViewRepresentable {
                 let line = MLNPolyline(coordinates: &coords, count: UInt(coords.count))
                 line.title = road.isTrail ? "OFFLINE|TRAIL" : "OFFLINE|ROAD"
                 updated.append(line)
-            }
-            for zone in zones {
-                for polygon in zone.polygons {
-                    for ring in polygon.rings where ring.count >= 3 {
-                        var coordinates = ring.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
-                        let line = MLNPolyline(coordinates: &coordinates, count: UInt(coordinates.count))
-                        line.title = zone.verified ? "Граница: \(zone.name)" : "НЕ ПРОВЕРЕНО: \(zone.name)"
-                        updated.append(line)
-                    }
-                }
             }
             if let track, track.fixes.count > 1 {
                 var coordinates = track.fixes.map { CLLocationCoordinate2D(latitude: $0.point.latitude, longitude: $0.point.longitude) }
@@ -506,9 +521,11 @@ struct OfflineMapView: UIViewRepresentable {
         }
 
         func mapView(_ mapView: MLNMapView, alphaForShapeAnnotation annotation: MLNShape) -> CGFloat {
-            annotation.title?.hasPrefix("WX|") == true ? 0.40 : 0.95
+            if annotation.title?.hasPrefix("GROUND|") == true { return 0.35 }
+            return annotation.title?.hasPrefix("WX|") == true ? 0.40 : 0.95
         }
         func mapView(_ mapView: MLNMapView, fillColorForPolygonAnnotation annotation: MLNPolygon) -> UIColor {
+            if annotation.title?.hasPrefix("GROUND|") == true { return .systemGreen }
             guard let title = annotation.title, title.hasPrefix("WX|") else { return .clear }
             let fields = title.split(separator: "|", omittingEmptySubsequences: false)
             guard fields.count == 3, let value = Double(fields[2]) else { return .clear }
@@ -523,6 +540,7 @@ struct OfflineMapView: UIViewRepresentable {
             }
         }
         func mapView(_ mapView: MLNMapView, strokeColorForShapeAnnotation annotation: MLNShape) -> UIColor {
+            if annotation.title?.hasPrefix("GROUND|") == true { return .systemGreen }
             if annotation.title == "GRID|SELECTED" { return .systemGreen }
             if annotation.title == "GRID|AVAILABLE" { return UIColor.white.withAlphaComponent(0.65) }
             if annotation.title?.hasPrefix("WX-ISOBAR|") == true { return .white }
