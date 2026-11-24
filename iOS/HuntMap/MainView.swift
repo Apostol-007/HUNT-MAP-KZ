@@ -68,6 +68,7 @@ struct MainView: View {
     @State private var routeTitle = "Выбранная точка"
     @State private var routeGuidance = false
     @State private var rerouteTime = Date.distantPast
+    @State private var offRouteFixes = 0
     @State private var navigationPath: [GeoPoint] = []
     @State private var navigationKind = ""
     @State private var recordedRoute: RecordedTrackFollow?
@@ -170,10 +171,17 @@ struct MainView: View {
                     return
                 }
                 refreshNextTurn(at: position)
-                if navigationPath.count >= 2, Date().timeIntervalSince(rerouteTime) > 45 {
-                    let distance = navigationPath.map { GeoMath.meters(position, $0) }.min() ?? 0
-                    if distance > 150 {
+                if navigationPath.count >= 2 {
+                    // Stay on long road segments: distance to vertices alone can
+                    // incorrectly trigger rerouting between sparse map nodes.
+                    let deviation = zip(navigationPath, navigationPath.dropFirst())
+                        .map { GeoMath.segmentDistance(position, $0.0, $0.1) }
+                        .min() ?? .infinity
+                    let threshold = max(150.0, (model.accuracy ?? 20) * 3)
+                    offRouteFixes = deviation > threshold ? min(offRouteFixes + 1, 3) : 0
+                    if offRouteFixes >= 3 && Date().timeIntervalSince(rerouteTime) > 45 {
                         rerouteTime = Date()
+                        offRouteFixes = 0
                         planRoute(to: destination, title: routeTitle, markerID: navigationTargetID)
                     }
                 }

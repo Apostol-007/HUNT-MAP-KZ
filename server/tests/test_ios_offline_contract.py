@@ -315,3 +315,11 @@ def test_map_geometry_changes_without_stringifying_every_point():
     assert 'var geometryHash = Hasher()' in map_src
     assert 'geometryHash.combine(point.latitude)' in map_src
     assert 'String(describing: zones)' not in map_src
+
+
+def test_route_rerouting_uses_segment_distance_and_gps_hysteresis():
+    source = (IOS / "MainView.swift").read_text()
+    recorded = (IOS / "RecordedTrackFollow.swift").read_text()
+    assert 'GeoMath.segmentDistance(position,' in source
+    assert 'offRouteFixes >= 3' in source
+    assert 'GeoMath.segmentDistance(gps,' in recorded
