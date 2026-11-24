@@ -26,14 +26,20 @@ final class WindParticlesOverlay: UIView {
     private let maximumTrail = 9
     private let particleCount = 85
 
-    init(mapView: MLNMapView) {
+    init(mapView: MLNMapView, hostView: UIView) {
         self.mapView = mapView
-        super.init(frame: mapView.bounds)
+        super.init(frame: .zero)
         backgroundColor = .clear
         isOpaque = false
         isUserInteractionEnabled = false
-        autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        mapView.addSubview(self)
+        translatesAutoresizingMaskIntoConstraints = false
+        hostView.addSubview(self)
+        NSLayoutConstraint.activate([
+            leadingAnchor.constraint(equalTo: hostView.leadingAnchor),
+            trailingAnchor.constraint(equalTo: hostView.trailingAnchor),
+            topAnchor.constraint(equalTo: hostView.topAnchor),
+            bottomAnchor.constraint(equalTo: hostView.bottomAnchor)
+        ])
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
     deinit { displayLink?.invalidate() }
