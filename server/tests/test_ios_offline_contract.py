@@ -365,3 +365,12 @@ def test_gps_database_directory_exists_and_weather_cache_has_retention():
     assert 'createDirectory(at: folder' in journal
     assert 'Task.detached(priority: .background)' in weather
     assert 'candidates.dropFirst(256)' in weather
+
+
+def test_privacy_safe_launch_health_markers():
+    ui = (IOS / "MainView.swift").read_text()
+    launch = (IOS / "LaunchHealth.swift").read_text()
+    assert 'LaunchHealth.started()' in ui
+    assert 'LaunchHealth.firstScreenReady()' in ui
+    assert 'hunt.launch.pending' in launch
+    assert 'hunt.diag.launchSeconds' in launch

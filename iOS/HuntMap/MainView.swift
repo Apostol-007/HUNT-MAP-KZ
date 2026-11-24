@@ -133,6 +133,7 @@ struct MainView: View {
         .background(ShakeDetector().frame(width: 1, height: 1))
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
         .onAppear {
+            LaunchHealth.started()
             // Do not parse the potentially huge routing/network.geojson on the
             // main thread at launch. Offline routing loads it on first request.
             startupSync.begin(hosting: hosting, tiles: maps, protomaps: protomaps,
@@ -142,6 +143,7 @@ struct MainView: View {
             Task {
                 try? await Task.sleep(for: .seconds(4))
                 guard !Task.isCancelled else { return }
+                LaunchHealth.firstScreenReady()
                 refreshWeatherOnLaunch()
                 if weatherLayer != .none { weatherGrid.load(hourOffset: 0) }
             }
