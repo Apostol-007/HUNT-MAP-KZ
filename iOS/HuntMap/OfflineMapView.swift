@@ -43,10 +43,20 @@ struct OfflineMapView: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(selectedZone: $selectedZone) }
 
-    func makeUIView(context: Context) -> MLNMapView {
+    func makeUIView(context: Context) -> UIView {
+        let container = UIView(frame: .zero)
+        container.clipsToBounds = true
         let styleURL = online ? (mapStyle == MapBasemap.protomaps.rawValue ? (protomapsOnlineStyleURL ?? selectedStyle) : selectedStyle)
                               : (mapStyle == MapBasemap.hybrid.rawValue && !tileFiles.isEmpty ? (protomapsHybridStyleURL ?? protomapsOfflineStyleURL ?? OfflineMapStyle.url) : (protomapsOfflineStyleURL ?? OfflineMapStyle.url))
         let view = MLNMapView(frame: .zero, styleURL: styleURL)
+        view.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            view.topAnchor.constraint(equalTo: container.topAnchor),
+            view.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        ])
         view.showsScale = true
         view.scaleBarUsesMetricSystem = true
         view.scaleBarShouldShowDarkStyles = true
@@ -75,9 +85,9 @@ struct OfflineMapView: UIViewRepresentable {
         tap.delegate = context.coordinator
         view.addGestureRecognizer(tap)
         context.coordinator.map = view
-        context.coordinator.fieldOverlay = WeatherFieldOverlay(mapView: view)
+        context.coordinator.fieldOverlay = WeatherFieldOverlay(mapView: view, hostView: container)
         context.coordinator.fieldOverlay?.configure(grid: weatherGrid, layer: weatherLayer)
-        context.coordinator.windOverlay = WindParticlesOverlay(mapView: view)
+        context.coordinator.windOverlay = WindParticlesOverlay(mapView: view, hostView: container)
         context.coordinator.windOverlay?.configure(grid: weatherGrid, enabled: weatherLayer == .wind)
         context.coordinator.tilesReadyObserver = NotificationCenter.default.addObserver(
             forName: .huntMBTilesReady, object: nil, queue: .main
@@ -91,10 +101,16 @@ struct OfflineMapView: UIViewRepresentable {
         DispatchQueue.main.async { [weak coordinator = context.coordinator, weak view] in
             if let coordinator, let view { coordinator.reportViewport(in: view) }
         }
-        return view
+        return container
     }
 
-    func updateUIView(_ view: MLNMapView, context: Context) {
+    static func dismantleUIView(_ container: UIView, coordinator: Coordinator) {
+        coordinator.windOverlay?.configure(grid: nil, enabled: false)
+        coordinator.map?.delegate = nil
+    }
+
+    func updateUIView(_ container: UIView, context: Context) {
+        guard let view = context.coordinator.map else { return }
         let requestedOnline = online
         let targetStyle = requestedOnline ? (mapStyle == MapBasemap.protomaps.rawValue ? (protomapsOnlineStyleURL ?? selectedStyle) : selectedStyle)
                                           : (mapStyle == MapBasemap.hybrid.rawValue && !tileFiles.isEmpty ? (protomapsHybridStyleURL ?? protomapsOfflineStyleURL ?? OfflineMapStyle.url) : (protomapsOfflineStyleURL ?? OfflineMapStyle.url))
@@ -292,6 +308,8 @@ struct OfflineMapView: UIViewRepresentable {
         func mapView(_ mapView: MLNMapView, didFinishLoading style: MLNStyle) {
             configure(style: style, files: latestFiles)
             lastStyle = style
+            fieldOverlay?.setNeedsDisplay()
+            windOverlay?.setNeedsDisplay()
         }
 
         func refreshOfflineTiles(style: MLNStyle) {
