@@ -212,7 +212,14 @@ def test_weather_uses_lightweight_overlay_without_maplibre_shape_flood():
     map_view = (IOS / "OfflineMapView.swift").read_text()
     overlay = (IOS / "WeatherFieldOverlay.swift").read_text()
     wind = (IOS / "WindParticlesOverlay.swift").read_text()
-    assert 'WeatherFieldOverlay(mapView: view)' in map_view
+    assert 'WeatherFieldOverlay(mapView: view, hostView: container)' in map_view
+    assert 'WindParticlesOverlay(mapView: view, hostView: container)' in map_view
+    assert 'func makeUIView(context: Context) -> UIView' in map_view
+    assert 'func updateUIView(_ container: UIView, context: Context)' in map_view
+    assert 'container.addSubview(view)' in map_view
+    assert 'return container' in map_view
+    assert 'hostView.addSubview(self)' in overlay
+    assert 'mapView.addSubview(self)' not in overlay
     assert 'fieldOverlay?.configure(grid: weatherGrid, layer: weatherLayer)' in map_view
     assert 'WeatherGeometry.shade(' not in map_view
     assert 'WeatherGeometry.windArrow(' not in map_view
@@ -230,3 +237,16 @@ def test_weather_reuses_latest_cached_hour():
     assert 'let currentHourAvailable' in weather
     assert 'if !currentHourAvailable' in weather
     assert 'lastFailedKey == key' in weather
+
+
+def test_weather_layer_above_maplibre_gl_view():
+    map_view = (IOS / "OfflineMapView.swift").read_text()
+    field = (IOS / "WeatherFieldOverlay.swift").read_text()
+    wind = (IOS / "WindParticlesOverlay.swift").read_text()
+    assert 'container.addSubview(view)' in map_view
+    assert 'WeatherFieldOverlay(mapView: view, hostView: container)' in map_view
+    assert 'WindParticlesOverlay(mapView: view, hostView: container)' in map_view
+    assert 'hostView.addSubview(self)' in field and 'hostView.addSubview(self)' in wind
+    assert 'mapView.addSubview(self)' not in field and 'mapView.addSubview(self)' not in wind
+    assert 'trailingAnchor.constraint(equalTo: hostView.trailingAnchor)' in field
+    assert 'superview?.bringSubviewToFront(self)' in wind
