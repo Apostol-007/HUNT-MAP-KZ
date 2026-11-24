@@ -250,10 +250,13 @@ struct HostingZonePack: Decodable, Identifiable {
             let target = folder.appendingPathComponent(pack.id + ".geojson")
             try await transfer(try remote("routing/" + pack.path), bytes: pack.bytes, hash: pack.sha256, destination: target)
             // A pack can contain only roads or only footpaths; either travel mode is valid.
-            let contents = try Data(contentsOf: target)
-            let walkable = (try? OfflineRouteGraph(geoJSON: contents, mode: .foot)) != nil
-            let drivable = (try? OfflineRouteGraph(geoJSON: contents, mode: .car)) != nil
-            guard walkable || drivable else { throw OfflineRouteGraph.RouteError.emptyNetwork }
+            let valid = try await Task.detached(priority: .utility) {
+                let contents = try Data(contentsOf: target, options: .mappedIfSafe)
+                let walkable = (try? OfflineRouteGraph(geoJSON: contents, mode: .foot)) != nil
+                let drivable = (try? OfflineRouteGraph(geoJSON: contents, mode: .car)) != nil
+                return walkable || drivable
+            }.value
+            guard valid else { throw OfflineRouteGraph.RouteError.emptyNetwork }
             installedRoutes.insert(pack.id)
             try persist(); progress = 1
             status = "Дорожная сеть установлена: \(pack.name)"
@@ -318,12 +321,17 @@ struct HostingZonePack: Decodable, Identifiable {
             let target = folder.appendingPathComponent("zones/" + pack.id + ".geojson")
             try await transfer(try remote("zones/" + pack.path), bytes: pack.bytes, hash: pack.sha256, destination: target)
             // Import only validated polygon geometries; never substitute routing roads as hunting grounds.
-            var imported: [GeoZone] = []
             let directory = folder.appendingPathComponent("zones")
-            for file in (try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil))
-                where file.pathExtension.lowercased() == "geojson" {
-                imported += try GeoJSONImport.load(file)
-            }
+            let imported = try await Task.detached(priority: .utility) {
+                var collected: [GeoZone] = []
+                for file in try FileManager.default.contentsOfDirectory(
+                    at: directory, includingPropertiesForKeys: nil
+                ) where file.pathExtension.lowercased() == "geojson" {
+                    try Task.checkCancellation()
+                    collected += try GeoJSONImport.load(file)
+                }
+                return collected
+            }.value
             model.setImportedZones(imported)
             installedZones.insert(pack.id)
             progress = 1

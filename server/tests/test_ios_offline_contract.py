@@ -323,3 +323,10 @@ def test_route_rerouting_uses_segment_distance_and_gps_hysteresis():
     assert 'GeoMath.segmentDistance(position,' in source
     assert 'offRouteFixes >= 3' in source
     assert 'GeoMath.segmentDistance(gps,' in recorded
+
+
+def test_offline_package_validation_is_detached_from_ui():
+    src = (IOS / "HostingOfflineDownloads.swift").read_text()
+    assert 'let valid = try await Task.detached(priority: .utility)' in src
+    assert 'let imported = try await Task.detached(priority: .utility)' in src
+    assert 'try Task.checkCancellation()' in src
