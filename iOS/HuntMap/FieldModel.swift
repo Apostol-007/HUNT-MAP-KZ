@@ -52,7 +52,7 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
     private let boundaryWorker = BoundaryWorker()
     private var boundaryTask: Task<Void, Never>?
     private var pendingBoundaryFix: GPSFix?
-    private var zoneRevision = 0
+    private(set) var zoneRevision = 0
     private var lastFix: CLLocation?
     private let trackJournal = TrackPointJournal()
     private var documentURL:URL {
