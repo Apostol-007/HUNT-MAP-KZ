@@ -20,7 +20,11 @@ targets:
     type: application
     platform: iOS
     sources:
-      - HuntMap
+      - path: HuntMap
+        excludes:
+          - HuntGrounds153.geojson
+      - path: HuntMap/HuntGrounds153.geojson
+        buildPhase: resources
     dependencies:
       - package: HuntCore
       - package: MapLibre
@@ -45,6 +49,7 @@ targets:
           - location
         MapTilerAPIKey: "$(MAPTILER_API_KEY)"
         HuntOfflineStyleURL: "$(HUNT_OFFLINE_STYLE_URL)"
+        NSFaceIDUsageDescription: "Подтверждение локального редактирования базы охотугодий"
         NSLocationWhenInUseUsageDescription: "Показать позицию и предупреждать о границах во время использования карты"
         NSLocationAlwaysAndWhenInUseUsageDescription: "Записывать маршрут и предупреждать о границах во время активной полевой сессии с заблокированным экраном"
         NSAppTransportSecurity:
@@ -53,8 +58,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: kz.huntmap.field
         GENERATE_INFOPLIST_FILE: NO
-        MARKETING_VERSION: 5.9.9
-        CURRENT_PROJECT_VERSION: 73
+        MARKETING_VERSION: 5.10.0
+        CURRENT_PROJECT_VERSION: 74
         SWIFT_VERSION: 5.0
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"

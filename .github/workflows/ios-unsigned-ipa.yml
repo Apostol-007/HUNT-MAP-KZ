@@ -24,6 +24,8 @@ jobs:
           swift-version: '6.0'
       - name: Test HuntCore
         run: swift test --package-path Core
+      - name: Validate bundled grounds
+        run: python3 scripts/verify_bundled_grounds.py iOS/HuntMap/HuntGrounds153.geojson
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -84,6 +86,8 @@ jobs:
           test -f "$APP/Info.plist" || { echo "Info.plist missing"; exit 1; }
           EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$APP/Info.plist")
           test -f "$APP/$EXECUTABLE" || { echo "App executable missing"; exit 1; }
+          test -f "$APP/HuntGrounds153.geojson" || { echo "Embedded grounds missing"; exit 1; }
+          python3 scripts/verify_bundled_grounds.py "$APP/HuntGrounds153.geojson"
           # Prevent a green IPA build when the library UI exists but PDF assets are missing.
           for document in wildlife-protection.pdf rules-civil-service-weapons.pdf approval-voucher-form-rules.pdf approval-hunting-rules.pdf; do
             if ! find "$APP" -type f -name "$document" | grep -q .; then

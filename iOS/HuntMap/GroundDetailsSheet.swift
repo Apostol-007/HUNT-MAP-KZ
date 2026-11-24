@@ -33,7 +33,8 @@ struct GroundsCatalogView: View {
             TextField("Поиск по названию", text: $search).textFieldStyle(.roundedBorder)
             Text(model.groundMonitorStatus).font(.caption).foregroundStyle(.green)
             if model.monitoredGroundID != nil { Button("Отключить контроль") { model.stopGroundMonitor() } }
-            Button("Импорт GeoJSON") { importing = true }
+            if model.zones.isEmpty { Text("Загрузка встроенного каталога…").font(.caption) }
+            Button("Импорт дополнительного GeoJSON") { importing = true }
             Button("Локальный администратор") { unlock() }
             if admin {
                 Button("Добавить угодья из GeoJSON") { importing = true }

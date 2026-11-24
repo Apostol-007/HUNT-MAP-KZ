@@ -69,8 +69,28 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         manager.desiredAccuracy=kCLLocationAccuracyBest
         manager.distanceFilter=5
         load()
-        // Do not silently inject example hunting boundaries in a real user's location.
+        loadBundledGrounds()
     }
+    private func loadBundledGrounds() {
+        let seedKey = "hunt.grounds.seed.153.v1"
+        guard !UserDefaults.standard.bool(forKey: seedKey) else { return }
+        guard let url = Bundle.main.url(forResource: "HuntGrounds153", withExtension: "geojson") else {
+            lastWarning = "В сборке отсутствует каталог угодий"
+            return
+        }
+        Task { [weak self] in
+            do {
+                let items = try await Task.detached(priority: .utility) { try GeoJSONImport.load(url) }.value
+                guard let self, items.count == 153 else { return }
+                self.setImportedZones(items)
+                UserDefaults.standard.set(true, forKey: seedKey)
+                self.lastWarning = "Загружены 153 контура покрытия; юридические границы не подтверждены"
+            } catch {
+                self?.lastWarning = "Ошибка загрузки встроенных угодий: " + error.localizedDescription
+            }
+        }
+    }
+
     func requestGPS() {
         if manager.authorizationStatus == .notDetermined { manager.requestWhenInUseAuthorization() }
         else if manager.authorizationStatus == .authorizedAlways || manager.authorizationStatus == .authorizedWhenInUse { manager.startUpdatingLocation() }

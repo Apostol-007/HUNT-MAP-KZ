@@ -1611,6 +1611,8 @@ struct MainView: View {
         VStack(alignment: .leading, spacing: 18) {
             ReferencePageHeader(title: "Ещё")
             VStack(spacing: 0) {
+                ReferenceMenuRow(symbol: "leaf.fill", title: "Охотугодья") { dataSection = .grounds; tab = .data }
+                Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "books.vertical", title: "Библиотека охотника") { showLegalLibrary = true }
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "waveform.path.ecg", title: "Диагностика") { showDiagnostics = true }
