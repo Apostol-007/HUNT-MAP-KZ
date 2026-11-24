@@ -1485,86 +1485,9 @@ struct MainView: View {
     }
 
     private var weatherContent: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            ReferencePageHeader(title: "Погода")
-            Label("По текущей GPS-позиции", systemImage: "mappin.circle.fill")
-                .font(.caption)
-                .foregroundStyle(HuntReference.muted)
-            HStack(alignment: .top, spacing: 14) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Image(systemName: "cloud.sun.fill")
-                        .font(.system(size: 36))
-                        .foregroundStyle(HuntReference.mint)
-                    Text(weather.forecast?.temperatureC.map { "\(Int($0.rounded()))°" } ?? "—°")
-                        .font(.system(size: 46, weight: .light, design: .rounded))
-                    Text(weather.forecast == nil ? "Нет прогноза" : "Прогноз Open-Meteo")
-                        .font(.caption)
-                        .foregroundStyle(HuntReference.muted)
-                }
-                Spacer()
-                VStack(alignment: .leading, spacing: 13) {
-                    weatherMetric("Ветер", value: weather.forecast?.current.windSpeedKmh.map { String(format: "%.1f км/ч", $0) } ?? "—", icon: "wind")
-                    weatherMetric("Давление", value: weather.forecast?.current.pressureMSLHpa.map { String(format: "%.0f гПа", $0) } ?? "—", icon: "barometer")
-                    weatherMetric("Осадки", value: weather.forecast?.current.precipitationMm.map { String(format: "%.1f мм", $0) } ?? "—", icon: "cloud.rain")
-                }
-            }
-            .padding(18)
-            .frame(maxWidth: .infinity)
-            .background(HuntReference.card, in: RoundedRectangle(cornerRadius: 22))
-
-            if let forecast = weather.forecast, !forecast.hourly.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 20) {
-                        ForEach(Array(forecast.hourly.prefix(8).enumerated()), id: \.offset) { _, item in
-                            VStack(spacing: 8) {
-                                Text(item.timestamp.formatted(date: .omitted, time: .shortened))
-                                    .font(.caption2).foregroundStyle(HuntReference.muted)
-                                Image(systemName: "clock")
-                                    .foregroundStyle(HuntReference.green)
-                                Text(item.precipitationProbabilityPercent.map { "\(Int($0))%" } ?? "—")
-                                    .font(.caption.bold())
-                            }
-                        }
-                    }
-                    .padding(14)
-                }
-                .background(HuntReference.card, in: RoundedRectangle(cornerRadius: 19))
-            } else {
-                Text("Почасовой прогноз появится после загрузки данных")
-                    .font(.caption).foregroundStyle(HuntReference.muted)
-                    .padding(15)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(HuntReference.card, in: RoundedRectangle(cornerRadius: 19))
-            }
-            VStack(spacing: 0) {
-                serviceAction("Прогноз по часам", icon: "calendar") { showWeather = true }
-                Divider().overlay(HuntReference.separator)
-                serviceAction("Карта ветра", icon: "wind") { weatherLayer = .wind; openWeatherMap() }
-                Divider().overlay(HuntReference.separator)
-                serviceAction("Карта осадков", icon: "drop") { weatherLayer = .precipitation; openWeatherMap() }
-                Divider().overlay(HuntReference.separator)
-                serviceAction("Карта давления", icon: "barometer") { weatherLayer = .pressure; openWeatherMap() }
-            }
-            .padding(.horizontal, 13)
-            .background(HuntReference.card, in: RoundedRectangle(cornerRadius: 21))
-            if let point = model.coordinate {
-                Button(weather.busy ? "Обновляется…" : "Обновить прогноз") {
-                    weather.refresh(latitude: point.latitude, longitude: point.longitude, strictOffline: false)
-                }
-                .font(.footnote.bold())
-                .foregroundStyle(HuntReference.green)
-                .disabled(weather.busy)
-            } else {
-                Text("Включи GPS, чтобы получить прогноз для своего местоположения")
-                    .font(.caption).foregroundStyle(HuntReference.muted)
-            }
-            Text(weather.message).font(.caption2).foregroundStyle(HuntReference.muted)
-        }
-        .onAppear {
-            if let point = model.coordinate {
-                weather.refresh(latitude: point.latitude, longitude: point.longitude, strictOffline: false)
-            }
-        }
+        AnimatedWeatherDashboard(service: weather, coordinate: model.coordinate,
+            onMap: { layer in weatherLayer = layer; openWeatherMap() },
+            onDetails: { showWeather = true })
     }
     private func weatherMetric(_ title: String, value: String, icon: String) -> some View {
         HStack(spacing: 9) {

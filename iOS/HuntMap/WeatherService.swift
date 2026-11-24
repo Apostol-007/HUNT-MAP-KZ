@@ -67,8 +67,8 @@ import CoreLocation
                     URLQueryItem(name: "timezone", value: "UTC"),
                     URLQueryItem(name: "forecast_days", value: "7"),
                     URLQueryItem(name: "wind_speed_unit", value: "kmh"),
-                    URLQueryItem(name: "current", value: "temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,pressure_msl,surface_pressure,precipitation"),
-                    URLQueryItem(name: "hourly", value: "wind_speed_10m,wind_direction_10m,wind_gusts_10m,pressure_msl,surface_pressure,precipitation,precipitation_probability")
+                    URLQueryItem(name: "current", value: "temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,pressure_msl,surface_pressure,precipitation,weather_code,is_day"),
+                    URLQueryItem(name: "hourly", value: "wind_speed_10m,wind_direction_10m,wind_gusts_10m,pressure_msl,surface_pressure,precipitation,precipitation_probability,temperature_2m,weather_code,is_day")
                 ]
                 guard let target = url.url else { throw URLError(.badURL) }
                 var request = URLRequest(url: target)

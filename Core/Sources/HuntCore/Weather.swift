@@ -11,6 +11,10 @@ public struct WeatherHour: Codable, Equatable, Sendable {
     public let precipitationMm: Double?
     public let precipitationProbabilityPercent: Double?
 
+    public var temperatureC: Double? = nil
+    public var weatherCode: Int? = nil
+    public var isDay: Int? = nil
+
     public var windDirectionToDegrees: Double? {
         windDirectionFromDegrees.map { WeatherMath.normalizeDirection($0 + 180) }
     }
@@ -63,6 +67,8 @@ public enum OpenMeteoDecoder {
         let pressure_msl: Double?
         let surface_pressure: Double?
         let precipitation: Double?
+        let weather_code: Int?
+        let is_day: Int?
     }
     private struct Hourly: Decodable {
         let time: [String]
@@ -73,6 +79,9 @@ public enum OpenMeteoDecoder {
         let surface_pressure: [Double?]
         let precipitation: [Double?]
         let precipitation_probability: [Double?]
+        let temperature_2m: [Double?]?
+        let weather_code: [Int?]?
+        let is_day: [Int?]?
     }
     private static func parseUTC(_ value: String) -> Date? {
         let parser = ISO8601DateFormatter()
@@ -92,6 +101,9 @@ public enum OpenMeteoDecoder {
                h.precipitation_probability.count].allSatisfy({ $0 == count }) else {
             throw WeatherDecodeError.inconsistentHourlyArrays
         }
+        for length in [h.temperature_2m?.count, h.weather_code?.count, h.is_day?.count].compactMap({ $0 }) {
+            guard length == count else { throw WeatherDecodeError.inconsistentHourlyArrays }
+        }
         guard let currentTime = parseUTC(payload.current.time) else { throw WeatherDecodeError.invalidResponse }
         var hours: [WeatherHour] = []
         for index in 0..<count {
@@ -103,7 +115,7 @@ public enum OpenMeteoDecoder {
                                      pressureMSLHpa: h.pressure_msl[index],
                                      surfacePressureHpa: h.surface_pressure[index],
                                      precipitationMm: h.precipitation[index],
-                                     precipitationProbabilityPercent: h.precipitation_probability[index]))
+                                     precipitationProbabilityPercent: h.precipitation_probability[index], temperatureC: h.temperature_2m?[index], weatherCode: h.weather_code?[index], isDay: h.is_day?[index]))
         }
         let current = WeatherHour(timestamp: currentTime,
                                   windSpeedKmh: payload.current.wind_speed_10m,
@@ -112,7 +124,7 @@ public enum OpenMeteoDecoder {
                                   pressureMSLHpa: payload.current.pressure_msl,
                                   surfacePressureHpa: payload.current.surface_pressure,
                                   precipitationMm: payload.current.precipitation,
-                                  precipitationProbabilityPercent: nil)
+                                  precipitationProbabilityPercent: nil, temperatureC: payload.current.temperature_2m, weatherCode: payload.current.weather_code, isDay: payload.current.is_day)
         return PointWeather(latitude: payload.latitude, longitude: payload.longitude,
                             retrievedAt: retrievedAt, source: "Open-Meteo Forecast API",
                             temperatureC: payload.current.temperature_2m,
