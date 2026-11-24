@@ -192,7 +192,7 @@ def test_wind_prefetches_on_launch_and_progressively_refines():
     ui = (IOS / "MainView.swift").read_text()
     wind = (IOS / "WeatherGridService.swift").read_text()
     assert 'weatherGrid.load(hourOffset: 0)' in ui
-    assert 'coarse.width = 6' in wind and 'coarse.height = 4' in wind
+    assert 'coarse.width = 3' in wind and 'coarse.height = 3' in wind
     assert 'self.fetchGrid(region: coarse' in wind
     assert 'self.fetchGrid(region: detailed' in wind
 
@@ -202,7 +202,9 @@ def test_weather_grid_hourly_query_has_no_conflicting_forecast_days():
     assert 'URLQueryItem(name: "start_hour", value: targetHour)' in source
     assert 'URLQueryItem(name: "end_hour", value: targetHour)' in source
     # Open-Meteo rejects forecast_days together with an explicit hour window (HTTP 400).
-    assert 'URLQueryItem(name: "forecast_days"' not in source
+    assert 'fallback.queryItems?.removeAll' in source
+    assert '$0.name == "start_hour" || $0.name == "end_hour"' in source
+    assert 'fallback.queryItems?.append(URLQueryItem(name: "forecast_days", value: "8"))' in source
     assert 'http.statusCode != 200' in source
 
 
@@ -210,7 +212,11 @@ def test_weather_uses_lightweight_overlay_without_maplibre_shape_flood():
     map_view = (IOS / "OfflineMapView.swift").read_text()
     overlay = (IOS / "WeatherFieldOverlay.swift").read_text()
     wind = (IOS / "WindParticlesOverlay.swift").read_text()
-    assert 'WeatherFieldOverlay(mapView: view)' in map_view
+    assert 'WeatherFieldOverlay(mapView: view, hostView: container)' in map_view
+    assert 'WindParticlesOverlay(mapView: view, hostView: container)' in map_view
+    assert 'container.addSubview(view)' in map_view
+    assert 'hostView.addSubview(self)' in overlay and 'hostView.addSubview(self)' in wind
+    assert 'mapView.addSubview(self)' not in overlay and 'mapView.addSubview(self)' not in wind
     assert 'fieldOverlay?.configure(grid: weatherGrid, layer: weatherLayer)' in map_view
     assert 'WeatherGeometry.shade(' not in map_view
     assert 'WeatherGeometry.windArrow(' not in map_view
