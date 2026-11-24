@@ -12,12 +12,10 @@ struct OfflineRoadLine: Sendable {
     @Published private(set) var revision = 0
     @Published private(set) var status = "Нет видимых дорог"
     private var task: Task<Void, Never>?
-    private var parser: Task<[OfflineRoadLine], Never>?
     private var key = ""
 
     func clear() {
         task?.cancel()
-        parser?.cancel()
         key = ""
         if !lines.isEmpty { lines = []; revision += 1 }
     }
@@ -29,26 +27,19 @@ struct OfflineRoadLine: Sendable {
         guard next != key else { return }
         key = next
         task?.cancel()
-        parser?.cancel()
         // Load the geographically closest file groups first on large regional catalogs.
         let sample = Array(files.sorted { a, b in
             // Catalog paths are opaque; keep stable alphabetical priority when no metadata is available.
             a.lastPathComponent < b.lastPathComponent
         }.prefix(80))
-        let previous = parser
-        let worker = Task.detached(priority: .utility) {
-            _ = await previous?.value
-            guard !Task.isCancelled else { return [OfflineRoadLine]() }
-            return Self.parse(sample, bounds: bounds)
-        }
-        parser = worker
-        task = Task { [weak self] in
-            let parsed = await worker.value
-            guard let self else { return }
+        task = Task {
+            let parsed = await Task.detached(priority: .utility) {
+                Self.parse(sample, bounds: bounds)
+            }.value
             guard !Task.isCancelled else { return }
-            self.lines = parsed
-            self.revision += 1
-            self.status = "Видимые дороги: \(parsed.count) линий, просмотрено \(sample.count) пакетов"
+            lines = parsed
+            revision += 1
+            status = "Видимые дороги: \(parsed.count) линий, просмотрено \(sample.count) пакетов"
         }
     }
 
@@ -56,7 +47,6 @@ struct OfflineRoadLine: Sendable {
         var lines: [OfflineRoadLine] = []
         var vertices = 0
         for file in files {
-            guard !Task.isCancelled else { return [] }
             guard lines.count < 1000 && vertices < 12000 else { break }
             guard let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize,
                   size > 0 && size < 30_000_000,
@@ -64,7 +54,6 @@ struct OfflineRoadLine: Sendable {
                   let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let features = root["features"] as? [[String: Any]] else { continue }
             for feature in features {
-                guard !Task.isCancelled else { return [] }
                 if lines.count >= 1000 || vertices >= 12000 { break }
                 guard let geo = feature["geometry"] as? [String: Any],
                       let type = geo["type"] as? String else { continue }

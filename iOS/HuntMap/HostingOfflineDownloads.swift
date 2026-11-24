@@ -79,47 +79,7 @@ struct HostingZonePack: Decodable, Identifiable {
         try? FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
         return path
     }
-    /// Last verified manifest receipt. A same-size file with a changed modification
-    /// date is rehashed; even unchanged packages are audited again after seven days.
-    private struct VerifiedReceipt: Codable {
-        let sha256: String
-        let size: Int64
-        let modifiedAt: TimeInterval
-        let validatedAt: TimeInterval
-    }
-    private var receipts: [String: VerifiedReceipt] = [:]
-    private var receiptsURL: URL { folder.appendingPathComponent("verified-receipts.json") }
-    private func validatedReceipt(_ file: URL, key: String, hash: String, size: Int64) -> Bool {
-        guard let receipt = receipts[key],
-              receipt.sha256 == hash.lowercased(), receipt.size == size,
-              Date().timeIntervalSince1970 - receipt.validatedAt < 7 * 24 * 3600,
-              let properties = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
-              let actualSize = properties.fileSize,
-              let modified = properties.contentModificationDate else { return false }
-        return Int64(actualSize) == size &&
-            abs(modified.timeIntervalSince1970 - receipt.modifiedAt) < 0.001
-    }
-    private func saveReceipt(_ file: URL, key: String, hash: String, size: Int64) {
-        guard let properties = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
-              let actualSize = properties.fileSize, Int64(actualSize) == size,
-              let modified = properties.contentModificationDate else { return }
-        receipts[key] = VerifiedReceipt(sha256: hash.lowercased(), size: size,
-            modifiedAt: modified.timeIntervalSince1970,
-            validatedAt: Date().timeIntervalSince1970)
-        persistReceipts()
-    }
-    private func persistReceipts() {
-        if let bytes = try? JSONEncoder().encode(receipts) {
-            try? bytes.write(to: receiptsURL, options: .atomic)
-        }
-    }
-    init() {
-        if let bytes = try? Data(contentsOf: receiptsURL),
-           let saved = try? JSONDecoder().decode([String: VerifiedReceipt].self, from: bytes) {
-            receipts = saved
-        }
-        restore()
-    }
+    init() { restore() }
 
     private func restore() {
         if let data = try? Data(contentsOf: folder.appendingPathComponent("maps-catalog.json")),
@@ -212,7 +172,7 @@ struct HostingZonePack: Decodable, Identifiable {
         let available = try? folder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage
         if let available, Int64(available) < bytes * 2 + 50_000_000 { throw HostingError.noSpace }
     }
-    nonisolated private static func digest(_ file: URL) throws -> String {
+    private func digest(_ file: URL) throws -> String {
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
         var hash = SHA256()
@@ -223,48 +183,17 @@ struct HostingZonePack: Decodable, Identifiable {
         }
         return hash.finalize().map { String(format: "%02x", $0) }.joined()
     }
-    private func digestAsync(_ file: URL) async throws -> String {
-        try await Task.detached(priority: .utility) {
-            try Self.digest(file)
-        }.value
-    }
-    func needsRouteUpdateAsync(_ pack: HostingRoutingPack) async -> Bool {
-        let file = folder.appendingPathComponent(pack.id + ".geojson")
-        guard FileManager.default.fileExists(atPath: file.path),
-              let size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize),
-              Int64(size) == pack.bytes else { return true }
-        if validatedReceipt(file, key: "route:" + pack.id, hash: pack.sha256, size: pack.bytes) { return false }
-        guard let found = try? await digestAsync(file) else { return true }
-        if found.lowercased() == pack.sha256.lowercased() {
-            saveReceipt(file, key: "route:" + pack.id, hash: pack.sha256, size: pack.bytes)
-            return false
-        }
-        return true
-    }
-    func needsZoneUpdateAsync(_ pack: HostingZonePack) async -> Bool {
-        let file = folder.appendingPathComponent("zones/" + pack.id + ".geojson")
-        guard FileManager.default.fileExists(atPath: file.path),
-              let size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize),
-              Int64(size) == pack.bytes else { return true }
-        if validatedReceipt(file, key: "zone:" + pack.id, hash: pack.sha256, size: pack.bytes) { return false }
-        guard let found = try? await digestAsync(file) else { return true }
-        if found.lowercased() == pack.sha256.lowercased() {
-            saveReceipt(file, key: "zone:" + pack.id, hash: pack.sha256, size: pack.bytes)
-            return false
-        }
-        return true
-    }
     private func transfer(_ url: URL, bytes: Int64, hash: String, destination: URL) async throws {
         guard bytes > 0, hash.range(of: "^[a-fA-F0-9]{64}$", options: .regularExpression) != nil else { throw HostingError.invalidCatalog }
         if FileManager.default.fileExists(atPath: destination.path),
            (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) == bytes,
-           (try? await digestAsync(destination).lowercased()) == hash.lowercased() { return }
+           (try? digest(destination).lowercased()) == hash.lowercased() { return }
         var request = URLRequest(url: url)
         request.timeoutInterval = 60
         let (temporary, response) = try await URLSession.shared.download(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200,
               (try? temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) == bytes,
-              try await digestAsync(temporary).lowercased() == hash.lowercased() else { throw HostingError.corrupt }
+              try digest(temporary).lowercased() == hash.lowercased() else { throw HostingError.corrupt }
         try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         let staged = destination.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".incoming")
         try FileManager.default.copyItem(at: temporary, to: staged)
@@ -275,22 +204,24 @@ struct HostingZonePack: Decodable, Identifiable {
             try FileManager.default.moveItem(at: staged, to: destination)
         }
     }
-    // The synchronous UI queries never hash multi-GB packages. The async
-    // verification path performs SHA-256 when the receipt is absent or expired.
     func needsRouteUpdate(_ pack: HostingRoutingPack) -> Bool {
-        !validatedReceipt(folder.appendingPathComponent(pack.id + ".geojson"),
-            key: "route:" + pack.id, hash: pack.sha256, size: pack.bytes)
+        let file = folder.appendingPathComponent(pack.id + ".geojson")
+        guard FileManager.default.fileExists(atPath: file.path),
+              let found = try? digest(file) else { return true }
+        return found.lowercased() != pack.sha256.lowercased()
     }
     func needsZoneUpdate(_ pack: HostingZonePack) -> Bool {
-        !validatedReceipt(folder.appendingPathComponent("zones/" + pack.id + ".geojson"),
-            key: "zone:" + pack.id, hash: pack.sha256, size: pack.bytes)
+        let file = folder.appendingPathComponent("zones/" + pack.id + ".geojson")
+        guard FileManager.default.fileExists(atPath: file.path),
+              let found = try? digest(file) else { return true }
+        return found.lowercased() != pack.sha256.lowercased()
     }
     func installRoute(_ pack: HostingRoutingPack) async {
         guard !busy else { return }; busy = true; progress = 0; activePack = pack.name
         defer { busy = false; activePack = "" }
         do {
             guard pack.id.range(of: "^[A-Za-z0-9_-]{1,100}$", options: .regularExpression) != nil else { throw HostingError.invalidPath }
-            if !(await needsRouteUpdateAsync(pack)) {
+            if !needsRouteUpdate(pack) {
                 installedRoutes.insert(pack.id)
                 status = "Дорожная сеть актуальна: \(pack.name)"; progress = 1; return
             }
@@ -298,15 +229,11 @@ struct HostingZonePack: Decodable, Identifiable {
             let target = folder.appendingPathComponent(pack.id + ".geojson")
             try await transfer(try remote("routing/" + pack.path), bytes: pack.bytes, hash: pack.sha256, destination: target)
             // A pack can contain only roads or only footpaths; either travel mode is valid.
-            let valid = try await Task.detached(priority: .utility) {
-                let contents = try Data(contentsOf: target, options: .mappedIfSafe)
-                let walkable = (try? OfflineRouteGraph(geoJSON: contents, mode: .foot)) != nil
-                let drivable = (try? OfflineRouteGraph(geoJSON: contents, mode: .car)) != nil
-                return walkable || drivable
-            }.value
-            guard valid else { throw OfflineRouteGraph.RouteError.emptyNetwork }
+            let contents = try Data(contentsOf: target)
+            let walkable = (try? OfflineRouteGraph(geoJSON: contents, mode: .foot)) != nil
+            let drivable = (try? OfflineRouteGraph(geoJSON: contents, mode: .car)) != nil
+            guard walkable || drivable else { throw OfflineRouteGraph.RouteError.emptyNetwork }
             installedRoutes.insert(pack.id)
-            saveReceipt(target, key: "route:" + pack.id, hash: pack.sha256, size: pack.bytes)
             try persist(); progress = 1
             status = "Дорожная сеть установлена: \(pack.name)"
         } catch {
@@ -348,7 +275,7 @@ struct HostingZonePack: Decodable, Identifiable {
                 progress = Double(downloaded) / Double(pack.bytes)
             }
             try output.synchronize()
-            guard try await digestAsync(temp).lowercased() == pack.sha256.lowercased() else { throw HostingError.corrupt }
+            guard try digest(temp).lowercased() == pack.sha256.lowercased() else { throw HostingError.corrupt }
             // Existing installer checks SQLite metadata and persists the map to its canonical location.
             await tiles.importLocal(temp)
             status = tiles.message
@@ -362,7 +289,7 @@ struct HostingZonePack: Decodable, Identifiable {
         defer { busy = false; activePack = "" }
         do {
             guard pack.id.range(of: "^[A-Za-z0-9_-]{1,100}$", options: .regularExpression) != nil else { throw HostingError.invalidPath }
-            if !(await needsZoneUpdateAsync(pack)) {
+            if !needsZoneUpdate(pack) {
                 installedZones.insert(pack.id)
                 status = "Границы актуальны: \(pack.name)"; progress = 1; return
             }
@@ -370,20 +297,14 @@ struct HostingZonePack: Decodable, Identifiable {
             let target = folder.appendingPathComponent("zones/" + pack.id + ".geojson")
             try await transfer(try remote("zones/" + pack.path), bytes: pack.bytes, hash: pack.sha256, destination: target)
             // Import only validated polygon geometries; never substitute routing roads as hunting grounds.
+            var imported: [GeoZone] = []
             let directory = folder.appendingPathComponent("zones")
-            let imported = try await Task.detached(priority: .utility) {
-                var collected: [GeoZone] = []
-                for file in try FileManager.default.contentsOfDirectory(
-                    at: directory, includingPropertiesForKeys: nil
-                ) where file.pathExtension.lowercased() == "geojson" {
-                    try Task.checkCancellation()
-                    collected += try GeoJSONImport.load(file)
-                }
-                return collected
-            }.value
+            for file in (try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil))
+                where file.pathExtension.lowercased() == "geojson" {
+                imported += try GeoJSONImport.load(file)
+            }
             model.setImportedZones(imported)
             installedZones.insert(pack.id)
-            saveReceipt(target, key: "zone:" + pack.id, hash: pack.sha256, size: pack.bytes)
             progress = 1
             status = "Зоны импортированы: \(imported.count). Юридический статус не подтверждён."
         } catch {
@@ -469,8 +390,6 @@ struct HostingZonePack: Decodable, Identifiable {
         do {
             try FileManager.default.removeItem(at: target)
             installedZones.remove(id)
-            receipts.removeValue(forKey: "zone:" + id)
-            persistReceipts()
             var imported: [GeoZone] = []
             let directory = folder.appendingPathComponent("zones")
             for file in (try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil))
@@ -484,8 +403,6 @@ struct HostingZonePack: Decodable, Identifiable {
     func removeRoute(_ id: String) {
         try? FileManager.default.removeItem(at: folder.appendingPathComponent(id + ".geojson"))
         installedRoutes.remove(id)
-        receipts.removeValue(forKey: "route:" + id)
-        persistReceipts()
         try? persist()
         status = "Дорожная сеть удалена"
     }
@@ -500,29 +417,24 @@ struct HostingZonePack: Decodable, Identifiable {
          .filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
-    /// Prepare the same bounded corridor graph away from UIKit. Both file reads
-    /// and GeoJSON parsing are expensive for multi-megabyte offline networks.
-    func graphAsync(start: GeoPoint, destination: GeoPoint,
-                    mode: OfflineRouteGraph.TravelMode = .foot) async throws -> OfflineRouteGraph {
+    /// Merge only installed packages intersecting the start-to-destination corridor.
+    /// A strict 200k-vertex limit prevents loading an entire nationwide graph into memory.
+    func graph(start: GeoPoint, destination: GeoPoint, mode: OfflineRouteGraph.TravelMode = .foot) throws -> OfflineRouteGraph {
         let margin = 0.03
         let west = min(start.longitude, destination.longitude) - margin
         let east = max(start.longitude, destination.longitude) + margin
         let south = min(start.latitude, destination.latitude) - margin
         let north = max(start.latitude, destination.latitude) + margin
-        let files = routes.filter { pack in
+        let matching = routes.filter { pack in
             guard installedRoutes.contains(pack.id), pack.bounds.count == 4 else { return false }
             return pack.bounds[0] <= east && pack.bounds[2] >= west &&
                    pack.bounds[1] <= north && pack.bounds[3] >= south
-        }.map { folder.appendingPathComponent($0.id + ".geojson") }
-        guard !files.isEmpty else { throw HostingError.noRoute }
-        return try await Task.detached(priority: .userInitiated) {
-            var parts: [Data] = []
-            for file in files {
-                try Task.checkCancellation()
-                parts.append(try Data(contentsOf: file, options: .mappedIfSafe))
-            }
-            return try OfflineRouteGraph(geoJSONParts: parts, mode: mode)
-        }.value
+        }
+        guard !matching.isEmpty else { throw HostingError.noRoute }
+        let parts = try matching.map { pack in
+            try Data(contentsOf: folder.appendingPathComponent(pack.id + ".geojson"))
+        }
+        return try OfflineRouteGraph(geoJSONParts: parts, mode: mode)
     }
 }
 

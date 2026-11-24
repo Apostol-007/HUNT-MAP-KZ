@@ -1,5 +1,4 @@
 import SwiftUI
-import UIKit
 import HuntCore
 import UniformTypeIdentifiers
 
@@ -30,7 +29,6 @@ struct MainView: View {
     private var hasMapTilerKey: Bool { MapTilerConfiguration.isConfigured }
 
     @State private var tab: Tab = .home
-    @State private var mapOpened = false
     @State private var dataSection: DataSection = .routes
     @State private var serviceSection: ServiceSection = .weather
     @State private var weatherLayer: WeatherMapLayer = .none
@@ -41,7 +39,6 @@ struct MainView: View {
     @State private var showAbout = false
     @State private var showLegalLibrary = false
     @State private var showDiagnostics = false
-    @State private var backupFile: URL?
     @State private var showGBIF = false
     @State private var showSearch = false
     @State private var searchText = ""
@@ -71,7 +68,6 @@ struct MainView: View {
     @State private var routeTitle = "Выбранная точка"
     @State private var routeGuidance = false
     @State private var rerouteTime = Date.distantPast
-    @State private var offRouteFixes = 0
     @State private var navigationPath: [GeoPoint] = []
     @State private var navigationKind = ""
     @State private var recordedRoute: RecordedTrackFollow?
@@ -87,10 +83,6 @@ struct MainView: View {
     @State private var valhallaManeuvers: [ValhallaManeuver] = []
     @State private var nextTurnText = ""
     @State private var nextTurnDistance = 0.0
-    @AppStorage("hunt.voiceGuidance") private var voiceGuidance = false
-    @StateObject private var voice = RouteVoice()
-    @State private var nextTurnTask: Task<Void, Never>?
-    @State private var nextTurnWorker: Task<(Int, Double), Never>?
     @State private var routingError: String?
     @State private var importingRoutingNetwork = false
     @State private var routeGraph: OfflineRouteGraph?
@@ -113,56 +105,33 @@ struct MainView: View {
     private enum DataSection: String, CaseIterable { case routes = "Маршруты", markers = "Метки" }
     private enum ServiceSection: String, CaseIterable { case weather = "Погода", wildlife = "Животные" }
 
-    var body: some View { serviceSheetsView }
-
-    private var rootLayout: some View {
+    var body: some View {
         ZStack {
-            // MapLibre, PMTiles and style parsing can consume substantial memory.
-            // Never construct the native map behind the Home screen on cold launch.
-            // Instantiate only when the map tab is actually selected.
-            if mapOpened || tab == .map {
-                mapScreen
-                    .opacity(tab == .map ? 1 : 0)
-                    .allowsHitTesting(tab == .map)
-                    .accessibilityHidden(tab != .map)
-            }
-            if tab != .map {
-                themedScreen
-            }
+            // Keep the expensive MapLibre instance alive when switching tabs.
+            // Only controls disappear; the map remains genuinely full-screen.
+            mapScreen
+                .opacity(tab == .map ? 1 : 0)
+                .allowsHitTesting(tab == .map)
+            if tab != .map { themedScreen }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .bottom) { navigation }
-        .overlay(alignment: .top) {
-            if startupSync.active {
-                StartupSyncBanner(sync: startupSync)
-                    .padding(.top, 105)
+        .overlay {
+            if startupSync.presented {
+                StartupSyncScreen(sync: startupSync, hosting: hosting, protomaps: protomaps)
                     .transition(.opacity)
-                    .allowsHitTesting(false)
             }
         }
         .background(HuntReference.background.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .background(ShakeDetector().frame(width: 1, height: 1))
-    }
-
-    private var lifecycleView: some View {
-        rootLayout
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
         .onAppear {
-            LaunchHealth.started()
-            // Do not parse the potentially huge routing/network.geojson on the
-            // main thread at launch. Offline routing loads it on first request.
+            loadRoutingNetwork()
             startupSync.begin(hosting: hosting, tiles: maps, protomaps: protomaps,
                               model: model, valhalla: valhalla)
-            // Weather is not critical to app launch: defer it until after the
-            // first screen is usable and an actual map view has a viewport.
-            Task {
-                try? await Task.sleep(for: .seconds(4))
-                guard !Task.isCancelled else { return }
-                LaunchHealth.firstScreenReady()
-                refreshWeatherOnLaunch()
-                if weatherLayer != .none { weatherGrid.load(hourOffset: 0) }
-            }
+            refreshWeatherOnLaunch()
+            weatherGrid.load(hourOffset: 0)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { refreshWeatherOnLaunch() }
@@ -174,17 +143,7 @@ struct MainView: View {
             if value != .none { weatherGrid.load(hourOffset: weatherGrid.chosenOffset) }
         }
         .onDisappear { playbackTask?.cancel() }
-        .onChange(of: tab) { _, value in
-            if value == .map { mapOpened = true }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
-            if tab != .map { mapOpened = false }
-        }
         .onChange(of: online) { _, enabled in if enabled { offlineRoads.clear() } }
-    }
-
-    private var gpsView: some View {
-        lifecycleView
         .onChange(of: model.coordinate) { _, newPoint in
             if let point = newPoint {
                 weather.updateIfNeeded(latitude: point.latitude, longitude: point.longitude)
@@ -200,15 +159,10 @@ struct MainView: View {
                     return
                 }
                 refreshNextTurn(at: position)
-                if navigationPath.count >= 2 {
-                    // Stay on long road segments: distance to vertices alone can
-                    // incorrectly trigger rerouting between sparse map nodes.
-                    let deviation = GeoMath.distanceToPolyline(position, navigationPath)
-                    let threshold = max(150.0, (model.accuracy ?? 20) * 3)
-                    offRouteFixes = deviation > threshold ? min(offRouteFixes + 1, 3) : 0
-                    if offRouteFixes >= 3 && Date().timeIntervalSince(rerouteTime) > 45 {
+                if navigationPath.count >= 2, Date().timeIntervalSince(rerouteTime) > 45 {
+                    let distance = navigationPath.map { GeoMath.meters(position, $0) }.min() ?? 0
+                    if distance > 150 {
                         rerouteTime = Date()
-                        offRouteFixes = 0
                         planRoute(to: destination, title: routeTitle, markerID: navigationTargetID)
                     }
                 }
@@ -226,10 +180,6 @@ struct MainView: View {
                 }
             }
         }
-    }
-
-    private var importView: some View {
-        gpsView
         .fileImporter(isPresented: $importingValhallaTiles,
                       allowedContentTypes: [UTType(filenameExtension: "tar") ?? .data],
                       allowsMultipleSelection: false) { result in
@@ -256,10 +206,6 @@ struct MainView: View {
         .alert("Маршрутизация", isPresented: Binding(get: { routingError != nil }, set: { if !$0 { routingError = nil } })) {
             Button("Понятно") { routingError = nil }
         } message: { Text(routingError ?? "") }
-    }
-
-    private var mapDialogsView: some View {
-        importView
         .sheet(isPresented: $showLayers) { layerSheet }
         .sheet(isPresented: $showSearch) { mapSearchSheet }
         .sheet(item: $selectedMapMarker) { selection in
@@ -309,10 +255,6 @@ struct MainView: View {
                 Text(String(format: "Широта %.6f, долгота %.6f", point.latitude, point.longitude))
             }
         }
-    }
-
-    private var markerDialogsView: some View {
-        mapDialogsView
         .sheet(item: $creatingMapMarker) { marker in
             MarkerEditor(marker: marker, isNew: true,
                          onSave: { changed in
@@ -344,10 +286,6 @@ struct MainView: View {
             }
             Button("Отмена", role: .cancel) { trackToDelete = nil }
         }
-    }
-
-    private var serviceSheetsView: some View {
-        markerDialogsView
         .sheet(isPresented: $showWeather) {
             WeatherPanel(service: weather, coordinate: model.coordinate, online: online)
                 .presentationDetents([.medium, .large])
@@ -534,7 +472,7 @@ struct MainView: View {
                            protomapsOnlineStyleURL: protomaps.onlineStyleURL,
                            protomapsOfflineStyleURL: protomaps.offlineStyleURL,
                            protomapsHybridStyleURL: protomaps.hybridOfflineStyleURL,
-                           online: online, active: tab == .map, zonesRevision: model.zoneRevision, selectedZone: $zone,
+                           online: online, selectedZone: $zone,
                            weatherGrid: tab == .map && weatherLayer != .none ? weatherGrid.grid : nil,
                            weatherLayer: tab == .map ? weatherLayer : .none,
                            centerRequest: centerRequest,
@@ -568,7 +506,6 @@ struct MainView: View {
                                else if selectedGridCells.count < 100 { selectedGridCells.insert(id) }
                            },
                            onViewportChanged: { bounds in
-                               guard tab == .map else { return }
                                weatherGrid.updateViewport(bounds, active: weatherLayer != .none)
                                if !online {
                                    offlineRoads.load(bounds: bounds, files: hosting.installedRoadFiles(in: bounds))
@@ -614,10 +551,7 @@ struct MainView: View {
                         circleMapButton(gridMode ? "square.grid.3x3.fill" : "square.grid.3x3", label: "Выбор сетки") {
                             gridMode.toggle()
                         }
-                        circleMapButton("cloud.sun.fill", label: "Погода") {
-                                    if weatherLayer == .none { weatherLayer = .wind }
-                                    showWeatherLayers = true
-                                }
+                        circleMapButton("cloud.sun.fill", label: "Погода") { showWeatherLayers = true }
                         circleMapButton("location.fill", label: "Моё местоположение") {
                             mapFocus = nil
                             model.requestGPS()
@@ -676,39 +610,7 @@ struct MainView: View {
                             .padding(10)
                             .background(HuntReference.card.opacity(0.94), in: Capsule())
                     }
-                    .padding(.bottom, 4)
-                    if weatherGrid.grid == nil {
-                        HStack(spacing: 7) {
-                            if weatherGrid.loading { ProgressView().tint(.white) }
-                            Image(systemName: "cloud.slash").foregroundStyle(.orange)
-                            Text(weatherGrid.status)
-                                .lineLimit(2).font(.caption2)
-                        }
-                        .foregroundStyle(.white)
-                        .padding(9)
-                        .background(HuntReference.card.opacity(0.96), in: RoundedRectangle(cornerRadius: 10))
-                        .padding(.horizontal, 12)
-                    } else {
-                        if weatherLayer == .precipitation, let active = weatherGrid.grid {
-                            let knownRainfall = active.points.compactMap(\.precipitation)
-                            if knownRainfall.isEmpty {
-                                Label("Нет данных об осадках для выбранной области",
-                                      systemImage: "cloud.slash")
-                                    .font(.caption2).foregroundStyle(.orange)
-                            } else if knownRainfall.allSatisfy({ $0 < 0.1 }) {
-                                Label("Осадков не ожидается · 0 мм/ч",
-                                      systemImage: "sun.max")
-                                    .font(.caption2).foregroundStyle(.white)
-                            }
-                        }
-                        Text("Прогноз загружен · \(weatherLayer.rawValue)")
-                            .font(.caption2.bold())
-                            .foregroundStyle(.white)
-                            .padding(7)
-                            .background(HuntReference.card.opacity(0.86), in: Capsule())
-                            .padding(.horizontal, 12)
-                    }
-                    Spacer().frame(height: 3)
+                    .padding(.bottom, 8)
                 }
                 if recordedRoute != nil {
                     recordedTrackPanel
@@ -809,9 +711,6 @@ struct MainView: View {
         planRoute(to: marker.coordinate, title: marker.title, markerID: id)
     }
     private func planRoute(to destination: GeoPoint, title: String, markerID: UUID? = nil) {
-        nextTurnTask?.cancel()
-        nextTurnWorker?.cancel()
-        voice.stop()
         if recordedRoute != nil { stopRecordedTrack() }
         if !routeGuidance { navigationPath = [] }
         routeDestination = destination
@@ -859,85 +758,51 @@ struct MainView: View {
                                       mode: OfflineRouteGraph.TravelMode, valhallaError: String? = nil) {
         valhallaManeuvers = []
         nextTurnText = ""
-        let requestID = routeRequestID ?? UUID()
-        routeRequestID = requestID
-        navigationKind = "Подготовка локальной дорожной сети…"
-        let fallbackFile = routingNetworkURL
-        Task {
-            do {
-                let graph: OfflineRouteGraph
-                if let downloaded = try? await hosting.graphAsync(start: current, destination: destination, mode: mode) {
-                    graph = downloaded
-                } else {
-                    graph = try await Task.detached(priority: .userInitiated) {
-                        let bytes = try Data(contentsOf: fallbackFile, options: .mappedIfSafe)
-                        return try OfflineRouteGraph(geoJSON: bytes, mode: mode)
-                    }.value
-                }
-                let route = try await Task.detached(priority: .userInitiated) {
-                    try graph.path(from: current, to: destination)
-                }.value
-                guard routeRequestID == requestID, routeDestination == destination else { return }
-                guard route.count >= 2 else { throw OfflineRouteGraph.RouteError.disconnected }
-                navigationPath = route
-                navigationKind = mode == .foot ? "Локальный граф · пешком" : "Локальный граф · автомобиль"
-                routingError = nil
-            } catch {
-                guard routeRequestID == requestID, routeDestination == destination else { return }
-                navigationPath = []
-                navigationKind = "Маршрут недоступен"
-                AppDiagnosticLog.shared.recordError(subsystem: "Навигация",
-                    operation: "Резервный локальный граф, \(mode == .foot ? "пешком" : "авто")",
-                    error: error, usedCache: routeGraph != nil || !hosting.installedRoutes.isEmpty)
-                routingError = (valhallaError.map { "Valhalla: \($0). " } ?? "") + error.localizedDescription
+        do {
+            let graph: OfflineRouteGraph
+            if let downloaded = try? hosting.graph(start: current, destination: destination, mode: mode) {
+                graph = downloaded
+            } else if let bytes = try? Data(contentsOf: routingNetworkURL) {
+                graph = try OfflineRouteGraph(geoJSON: bytes, mode: mode)
+            } else {
+                graph = try hosting.graph(start: current, destination: destination, mode: mode)
             }
+            let route = try graph.path(from: current, to: destination)
+            guard route.count >= 2 else { throw OfflineRouteGraph.RouteError.disconnected }
+            navigationPath = route
+            navigationKind = mode == .foot ? "Локальный граф · пешком" : "Локальный граф · автомобиль"
+            routingError = nil
+        } catch {
+            navigationPath = []
+            navigationKind = "Маршрут недоступен"
+            AppDiagnosticLog.shared.recordError(subsystem: "Навигация",
+                operation: "Резервный локальный граф, \(mode == .foot ? "пешком" : "авто")",
+                error: error, usedCache: routeGraph != nil || !hosting.installedRoutes.isEmpty)
+            routingError = (valhallaError.map { "Valhalla: \($0). " } ?? "") + error.localizedDescription
         }
     }
 
     private func refreshNextTurn(at location: GeoPoint) {
-        let path = navigationPath
-        let maneuvers = valhallaManeuvers
-        guard path.count >= 2, !maneuvers.isEmpty else { return }
-        nextTurnTask?.cancel()
-        nextTurnWorker?.cancel()
-        let previous = nextTurnWorker
-        let indices = maneuvers.map(\.beginIndex)
-        let worker = Task.detached(priority: .userInitiated) {
-            _ = await previous?.value
-            var closestIndex = 0
-            var closestMeters = Double.infinity
-            for (index, point) in path.enumerated() {
-                if Task.isCancelled { return (-1, 0.0) }
-                let distance = GeoMath.meters(location, point)
-                if distance < closestMeters { closestMeters = distance; closestIndex = index }
-            }
-            let maneuverIndex = indices.firstIndex(where: { $0 > closestIndex }) ?? indices.count - 1
-            let end = min(path.count - 1, max(0, indices[maneuverIndex]))
-            var distance = 0.0
-            if closestIndex < end {
-                for index in (closestIndex + 1)...end {
-                    distance += GeoMath.meters(path[index - 1], path[index])
-                }
-            }
-            return (maneuverIndex, distance)
+        guard navigationPath.count >= 2, !valhallaManeuvers.isEmpty else { return }
+        // Progress is projected onto the received road geometry, not a straight-line route.
+        var closestIndex = 0
+        var closestMeters = Double.infinity
+        for (index, point) in navigationPath.enumerated() {
+            let d = GeoMath.meters(location, point)
+            if d < closestMeters { closestMeters = d; closestIndex = index }
         }
-        nextTurnWorker = worker
-        let request = routeRequestID
-        nextTurnTask = Task { @MainActor in
-            let (index, distance) = await worker.value
-            guard !Task.isCancelled, request == routeRequestID, maneuvers.indices.contains(index) else { return }
-            nextTurnText = maneuvers[index].instruction
-            nextTurnDistance = distance
-            if routeGuidance && voiceGuidance {
-                voice.announce(instruction: nextTurnText, distance: distance, maneuver: index)
+        let upcoming = valhallaManeuvers.first(where: { $0.beginIndex > closestIndex }) ??
+            valhallaManeuvers.last!
+        nextTurnText = upcoming.instruction
+        nextTurnDistance = 0
+        if closestIndex < upcoming.beginIndex {
+            for index in (closestIndex + 1)...upcoming.beginIndex {
+                nextTurnDistance += GeoMath.meters(navigationPath[index - 1], navigationPath[index])
             }
         }
     }
 
     private func stopNavigation() {
-        nextTurnTask?.cancel()
-        nextTurnWorker?.cancel()
-        voice.stop()
         valhallaManeuvers = []
         nextTurnText = ""
         routeRequestID = nil
@@ -1122,8 +987,6 @@ struct MainView: View {
                         .font(.caption.monospacedDigit())
                 }
                 if routeGuidance {
-                    Toggle("Голосовые подсказки", isOn: $voiceGuidance).font(.caption)
-                        .onChange(of: voiceGuidance) { _, enabled in if !enabled { voice.stop() } }
                     Label("Ведение включено", systemImage: "location.north.line.fill")
                         .font(.caption.bold()).foregroundStyle(HuntReference.green)
                     if !nextTurnText.isEmpty {
@@ -1716,20 +1579,6 @@ struct MainView: View {
                 ReferenceMenuRow(symbol: "books.vertical", title: "Библиотека охотника") { showLegalLibrary = true }
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "waveform.path.ecg", title: "Диагностика") { showDiagnostics = true }
-                Divider().overlay(HuntReference.separator)
-                ReferenceMenuRow(symbol: "externaldrive", title: "Создать резервную копию") {
-                    backupFile = model.exportBackup()
-                }
-                if let backupFile {
-                    ShareLink(item: backupFile) {
-                        Label("Сохранить копию маршрутов, меток и границ",
-                              systemImage: "square.and.arrow.up")
-                            .font(.subheadline.bold())
-                            .foregroundStyle(HuntReference.green)
-                            .padding(14)
-                    }
-                    .accessibilityIdentifier("export_complete_backup")
-                }
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "gearshape", title: "Настройки") { showLayers = true }
                 Divider().overlay(HuntReference.separator)

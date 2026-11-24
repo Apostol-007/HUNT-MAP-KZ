@@ -85,7 +85,6 @@ struct ForecastGrid: Codable {
         return date < Date().addingTimeInterval(-3600)
     }
     private var task: Task<Void, Never>?
-    private var requestGeneration = UUID()
     private var viewportTask: Task<Void, Never>?
     private var visibleBounds: [Double] = [46, 40, 88, 56]
     private var lastRequestedKey = ""
@@ -113,34 +112,12 @@ struct ForecastGrid: Codable {
         var south: Double
         var east: Double
         var north: Double
-        var width: Int = 6
-        var height: Int = 4
+        var width: Int = 8
+        var height: Int = 6
         var bbox: ForecastGrid.Bounds { .init(west: west, south: south, east: east, north: north) }
         var key: String { "\(Int(west * 100))_\(Int(south * 100))_\(Int(east * 100))_\(Int(north * 100))_\(width)x\(height)" }
     }
-    init() {
-        try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
-        let directory = cacheDirectory
-        // Cache retention is disk housekeeping, not launch-critical work.
-        Task.detached(priority: .background) { Self.pruneCache(directory) }
-    }
-
-    nonisolated private static func pruneCache(_ directory: URL) {
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: directory, includingPropertiesForKeys: [.contentModificationDateKey]) else { return }
-        let candidates = files.filter {
-            $0.pathExtension == "json" && $0.lastPathComponent.hasPrefix("v2_")
-        }.sorted {
-            let left = (try? $0.resourceValues(forKeys: [.contentModificationDateKey]))
-                .flatMap(\.contentModificationDate) ?? .distantPast
-            let right = (try? $1.resourceValues(forKeys: [.contentModificationDateKey]))
-                .flatMap(\.contentModificationDate) ?? .distantPast
-            return left > right
-        }
-        for file in candidates.dropFirst(256) {
-            try? FileManager.default.removeItem(at: file)
-        }
-    }
+    init() { try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true) }
 
     private func regionForViewport() -> Region {
         // Entire Kazakhstan in overview zoom. Intermediate/close zooms use the actual camera
@@ -176,32 +153,8 @@ struct ForecastGrid: Codable {
               abs(time.timeIntervalSince(date)) < 60 else { return nil }
         return value
     }
-    /// Retain the latest successfully saved forecast when the requested hour is not cached.
-    /// A stale forecast is explicitly labelled; it is never presented as current weather.
-    private func latestCachedGrid(region: Region) -> ForecastGrid? {
-        let prefix = "v2_\(region.key)_"
-        guard let files = try? FileManager.default.contentsOfDirectory(
-            at: cacheDirectory, includingPropertiesForKeys: nil) else { return nil }
-        var latest: (Date, ForecastGrid)?
-        // Never decode every historic hourly grid on the main actor.
-        // Filenames end in an epoch-hour suffix, so descending order picks
-        // the newest cached forecast with a bounded number of file reads.
-        let recentFiles = files.filter {
-            $0.lastPathComponent.hasPrefix(prefix) && $0.pathExtension == "json"
-        }.sorted { $0.lastPathComponent > $1.lastPathComponent }.prefix(8)
-        for file in recentFiles {
-            guard let data = try? Data(contentsOf: file),
-                  let value = try? JSONDecoder().decode(ForecastGrid.self, from: data),
-                  value.validated(), let date = value.forecastDate else { continue }
-            if latest == nil || date > latest!.0 { latest = (date, value) }
-        }
-        return latest?.1
-    }
     func stop() {
-        // No completion from a superseded request may change a newer state.
-        requestGeneration = UUID()
         task?.cancel()
-        task = nil
         loading = false
     }
     func clear() {
@@ -225,7 +178,7 @@ struct ForecastGrid: Codable {
     func load(latitude: Double = 48, longitude: Double = 70, hourOffset: Int, allowNetwork: Bool = true) {
         load(hourOffset: hourOffset, allowNetwork: allowNetwork)
     }
-    /// Starts with a 3x3 request, then refines to 6x4 asynchronously.
+    /// Starts with one lightweight request (6x4), then refines to 12x8 asynchronously.
     /// A forecast is model data, not real-time sensor measurements.
     private func fetchGrid(region: Region, at date: Date) async throws -> ForecastGrid {
         var points: [(Double, Double)] = []
@@ -262,32 +215,9 @@ struct ForecastGrid: Codable {
                     guard let endpoint = url.url else { throw URLError(.badURL) }
                     var request = URLRequest(url: endpoint)
                     request.timeoutInterval = 16
-                    var (data, response) = try await URLSession.shared.data(for: request)
-                    guard var http = response as? HTTPURLResponse else {
+                    let (data, response) = try await URLSession.shared.data(for: request)
+                    guard let http = response as? HTTPURLResponse else {
                         throw URLError(.badServerResponse)
-                    }
-                    if http.statusCode == 400 {
-                        // Some provider versions reject explicit start_hour/end_hour.
-                        // Fall back to the full UTC forecast, but never mix the two
-                        // mutually exclusive ways of choosing a time range.
-                        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-                        let reason = (json?["reason"] as? String ?? "").lowercased()
-                        if reason.contains("start_hour") || reason.contains("end_hour") ||
-                           reason.contains("forecast_days") {
-                            var fallback = url
-                            fallback.queryItems?.removeAll {
-                                $0.name == "start_hour" || $0.name == "end_hour"
-                            }
-                            fallback.queryItems?.append(URLQueryItem(name: "forecast_days", value: "8"))
-                            guard let fallbackURL = fallback.url else { throw URLError(.badURL) }
-                            var retry = URLRequest(url: fallbackURL)
-                            retry.timeoutInterval = 20
-                            (data, response) = try await URLSession.shared.data(for: retry)
-                            guard let fallbackHTTP = response as? HTTPURLResponse else {
-                                throw URLError(.badServerResponse)
-                            }
-                            http = fallbackHTTP
-                        }
                     }
                     if http.statusCode != 200 {
                         await AppDiagnosticLog.shared.recordHTTP(
@@ -298,7 +228,7 @@ struct ForecastGrid: Codable {
                         let reason = String(((json?["reason"] as? String) ?? "Ответ провайдера отклонён").prefix(180))
                         throw ProviderFailure(code: http.statusCode, reason: reason)
                     }
-                    guard data.count < 2_000_000 else {
+                    guard data.count < 500_000 else {
                         throw URLError(.dataLengthExceedsMaximum)
                     }
                     let result = try JSONDecoder().decode([OpenMeteoGridPoint].self, from: data)
@@ -337,8 +267,8 @@ struct ForecastGrid: Codable {
             .addingTimeInterval(TimeInterval(hourOffset * 3600))
         let detailed = regionForViewport()
         var coarse = detailed
-        coarse.width = 3
-        coarse.height = 3
+        coarse.width = 6
+        coarse.height = 4
         let key = detailed.key + ":" + String(Int(date.timeIntervalSince1970 / 3600))
         if loading && lastRequestedKey == key { return }
         // Avoid hammering the provider on every SwiftUI redraw after a temporary error.
@@ -346,7 +276,6 @@ struct ForecastGrid: Codable {
         if !loading && lastRequestedKey == key && !cached &&
            Date().timeIntervalSince(lastSuccessfulRefresh) < 900 { return }
         stop()
-        let generation = requestGeneration
         lastRequestedKey = key
         if let detailedCache = cachedGrid(region: detailed, date: date) {
             grid = detailedCache
@@ -365,10 +294,6 @@ struct ForecastGrid: Codable {
             // Show the overlapping previous region while new viewport data arrives.
             cached = true
             status = "Предыдущий участок виден · обновляем новую область"
-        } else if let saved = latestCachedGrid(region: detailed) ?? latestCachedGrid(region: coarse) {
-            grid = saved
-            cached = true
-            status = "Сохранённый прогноз за \(saved.forecastTimeUTC) · обновляем"
         } else {
             grid = nil
             cached = false
@@ -377,25 +302,22 @@ struct ForecastGrid: Codable {
             status = cached ? "Офлайн · сохранённый прогноз" : "Нет прогноза для этого района и часа"
             return
         }
-        loading = true
         task = Task { [weak self] in
-            guard let self, self.requestGeneration == generation, !Task.isCancelled else { return }
-            defer {
-                if self.requestGeneration == generation { self.loading = false }
-            }
+            guard let self else { return }
+            self.loading = true
+            defer { self.loading = false }
             do {
-                // Replace a stale fallback immediately with the correct target hour.
-                let currentHourAvailable = self.grid?.forecastDate.map { abs($0.timeIntervalSince(date)) < 60 } ?? false
-                if !currentHourAvailable {
+                // Show a low-cost grid first, then refine without blanking the map.
+                if self.grid == nil {
                     let value = try await self.fetchGrid(region: coarse, at: date)
-                    guard !Task.isCancelled, self.lastRequestedKey == key, self.requestGeneration == generation else { return }
+                    guard !Task.isCancelled, self.lastRequestedKey == key else { return }
                     self.grid = value
                     self.cached = false
                     self.status = "Ветер отображается · уточняем детализацию…"
                     try? JSONEncoder().encode(value).write(to: self.cachePath(region: coarse, date: date), options: .atomic)
                 }
                 let value = try await self.fetchGrid(region: detailed, at: date)
-                guard !Task.isCancelled, self.lastRequestedKey == key, self.requestGeneration == generation else { return }
+                guard !Task.isCancelled, self.lastRequestedKey == key else { return }
                 self.grid = value
                 self.cached = false
                 self.lastSuccessfulRefresh = Date()
@@ -409,7 +331,7 @@ struct ForecastGrid: Codable {
                 self.status = "Прогноз обновлён · Open-Meteo · \(value.forecastTimeUTC)"
                 try? JSONEncoder().encode(value).write(to: self.cachePath(region: detailed, date: date), options: .atomic)
             } catch {
-                guard !Task.isCancelled, self.lastRequestedKey == key, self.requestGeneration == generation else { return }
+                guard !Task.isCancelled, self.lastRequestedKey == key else { return }
                 self.cached = self.grid != nil
                 self.lastFailedKey = key
                 self.lastFailedAt = Date()

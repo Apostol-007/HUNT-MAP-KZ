@@ -58,22 +58,3 @@ public final class BoundaryEngine {
         return true
     }
 }
-
-/// Bounded FIFO for GPS processing. On overload, the caller must reset its
-/// crossing state: fixes separated by a dropped interval are not consecutive.
-public struct BoundaryFixQueue: Sendable {
-    private var fixes: [GPSFix] = []
-    private let capacity: Int
-    public init(capacity: Int = 128) { self.capacity = max(1, capacity) }
-    @discardableResult public mutating func append(_ fix: GPSFix) -> Bool {
-        let overflow = fixes.count >= capacity
-        if overflow { fixes.removeAll(keepingCapacity: true) }
-        fixes.append(fix)
-        return overflow
-    }
-    public mutating func popFirst() -> GPSFix? {
-        guard !fixes.isEmpty else { return nil }
-        return fixes.removeFirst()
-    }
-    public mutating func removeAll() { fixes.removeAll(keepingCapacity: true) }
-}

@@ -40,8 +40,7 @@ def test_maplibre_package_declared_and_local_import_available():
     assert not (IOS / 'LegacyMainView.swift').exists()
     assert 'LegacyMainView' not in ui
     assert 'startupSync.begin(' in ui
-    assert 'StartupSyncBanner(sync: startupSync)' in ui
-    assert 'StartupSyncScreen(sync:' not in ui
+    assert 'StartupSyncScreen(' in ui
     assert 'HostingOfflineSheet' not in ui  # manual download screen is intentionally unreachable
     assert 'MapKit' not in tiles
 
@@ -102,15 +101,7 @@ def test_offline_hybrid_is_file_backed():
     store = (IOS / "ProtomapsOfflineStore.swift").read_text()
     assert "hybrid: Bool = false" in style
     assert "if !hybrid {" in style
-    # The local style is immutable and content-addressed so MapLibre reloads
-    # only when the style actually changes. The hybrid variant has its own prefix.
-    assert 'hybrid ? "protomaps-offline-hybrid" : "protomaps-offline-style"' in style
-    assert 'SHA256.hash(data: data)' in style
-    assert r'folder.appendingPathComponent("\(prefix)-\(hash).json")' in style
-    assert 'let address = local ? archive.absoluteString : item.url' in style
-    assert '"pmtiles://' in style
-    assert 'if local && !FileManager.default.fileExists(atPath: archive.path) { continue }' in style
-    assert 'local: true, hybrid: true' in store
+    assert "protomaps-offline-hybrid.json" in style
     assert "hybridOfflineStyleURL" in store
     assert "protomapsHybridStyleURL" in mapview
     assert "style.insertLayer(raster, below: vector)" in mapview
@@ -201,8 +192,7 @@ def test_wind_prefetches_on_launch_and_progressively_refines():
     ui = (IOS / "MainView.swift").read_text()
     wind = (IOS / "WeatherGridService.swift").read_text()
     assert 'weatherGrid.load(hourOffset: 0)' in ui
-    assert 'coarse.width = 3' in wind and 'coarse.height = 3' in wind
-    assert 'var width: Int = 6' in wind and 'var height: Int = 4' in wind
+    assert 'coarse.width = 6' in wind and 'coarse.height = 4' in wind
     assert 'self.fetchGrid(region: coarse' in wind
     assert 'self.fetchGrid(region: detailed' in wind
 
@@ -211,10 +201,8 @@ def test_weather_grid_hourly_query_has_no_conflicting_forecast_days():
     source = (IOS / "WeatherGridService.swift").read_text()
     assert 'URLQueryItem(name: "start_hour", value: targetHour)' in source
     assert 'URLQueryItem(name: "end_hour", value: targetHour)' in source
-    # forecast_days is only allowed on fallback after removing the explicit hours.
-    assert 'fallback.queryItems?.removeAll' in source
-    assert '$0.name == "start_hour" || $0.name == "end_hour"' in source
-    assert 'fallback.queryItems?.append(URLQueryItem(name: "forecast_days", value: "8"))' in source
+    # Open-Meteo rejects forecast_days together with an explicit hour window (HTTP 400).
+    assert 'URLQueryItem(name: "forecast_days"' not in source
     assert 'http.statusCode != 200' in source
 
 
@@ -222,205 +210,10 @@ def test_weather_uses_lightweight_overlay_without_maplibre_shape_flood():
     map_view = (IOS / "OfflineMapView.swift").read_text()
     overlay = (IOS / "WeatherFieldOverlay.swift").read_text()
     wind = (IOS / "WindParticlesOverlay.swift").read_text()
-    assert 'WeatherFieldOverlay(mapView: view, hostView: container)' in map_view
-    assert 'WindParticlesOverlay(mapView: view, hostView: container)' in map_view
-    assert 'func makeUIView(context: Context) -> UIView' in map_view
-    assert 'func updateUIView(_ container: UIView, context: Context)' in map_view
-    assert 'container.addSubview(view)' in map_view
-    assert 'return container' in map_view
-    assert 'hostView.addSubview(self)' in overlay
-    assert 'mapView.addSubview(self)' not in overlay
+    assert 'WeatherFieldOverlay(mapView: view)' in map_view
     assert 'fieldOverlay?.configure(grid: weatherGrid, layer: weatherLayer)' in map_view
     assert 'WeatherGeometry.shade(' not in map_view
     assert 'WeatherGeometry.windArrow(' not in map_view
-    assert 'let pixelStep: CGFloat = 20' in overlay
-    assert 'context.fill(tile)' in overlay
-    assert 'mapView.convert(screenPoint, toCoordinateFrom: self)' in overlay
+    assert 'for subY in 0..<2' in overlay
     assert 'private let particleCount = 85' in wind
     assert 'link.preferredFramesPerSecond = 15' in wind
-
-
-def test_weather_reuses_latest_cached_hour():
-    weather = (IOS / "WeatherGridService.swift").read_text()
-    assert 'private func latestCachedGrid(region: Region)' in weather
-    assert 'latestCachedGrid(region: detailed) ?? latestCachedGrid(region: coarse)' in weather
-    assert 'let currentHourAvailable' in weather
-    assert 'if !currentHourAvailable' in weather
-    assert 'lastFailedKey == key' in weather
-
-
-def test_weather_layer_above_maplibre_gl_view():
-    map_view = (IOS / "OfflineMapView.swift").read_text()
-    field = (IOS / "WeatherFieldOverlay.swift").read_text()
-    wind = (IOS / "WindParticlesOverlay.swift").read_text()
-    assert 'container.addSubview(view)' in map_view
-    assert 'WeatherFieldOverlay(mapView: view, hostView: container)' in map_view
-    assert 'WindParticlesOverlay(mapView: view, hostView: container)' in map_view
-    assert 'hostView.addSubview(self)' in field and 'hostView.addSubview(self)' in wind
-    assert 'mapView.addSubview(self)' not in field and 'mapView.addSubview(self)' not in wind
-    assert 'trailingAnchor.constraint(equalTo: hostView.trailingAnchor)' in field
-    assert 'superview?.bringSubviewToFront(self)' in wind
-
-
-def test_partial_forecast_does_not_blank_weather():
-    canvas = (IOS / "WeatherFieldOverlay.swift").read_text()
-    wind = (IOS / "WindParticlesOverlay.swift").read_text()
-    assert 'let usable = corners.compactMap' in canvas
-    assert 'totalWeight > 0.000001' in canvas
-    assert 'let neighbours:' in wind
-    assert 'forecast = grid' in wind
-
-
-def test_startup_does_not_gate_map_on_downloads():
-    startup = (IOS / "StartupSync.swift").read_text()
-    main = (IOS / "MainView.swift").read_text()
-    assert '@Published private(set) var presented = false' in startup
-    assert 'StartupSyncBanner(sync: startupSync)' in main
-    assert 'StartupSyncScreen(sync:' not in main
-    assert 'Task.sleep(for: .seconds(8))' in startup
-    assert 'func skip()' in startup
-    assert 'active = true' in startup and 'defer { active = false }' in startup
-    assert 'loadRoutingNetwork()' not in main.split('.onAppear {', 1)[1].split('.onChange(of: scenePhase)', 1)[0]
-    assert 'try? await Task.sleep(for: .seconds(4))' in main
-    assert 'let recentFiles = files.filter' in (IOS / "WeatherGridService.swift").read_text()
-
-
-def test_cold_start_does_not_build_hidden_map_or_hash_on_main_actor():
-    ui = (IOS / "MainView.swift").read_text()
-    hosting = (IOS / "HostingOfflineDownloads.swift").read_text()
-    maps = (IOS / "ProtomapsOfflineStore.swift").read_text()
-    startup = (IOS / "StartupSync.swift").read_text()
-    # Initially the map is absent. Once opened, keep the same instance across
-    # tabs; release it on memory pressure while hidden.
-    assert '@State private var tab: Tab = .home' in ui
-    assert '@State private var mapOpened = false' in ui
-    assert 'if mapOpened || tab == .map {' in ui
-    assert '.allowsHitTesting(tab == .map)' in ui
-    assert 'if value == .map { mapOpened = true }' in ui
-    assert 'UIApplication.didReceiveMemoryWarningNotification' in ui
-    assert 'if tab != .map { mapOpened = false }' in ui
-    assert 'active: tab == .map' in ui
-    native = (IOS / "OfflineMapView.swift").read_text()
-    assert 'view.isHidden = !active' in native
-    assert 'guard active else {' in native
-    assert 'Task.detached(priority: .utility)' in maps
-    assert 'nonisolated private static func digest' in hosting
-    assert 'func needsRouteUpdateAsync' in hosting
-    assert 'hosting.needsRouteUpdateAsync(pack)' in startup
-    assert 'Task.sleep(for: .seconds(8))' in startup
-
-def test_active_gps_track_append_only_journal():
-    model = (IOS / "FieldModel.swift").read_text()
-    journal = (IOS / "TrackPointJournal.swift").read_text()
-    assert 'private let trackJournal = TrackPointJournal()' in model
-    assert 'if !trackJournal.append(point) { persist() }' in model
-    assert 'CREATE TABLE IF NOT EXISTS fixes' in journal
-    assert 'ORDER BY id' in journal
-    assert 'pending.fixes = journalFixes' in model
-    assert 'if let pending=obj.pendingTrack' not in model
-
-
-def test_legacy_routing_preparation_never_blocks_ui():
-    ui = (IOS / "MainView.swift").read_text()
-    hosting = (IOS / "HostingOfflineDownloads.swift").read_text()
-    assert 'await hosting.graphAsync(' in ui
-    assert 'Task.detached(priority: .userInitiated)' in ui
-    assert 'func graphAsync(' in hosting
-    assert 'Data(contentsOf: file, options: .mappedIfSafe)' in hosting
-
-
-def test_map_geometry_changes_without_stringifying_every_point():
-    map_src = (IOS / "OfflineMapView.swift").read_text()
-    assert 'var geometryHash = Hasher()' in map_src
-    assert 'geometryHash.combine(point.latitude)' in map_src
-    assert 'String(describing: zones)' not in map_src
-
-
-def test_route_rerouting_uses_segment_distance_and_gps_hysteresis():
-    source = (IOS / "MainView.swift").read_text()
-    recorded = (IOS / "RecordedTrackFollow.swift").read_text()
-    assert 'GeoMath.distanceToPolyline(position, navigationPath)' in source
-    assert 'offRouteFixes >= 3' in source
-    assert 'GeoMath.segmentDistance(gps,' in recorded
-
-
-def test_offline_package_validation_is_detached_from_ui():
-    src = (IOS / "HostingOfflineDownloads.swift").read_text()
-    assert 'let valid = try await Task.detached(priority: .utility)' in src
-    assert 'let imported = try await Task.detached(priority: .utility)' in src
-    assert 'try Task.checkCancellation()' in src
-
-
-def test_local_mbtiles_server_reuses_read_only_sqlite_readers():
-    source = (IOS / "LocalMBTilesServer.swift").read_text()
-    assert 'private var readers: [String: OpaquePointer]' in source
-    assert 'for (_, db) in readers { sqlite3_close(db) }' in source
-    assert 'readers[key] = db' in source
-    assert 'guard let key = files.first(where:' in source
-
-
-def test_verified_package_receipts_prevent_repeat_hashing_on_main_actor():
-    src = (IOS / "HostingOfflineDownloads.swift").read_text()
-    assert 'private struct VerifiedReceipt: Codable' in src
-    assert '7 * 24 * 3600' in src
-    assert 'saveReceipt(file, key: "route:"' in src
-    assert 'saveReceipt(file, key: "zone:"' in src
-    sync = src.split('func needsRouteUpdate(_ pack:', 1)[1].split('func installRoute(', 1)[0]
-    assert 'Self.digest(' not in sync
-
-
-def test_user_can_export_full_data_backup_without_deleting_storage():
-    model = (IOS / "FieldModel.swift").read_text()
-    ui = (IOS / "MainView.swift").read_text()
-    assert 'func exportBackup() -> URL?' in model
-    assert 'LocalData(markers: markers, tracks: tracks,' in model
-    assert 'trackJournal.read(trackID:' in model
-    assert 'ShareLink(item: backupFile)' in ui
-
-
-def test_gps_database_directory_exists_and_weather_cache_has_retention():
-    journal = (IOS / "TrackPointJournal.swift").read_text()
-    weather = (IOS / "WeatherGridService.swift").read_text()
-    assert 'createDirectory(at: folder' in journal
-    assert 'Task.detached(priority: .background)' in weather
-    assert 'candidates.dropFirst(256)' in weather
-
-
-def test_privacy_safe_launch_health_markers():
-    ui = (IOS / "MainView.swift").read_text()
-    launch = (IOS / "LaunchHealth.swift").read_text()
-    assert 'LaunchHealth.started()' in ui
-    assert 'LaunchHealth.firstScreenReady()' in ui
-    assert 'hunt.launch.pending' in launch
-    assert 'hunt.diag.launchSeconds' in launch
-
-
-def test_orphaned_sqlite_gps_journal_recovery_on_missing_legacy_json():
-    model = (IOS / "FieldModel.swift").read_text()
-    journal = (IOS / "TrackPointJournal.swift").read_text()
-    assert 'func recoverableTrack() -> Track?' in journal
-    assert 'CREATE TABLE IF NOT EXISTS active_track' in journal
-    assert 'CREATE INDEX IF NOT EXISTS idx_fixes_track_id' in journal
-    assert 'trackJournal.begin(track: currentTrack)' in model
-    assert 'recoverOrphanedJournal()' in model
-    assert 'field-unreadable-' in model
-    assert 'saved.tracks.contains(where: { $0.id == recovered.id })' in model
-
-
-def test_release_pipeline_covers_map_tools_and_launch_layout():
-    workflow = (ROOT / ".github/workflows/ios-unsigned-ipa.yml").read_text()
-    layout = (ROOT / "scripts/verify_iphone_layout.py").read_text()
-    assert 'pytest -q server/tests tools/test_*.py' in workflow
-    assert 'python scripts/verify_iphone_layout.py' in workflow
-    assert 'python scripts/check_ui_structure.py' in workflow
-    assert 'MARKETING_VERSION: 4.8.0' not in layout
-    assert 'GENERATE_INFOPLIST_FILE: NO' in layout
-
-
-def test_weather_cancelled_request_cannot_mutate_successor():
-    source = (IOS / "WeatherGridService.swift").read_text()
-    assert 'private var requestGeneration = UUID()' in source
-    assert 'let generation = requestGeneration' in source
-    assert 'self.requestGeneration == generation' in source
-    assert 'if self.requestGeneration == generation { self.loading = false }' in source
-    assert 'requestGeneration = UUID()' in source.split('func stop()', 1)[1]

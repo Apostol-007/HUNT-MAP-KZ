@@ -227,28 +227,24 @@ private struct ProtomapsCatalog: Codable { let schema: String; let packs: [Proto
                 guard (attrs[.size] as? NSNumber)?.int64Value == item.bytes else {
                     throw NSError(domain:"Protomaps",code:5,userInfo:[NSLocalizedDescriptionKey:"Некорректный размер"])
                 }
-                // Stream validation off the main actor. A multi-GB PMTiles
-                // checksum must never freeze UIKit or trigger an iOS watchdog kill.
-                let digest = try await Task.detached(priority: .utility) {
-                    let handle = try FileHandle(forReadingFrom: temp)
-                    defer { try? handle.close() }
-                    let magic = try handle.read(upToCount: 8) ?? Data()
-                    guard magic.count == 8,
-                          Data(magic.prefix(7)) == Data("PMTiles".utf8), magic[7] == 3 else {
-                        throw NSError(domain: "Protomaps", code: 6,
-                                      userInfo: [NSLocalizedDescriptionKey: "Не PMTiles v3"])
-                    }
-                    try handle.seek(toOffset: 0)
-                    var checksum = SHA256()
-                    while true {
-                        try Task.checkCancellation()
-                        let chunk = try handle.read(upToCount: 1_048_576) ?? Data()
-                        if chunk.isEmpty { break }
-                        checksum.update(data: chunk)
-                    }
-                    return checksum.finalize().map { String(format: "%02x", $0) }.joined()
-                }.value
-                progress = 0.95
+                let handle = try FileHandle(forReadingFrom: temp)
+                defer { try? handle.close() }
+                let magic = try handle.read(upToCount: 8) ?? Data()
+                guard magic.count == 8, Data(magic.prefix(7)) == Data("PMTiles".utf8), magic[7] == 3 else {
+                    throw NSError(domain:"Protomaps",code:6,userInfo:[NSLocalizedDescriptionKey:"Не PMTiles v3"])
+                }
+                try handle.seek(toOffset: 0)
+                var checksum = SHA256()
+                var consumed: Int64 = 0
+                while true {
+                    try Task.checkCancellation()
+                    let bytes = try handle.read(upToCount: 1_048_576) ?? Data()
+                    if bytes.isEmpty { break }
+                    checksum.update(data: bytes)
+                    consumed += Int64(bytes.count)
+                    progress = Double(consumed) / Double(item.bytes)
+                }
+                let digest = checksum.finalize().map { String(format: "%02x", $0) }.joined()
                 guard digest == item.sha256.lowercased() else {
                     throw NSError(domain:"Protomaps",code:7,userInfo:[NSLocalizedDescriptionKey:"SHA-256 не совпадает"])
                 }

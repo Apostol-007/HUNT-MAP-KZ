@@ -7,7 +7,7 @@ public struct GeoPoint: Codable, Hashable, Sendable {
     public var valid: Bool { latitude.isFinite && longitude.isFinite && (-90...90).contains(latitude) && (-180...180).contains(longitude) }
 }
 
-public struct GeoPolygon: Codable, Equatable, Sendable {
+public struct GeoPolygon: Codable, Sendable {
     // First ring is exterior; following rings are holes. Rings may be closed or open.
     public let rings: [[GeoPoint]]
     public init(rings: [[GeoPoint]]) { self.rings = rings }
@@ -16,18 +16,12 @@ public struct GeoPolygon: Codable, Equatable, Sendable {
         return !rings.dropFirst().contains { GeoMath.inRing(point, ring: $0) }
     }
     public func distanceToBoundaryMeters(_ point: GeoPoint) -> Double {
-        var nearest = Double.infinity
-        for ring in rings where ring.count >= 3 {
-            for index in ring.indices {
-                nearest = min(nearest, GeoMath.segmentDistance(point, ring[index], ring[(index + 1) % ring.count]))
-            }
-        }
-        return nearest
+        rings.flatMap { GeoMath.segments($0) }.map { GeoMath.segmentDistance(point, $0.0, $0.1) }.min() ?? .infinity
     }
 }
 
 public enum ZoneKind: String, Codable, Sendable { case huntingGround, protectedArea }
-public struct GeoZone: Codable, Identifiable, Equatable, Sendable {
+public struct GeoZone: Codable, Identifiable, Sendable {
     public let id: String
     public let name: String
     public let kind: ZoneKind
@@ -52,17 +46,6 @@ public enum GeoMath {
         let h = pow(sin(dp/2), 2) + cos(p1) * cos(p2) * pow(sin(dl/2), 2)
         return 2*r*atan2(sqrt(max(0,h)), sqrt(max(0,1-h)))
     }
-    /// Distance to the nearest polyline segment rather than just its vertices.
-    /// Keeps navigation stable between widely spaced recorded road coordinates.
-    public static func distanceToPolyline(_ position: GeoPoint, _ points: [GeoPoint]) -> Double {
-        guard !points.isEmpty else { return .infinity }
-        guard points.count > 1 else { return meters(position, points[0]) }
-        var nearest = Double.infinity
-        for index in 1..<points.count {
-            nearest = min(nearest, segmentDistance(position, points[index - 1], points[index]))
-        }
-        return nearest
-    }
     public static func segments(_ ring: [GeoPoint]) -> [(GeoPoint, GeoPoint)] {
         guard ring.count >= 3 else { return [] }
         return (0..<ring.count).map { (ring[$0], ring[($0+1)%ring.count]) }
@@ -78,8 +61,7 @@ public enum GeoMath {
         guard ring.count >= 3 else { return false }
         var inside = false
         let x = p.longitude, y = p.latitude
-        for index in ring.indices {
-            let a = ring[index], b = ring[(index + 1) % ring.count]
+        for (a, b) in segments(ring) {
             let ax = unwrap(a.longitude, around: x), bx = unwrap(b.longitude, around: x)
             let cross = (bx-ax)*(y-a.latitude)-(b.latitude-a.latitude)*(x-ax)
             if abs(cross) < 1e-11 && x >= min(ax,bx)-1e-11 && x <= max(ax,bx)+1e-11 && y >= min(a.latitude,b.latitude)-1e-11 && y <= max(a.latitude,b.latitude)+1e-11 { return true }

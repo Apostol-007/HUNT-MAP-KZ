@@ -39,9 +39,7 @@ struct RecordedTrackFollow {
         var closest = lower
         var distance = Double.infinity
         for i in lower...upper {
-            let candidate = i < points.count - 1
-                ? GeoMath.segmentDistance(gps, points[i], points[i + 1])
-                : GeoMath.meters(gps, points[i])
+            let candidate = GeoMath.meters(gps, points[i])
             if candidate < distance { distance = candidate; closest = i }
         }
         return (closest, distance, remainingFrom[closest])

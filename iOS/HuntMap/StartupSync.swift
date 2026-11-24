@@ -4,8 +4,7 @@ import Network
 
 /// The launch gate never deletes installed content when the network or a manifest fails.
 @MainActor final class StartupSync: ObservableObject {
-    @Published private(set) var presented = false
-    @Published private(set) var active = false
+    @Published private(set) var presented = true
     @Published private(set) var title = "Проверяем подключение"
     @Published private(set) var detail = "Локальные карты уже доступны"
     @Published private(set) var progress = 0.0
@@ -21,20 +20,15 @@ import Network
                protomaps: ProtomapsOfflineStore, model: FieldModel,
                valhalla: ValhallaRoutingStore) {
         guard startupTask == nil else { return }
-        // Never block the first frame or navigation on network/manifest I/O.
-        active = true
-        presented = false
-        startupTask = Task(priority: .utility) { [weak self] in
-            // UIKit and MapLibre get the initial frame before any package checks.
-            try? await Task.sleep(for: .seconds(8))
-            guard let self, !Task.isCancelled else { return }
-            await self.start(hosting: hosting, tiles: tiles, protomaps: protomaps,
-                             model: model, valhalla: valhalla)
+        startupTask = Task {
+            await start(hosting: hosting, tiles: tiles, protomaps: protomaps,
+                        model: model, valhalla: valhalla)
         }
     }
 
     func skip() {
-        // Package updates never gate the UI; skip is kept for compatibility.
+        cancelled = true
+        startupTask?.cancel()
         presented = false
     }
 
@@ -59,7 +53,6 @@ import Network
                valhalla: ValhallaRoutingStore) async {
         guard !started else { return }
         started = true
-        defer { active = false }
         guard await internetAvailable() else {
             AppDiagnosticLog.shared.record(severity: "info", subsystem: "Загрузка",
                 operation: "Проверка сети на старте", code: "OFFLINE",
@@ -79,16 +72,8 @@ import Network
         let maps = hosting.maps.filter { pack in
             !tiles.installed.contains { $0.sha256.lowercased() == pack.sha256.lowercased() }
         }
-        var roads: [HostingRoutingPack] = []
-        for pack in hosting.routes {
-            if await hosting.needsRouteUpdateAsync(pack) { roads.append(pack) }
-            await Task.yield()
-        }
-        var zones: [HostingZonePack] = []
-        for pack in hosting.zones {
-            if await hosting.needsZoneUpdateAsync(pack) { zones.append(pack) }
-            await Task.yield()
-        }
+        let roads = hosting.routes.filter { hosting.needsRouteUpdate($0) }
+        let zones = hosting.zones.filter { hosting.needsZoneUpdate($0) }
         let protos = protomaps.available.filter { pack in
             !protomaps.installed.contains { $0.id == pack.id && $0.sha256.lowercased() == pack.sha256.lowercased() }
         }
@@ -117,7 +102,7 @@ import Network
             title = "Загружаем дороги и тропы"
             detail = pack.name
             await hosting.installRoute(pack)
-            if await hosting.needsRouteUpdateAsync(pack) { errors.append("Маршрутная сеть «\(pack.name)»: \(hosting.status)") }
+            if hosting.needsRouteUpdate(pack) { errors.append("Маршрутная сеть «\(pack.name)»: \(hosting.status)") }
             tick()
         }
         for pack in zones {
@@ -125,7 +110,7 @@ import Network
             title = "Загружаем охотугодья"
             detail = pack.name
             await hosting.installZones(pack, model: model)
-            if await hosting.needsZoneUpdateAsync(pack) { errors.append("Границы «\(pack.name)»: \(hosting.status)") }
+            if hosting.needsZoneUpdate(pack) { errors.append("Границы «\(pack.name)»: \(hosting.status)") }
             tick()
         }
         if !protos.isEmpty {
@@ -264,37 +249,5 @@ struct StartupSyncScreen: View {
             .padding(.horizontal, 24)
         }
         .preferredColorScheme(.dark)
-    }
-}
- 
-/// Compact non-modal sync status. The map remains tappable while downloads run.
-struct StartupSyncBanner: View {
-    @ObservedObject var sync: StartupSync
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 8) {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .foregroundStyle(.mint)
-                Text(sync.title).font(.caption.bold()).lineLimit(1)
-                Spacer(minLength: 6)
-                if sync.total > 0 {
-                    Text("\(sync.completed)/\(sync.total)")
-                        .font(.caption2.monospacedDigit())
-                }
-            }
-            Text(sync.detail).font(.caption2)
-                .foregroundStyle(.secondary).lineLimit(1)
-            if sync.total > 0 {
-                ProgressView(value: sync.progress).tint(.mint)
-            } else {
-                ProgressView().controlSize(.mini).tint(.mint)
-            }
-        }
-        .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-        .padding(.horizontal, 16)
-        .allowsHitTesting(false)
-        .accessibilityIdentifier("non_blocking_startup_sync")
     }
 }

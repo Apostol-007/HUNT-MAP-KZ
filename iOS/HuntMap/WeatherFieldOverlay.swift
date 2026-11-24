@@ -9,47 +9,20 @@ final class WeatherFieldOverlay: UIView {
     private var selectedLayer: WeatherMapLayer = .none
     private var lastSignature = ""
 
-    init(mapView: MLNMapView, hostView: UIView) {
+    init(mapView: MLNMapView) {
         self.mapView = mapView
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
+        super.init(frame: mapView.bounds)
         backgroundColor = .clear
         isOpaque = false
         isUserInteractionEnabled = false
         contentMode = .redraw
-        hostView.addSubview(self)
-        NSLayoutConstraint.activate([
-            leadingAnchor.constraint(equalTo: hostView.leadingAnchor),
-            trailingAnchor.constraint(equalTo: hostView.trailingAnchor),
-            topAnchor.constraint(equalTo: hostView.topAnchor),
-            bottomAnchor.constraint(equalTo: hostView.bottomAnchor)
-        ])
+        autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        mapView.addSubview(self)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    /// MLNMapView starts with a zero-sized frame in UIViewRepresentable.
-    /// Keep the canvas exactly aligned after UIKit completes actual layout.
-    func syncMapGeometry() {
-        guard let mapView, mapView.bounds.width > 0, mapView.bounds.height > 0 else { return }
-        // The sibling canvas is laid out by Auto Layout, never by MapLibre.
-        if bounds.size != mapView.bounds.size { setNeedsDisplay() }
-        superview?.bringSubviewToFront(self)
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        setNeedsDisplay()
-    }
-
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        DispatchQueue.main.async { [weak self] in self?.syncMapGeometry() }
-    }
-
     func configure(grid: ForecastGrid?, layer: WeatherMapLayer) {
-        syncMapGeometry()
-        guard layer != .none else {
-            UserDefaults.standard.set("disabled: no weather layer selected", forKey: "hunt.diag.weatherPaint")
+        guard layer != .none, let grid, grid.validated() else {
             if !isHidden {
                 forecast = nil
                 lastSignature = ""
@@ -58,22 +31,13 @@ final class WeatherFieldOverlay: UIView {
             }
             return
         }
-        guard let grid, grid.validated() else {
-            UserDefaults.standard.set("waiting: no validated forecast grid for \(layer.rawValue)", forKey: "hunt.diag.weatherPaint")
-            forecast = nil
-            lastSignature = ""
-            isHidden = true
-            setNeedsDisplay()
-            return
-        }
         isHidden = false
         let first = grid.points.first
         let last = grid.points.last
         let signature = "\(layer.rawValue)|\(grid.forecastTimeUTC)|\(grid.bounds.west)|\(grid.bounds.south)|\(grid.bounds.east)|\(grid.bounds.north)|\(grid.gridWidth)x\(grid.gridHeight)|\(first?.windSpeed ?? -1)|\(first?.pressure ?? -1)|\(last?.precipitation ?? -1)"
-        // Assign every time: a refreshed provider field can share the same bounds/time.
-        forecast = grid
-        selectedLayer = layer
         if signature != lastSignature {
+            forecast = grid
+            selectedLayer = layer
             lastSignature = signature
             setNeedsDisplay()
         }
@@ -107,81 +71,52 @@ final class WeatherFieldOverlay: UIView {
         }
     }
 
-    /// Draw only the visible screen. Geographic model cells can span millions of
-    /// display pixels at street zoom; projecting whole-cell polygons is expensive
-    /// and can fail to rasterize. Screen sampling is bounded at every zoom.
     override func draw(_ rect: CGRect) {
-        guard let forecast, let mapView, let context = UIGraphicsGetCurrentContext(),
-              bounds.width > 0, bounds.height > 0 else {
-            let reason = forecast == nil ? "forecast unavailable" :
-                (mapView == nil ? "MapLibre view missing" :
-                    (bounds.width <= 0 || bounds.height <= 0 ? "zero-sized canvas" : "drawing context unavailable"))
-            UserDefaults.standard.set("not rendered: \(reason)", forKey: "hunt.diag.weatherPaint")
-            return
-        }
-        let width = forecast.gridWidth, height = forecast.gridHeight
-        guard width >= 2, height >= 2 else { return }
-        let west = forecast.bounds.west, east = forecast.bounds.east
-        let south = forecast.bounds.south, north = forecast.bounds.north
+        guard let forecast, let mapView, let context = UIGraphicsGetCurrentContext() else { return }
+        let countX = forecast.gridWidth - 1
+        let countY = forecast.gridHeight - 1
+        guard countX > 0, countY > 0 else { return }
+        let latStep = (forecast.bounds.north - forecast.bounds.south) / Double(countY)
+        let lonStep = (forecast.bounds.east - forecast.bounds.west) / Double(countX)
 
-        func sample(latitude: Double, longitude: Double) -> Double? {
-            guard longitude >= west, longitude <= east,
-                  latitude >= south, latitude <= north else { return nil }
-            let x = (longitude - west) * Double(width - 1) / (east - west)
-            let y = (latitude - south) * Double(height - 1) / (north - south)
-            let column = min(max(Int(x), 0), width - 2)
-            let row = min(max(Int(y), 0), height - 2)
-            let u = min(1.0, max(0.0, x - Double(column)))
-            let v = min(1.0, max(0.0, y - Double(row)))
-            let a = forecast.points[row * width + column]
-            let b = forecast.points[row * width + column + 1]
-            let c = forecast.points[(row + 1) * width + column]
-            let d = forecast.points[(row + 1) * width + column + 1]
-            // Provider may omit individual readings. Keep painting with the
-            // available neighbours instead of dropping the entire screen cell.
-            let corners: [(Double?, Double)] = [
-                (value(a), (1-u)*(1-v)),
-                (value(b), u*(1-v)),
-                (value(c), (1-u)*v),
-                (value(d), u*v)
-            ]
-            let usable = corners.compactMap { point -> (Double, Double)? in
-                guard let reading = point.0, reading.isFinite else { return nil }
-                return (reading, point.1)
-            }
-            let totalWeight = usable.reduce(0.0) { $0 + $1.1 }
-            if totalWeight > 0.000001 {
-                return usable.reduce(0.0) { $0 + $1.0 * $1.1 } / totalWeight
-            }
-            // Exactly on a missing model-node boundary: nearest available value.
-            return [value(a), value(b), value(c), value(d)].compactMap { $0 }.first
+        func bilinear(_ a: Double, _ b: Double, _ c: Double, _ d: Double,
+                      _ u: Double, _ v: Double) -> Double {
+            a * (1 - u) * (1 - v) + b * u * (1 - v) + c * (1 - u) * v + d * u * v
         }
-
-        let pixelStep: CGFloat = 20
-        let columns = Int(ceil(bounds.width / pixelStep))
-        let rows = Int(ceil(bounds.height / pixelStep))
-        var paintedCells = 0
-        var populatedCells = 0
-        for row in 0..<rows {
-            let y = CGFloat(row) * pixelStep
-            for column in 0..<columns {
-                let x = CGFloat(column) * pixelStep
-                let screenPoint = CGPoint(x: min(bounds.width - 1, x + pixelStep / 2),
-                                          y: min(bounds.height - 1, y + pixelStep / 2))
-                let geo = mapView.convert(screenPoint, toCoordinateFrom: self)
-                guard let reading = sample(latitude: geo.latitude, longitude: geo.longitude) else { continue }
-                populatedCells += 1
-                let fill = color(reading)
-                guard fill.cgColor.alpha > 0.001 else { continue }
-                let tile = CGRect(x: x, y: y,
-                                  width: min(pixelStep + 0.5, bounds.width - x),
-                                  height: min(pixelStep + 0.5, bounds.height - y))
-                context.setFillColor(fill.cgColor)
-                context.fill(tile)
-                paintedCells += 1
+        // Four small tiles per model cell provide a readable field with a bounded
+        // draw cost (at 8x6 nodes: 140 tiles total, rather than thousands).
+        for row in 0..<countY {
+            for column in 0..<countX {
+                let a = forecast.points[row * forecast.gridWidth + column]
+                let b = forecast.points[row * forecast.gridWidth + column + 1]
+                let c = forecast.points[(row + 1) * forecast.gridWidth + column]
+                let d = forecast.points[(row + 1) * forecast.gridWidth + column + 1]
+                guard let av = value(a), let bv = value(b),
+                      let cv = value(c), let dv = value(d) else { continue }
+                for subY in 0..<2 {
+                    for subX in 0..<2 {
+                        let u0 = Double(subX) / 2, u1 = Double(subX + 1) / 2
+                        let v0 = Double(subY) / 2, v1 = Double(subY + 1) / 2
+                        let average = bilinear(av, bv, cv, dv,
+                                               (u0 + u1) / 2, (v0 + v1) / 2)
+                        let fill = color(average)
+                        if fill.cgColor.alpha < 0.01 { continue }
+                        let corners = [(u0,v0),(u1,v0),(u1,v1),(u0,v1)]
+                        let points: [CGPoint] = corners.map { pair in
+                            let u = pair.0, v = pair.1
+                            let location = CLLocationCoordinate2D(
+                                latitude: forecast.bounds.south + (Double(row) + v) * latStep,
+                                longitude: forecast.bounds.west + (Double(column) + u) * lonStep)
+                            return mapView.convert(location, toPointTo: self)
+                        }
+                        context.move(to: points[0])
+                        for p in points.dropFirst() { context.addLine(to: p) }
+                        context.closePath()
+                        context.setFillColor(fill.cgColor)
+                        context.fillPath()
+                    }
+                }
             }
         }
-        let detail = "layer: \(selectedLayer.rawValue); painted: \(paintedCells)/\(populatedCells); screen: \(Int(bounds.width))x\(Int(bounds.height)); grid: \(width)x\(height)"
-        UserDefaults.standard.set(detail, forKey: "hunt.diag.weatherPaint")
     }
 }

@@ -44,24 +44,13 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
     @Published var paused = false
     @Published var status = "GPS не запущен"
     @Published var lastWarning = "Границы не загружены"
-    @Published var zones: [GeoZone] = [] {
-        didSet {
-            zoneRevision += 1
-            boundaryFixQueue.removeAll()
-            boundaryResetRequired = true
-        }
-    }
+    @Published var zones: [GeoZone] = []
     @Published var strictOffline = true
     @Published var gpsAuthorization = "не определено"
     @Published var lastError = ""
     private let manager=CLLocationManager()
-    private let boundaryWorker = BoundaryWorker()
-    private var boundaryTask: Task<Void, Never>?
-    private var boundaryFixQueue = BoundaryFixQueue()
-    private var boundaryResetRequired = false
-    private(set) var zoneRevision = 0
+    private let engine=BoundaryEngine()
     private var lastFix: CLLocation?
-    private let trackJournal = TrackPointJournal()
     private var documentURL:URL {
         let dir=FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0]
         try? FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
@@ -118,7 +107,6 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         }
         lastFix=nil // Do not reuse the last fix from a previous recording session.
         currentTrack=Track(name:"Маршрут \(Date.now.formatted(date:.numeric,time:.shortened))")
-        if let currentTrack { trackJournal.begin(track: currentTrack) }
         recording=true;paused=false
         // Background updates are enabled ONLY after Always authorization; foreground-only
         // recording must never terminate the app because the user denied Always access.
@@ -145,13 +133,6 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         if manager.allowsBackgroundLocationUpdates && !navigatingRecordedTrack { manager.allowsBackgroundLocationUpdates=false }
         manager.pausesLocationUpdatesAutomatically = !navigatingRecordedTrack
         persist()
-        // Clear only after the completed track has been committed to field.json.
-        // If JSON persistence fails, the journal remains available for recovery.
-        if let data = try? Data(contentsOf: documentURL),
-           let saved = try? JSONDecoder().decode(LocalData.self, from: data),
-           saved.pendingTrack == nil {
-            trackJournal.clear()
-        }
     }
     func addMarker(kind:String="Точка") {
         guard let coordinate else { status="Сначала получите GPS-позицию"; return }
@@ -209,45 +190,11 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
                 let dt=fix.timestamp.timeIntervalSince(last.timestamp)
                 if dt>0 && GeoMath.meters(GeoPoint(last.coordinate.latitude,last.coordinate.longitude),p)/dt>80 {return}
             }
-            let point = TrackFix(point:p,timestamp:fix.timestamp,accuracy:fix.horizontalAccuracy,altitude:fix.altitude)
-            currentTrack?.fixes.append(point)
-            // Append one SQLite row, never re-encode all saved routes on every GPS update.
-            // If SQLite is unavailable, preserve the previous full-JSON persistence.
-            if !trackJournal.append(point) { persist() }
+            currentTrack?.fixes.append(TrackFix(point:p,timestamp:fix.timestamp,accuracy:fix.horizontalAccuracy,altitude:fix.altitude))
+            persist() // Atomic write of current track after each accepted fix.
         }
         lastFix=fix
-        let boundaryFix = GPSFix(position:p,accuracyMeters:fix.horizontalAccuracy,timestamp:fix.timestamp)
-        if boundaryFixQueue.append(boundaryFix) {
-            boundaryResetRequired = true
-            lastWarning = "Очередь проверки границ перегружена; положение уточняется"
-            AppDiagnosticLog.shared.record(severity: "warning", subsystem: "Геозоны",
-                operation: "Проверка GPS", code: "BOUNDARY_BACKLOG",
-                rootCause: "Пропущена часть замеров при перегрузке",
-                nextAction: "Дождаться новых GPS-замеров")
-        }
-        scheduleBoundaryCheck()
-    }
-
-    private func scheduleBoundaryCheck() {
-        guard boundaryTask == nil else { return }
-        boundaryTask = Task { [weak self] in
-            guard let self else { return }
-            while let fix = self.boundaryFixQueue.popFirst() {
-                let revision = self.zoneRevision
-                let snapshot = self.zones
-                let reset = self.boundaryResetRequired
-                self.boundaryResetRequired = false
-                let events = await self.boundaryWorker.process(fix, zones: snapshot, revision: revision, reset: reset)
-                guard !Task.isCancelled else { break }
-                if revision == self.zoneRevision && !self.boundaryResetRequired {
-                    for event in events { self.publishBoundaryEvent(event) }
-                }
-            }
-            self.boundaryTask = nil
-        }
-    }
-
-    private func publishBoundaryEvent(_ event: BoundaryEvent) {
+        for event in engine.process(GPSFix(position:p,accuracyMeters:fix.horizontalAccuracy,timestamp:fix.timestamp),zones:zones) {
             let message:String
             switch event {
             case .approaching(_,let meters):message="Граница на расстоянии около \(meters) м"
@@ -259,6 +206,7 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
             let notification=UNMutableNotificationContent()
             notification.title="HUNT MAP KZ";notification.body=message;notification.sound = .default
             UNUserNotificationCenter.current().add(UNNotificationRequest(identifier:UUID().uuidString,content:notification,trigger:nil))
+        }
     }
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         status = "Ошибка GPS: \(error.localizedDescription)"
@@ -278,86 +226,23 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         if manager.authorizationStatus == .denied {status="Нет разрешения геолокации"; lastError=status}
     }
     private func load() {
-        guard let bytes = try? Data(contentsOf: documentURL),
-              let obj = try? JSONDecoder().decode(LocalData.self, from: bytes) else {
-            // Never overwrite a malformed legacy file without preserving it.
-            if FileManager.default.fileExists(atPath: documentURL.path) {
-                let destination = documentURL.deletingLastPathComponent()
-                    .appendingPathComponent("field-unreadable-\(Int(Date().timeIntervalSince1970)).json")
-                try? FileManager.default.copyItem(at: documentURL, to: destination)
-            }
-            recoverOrphanedJournal()
-            return
-        }
+        guard let bytes=try? Data(contentsOf:documentURL),let obj=try? JSONDecoder().decode(LocalData.self,from:bytes) else {return}
         markers=obj.markers;tracks=obj.tracks;zones=obj.zones
         // An interrupted recording is restored exactly once. Clear pendingTrack on disk
         // immediately, otherwise every relaunch would duplicate the recovered route.
-        if var pending=obj.pendingTrack {
-            // The SQLite journal is authoritative for the active recording. Legacy
-            // pending fixes are retained when migrating from an older installed IPA.
-            let journalFixes = trackJournal.read(trackID: pending.id)
-            if journalFixes.count > pending.fixes.count { pending.fixes = journalFixes }
+        if let pending=obj.pendingTrack {
             if !pending.fixes.isEmpty && !tracks.contains(where: { $0.id == pending.id }) {
                 tracks.insert(Track(id:pending.id, name:pending.name+" (восстановлен)",
                                     createdAt:pending.createdAt, fixes:pending.fixes), at:0)
             }
             lastWarning = "Запись после закрытия приложения восстановлена"
             persist()
-            // Delete recovered fixes only once the restored state is on disk.
-            if let data = try? Data(contentsOf: documentURL),
-               let saved = try? JSONDecoder().decode(LocalData.self, from: data),
-               saved.pendingTrack == nil { trackJournal.clear() }
-        } else {
-            // A previous JSON commit may not contain pendingTrack if it was
-            // interrupted. Recover surviving SQLite rows exactly once by UUID.
-            recoverOrphanedJournal()
-        }
-    }
-
-    private func recoverOrphanedJournal() {
-        guard var recovered = trackJournal.recoverableTrack() else { return }
-        guard !tracks.contains(where: { $0.id == recovered.id }) else {
-            trackJournal.clear()
-            return
-        }
-        recovered.name += " (восстановлен)"
-        tracks.insert(recovered, at: 0)
-        lastWarning = "GPS-маршрут восстановлен из журнала после сбоя"
-        persist()
-        if let data = try? Data(contentsOf: documentURL),
-           let saved = try? JSONDecoder().decode(LocalData.self, from: data),
-           saved.tracks.contains(where: { $0.id == recovered.id }) {
-            trackJournal.clear()
         }
     }
     private func persist() {
         guard let encoded=try? JSONEncoder().encode(LocalData(markers:markers,tracks:tracks,pendingTrack:currentTrack,zones:zones)) else {return}
         try? encoded.write(to:documentURL,options:[.atomic,.completeFileProtectionUnlessOpen])
     }
-    /// Explicit user-controlled export. Includes an active recording from
-    /// the crash-safe SQLite journal and leaves all local files unchanged.
-    func exportBackup() -> URL? {
-        var active = currentTrack
-        if var pending = active {
-            let saved = trackJournal.read(trackID: pending.id)
-            if saved.count > pending.fixes.count { pending.fixes = saved }
-            active = pending
-        }
-        let snapshot = LocalData(markers: markers, tracks: tracks,
-                                 pendingTrack: active, zones: zones)
-        guard let bytes = try? JSONEncoder().encode(snapshot) else { return nil }
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("HUNT_MAP_KZ_Backup_\(Int(Date().timeIntervalSince1970)).json")
-        do {
-            try bytes.write(to: destination, options: .atomic)
-            return destination
-        } catch {
-            AppDiagnosticLog.shared.recordError(subsystem: "Данные",
-                operation: "Резервная копия", error: error)
-            return nil
-        }
-    }
-
     func exportGPX(_ track:Track)->URL? {
         func xml(_ s:String)->String {s.replacingOccurrences(of:"&",with:"&amp;").replacingOccurrences(of:"<",with:"&lt;").replacingOccurrences(of:">",with:"&gt;").replacingOccurrences(of:"\"",with:"&quot;")}
         let formatter = ISO8601DateFormatter()
@@ -369,18 +254,5 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         let data="<?xml version=\"1.0\" encoding=\"UTF-8\"?><gpx version=\"1.1\" creator=\"HUNT MAP KZ\" xmlns=\"http://www.topografix.com/GPX/1/1\"><trk><name>\(xml(track.name))</name><trkseg>\(points)</trkseg></trk></gpx>"
         let url=FileManager.default.temporaryDirectory.appendingPathComponent("route-\(track.id).gpx")
         do {try data.write(to:url,atomically:true,encoding:.utf8);return url} catch {return nil}
-    }
-}
-
-// A single actor owns mutable crossing state. GPS and UIKit never wait synchronously.
-private actor BoundaryWorker {
-    private var engine = BoundaryEngine()
-    private var revision = -1
-    func process(_ fix: GPSFix, zones: [GeoZone], revision: Int, reset: Bool) -> [BoundaryEvent] {
-        if reset || self.revision != revision {
-            engine = BoundaryEngine()
-            self.revision = revision
-        }
-        return engine.process(fix, zones: zones)
     }
 }

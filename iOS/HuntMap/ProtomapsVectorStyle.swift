@@ -1,5 +1,4 @@
 import Foundation
-import CryptoKit
 
 /// Source layers follow Protomaps Basemap v4 (roads, water, landcover, landuse, buildings).
 /// This independent visual style has no network glyph dependencies. Offline name labels
@@ -32,7 +31,6 @@ enum ProtomapsVectorStyle {
             if local && !FileManager.default.fileExists(atPath: archive.path) { continue }
             let address = local ? archive.absoluteString : item.url
             sources[id] = ["type":"vector","url":"pmtiles://\(address)",
-                           "bounds": item.bounds, "minzoom": item.minzoom, "maxzoom": item.maxzoom,
                            "attribution":"© OpenStreetMap contributors · Protomaps"]
             if !hybrid {
             fill("grass_\(index)",id,"landcover","#a6c99a",
@@ -58,7 +56,6 @@ enum ProtomapsVectorStyle {
         if canLabel {
             for (i, _) in regions.enumerated() {
                 let id = "protomaps_\(i)"
-                guard sources[id] != nil else { continue }
                 let label: [String: Any] = [
                     "id": "place_names_\(i)", "type": "symbol",
                     "source": id, "source-layer": "places",
@@ -82,15 +79,8 @@ enum ProtomapsVectorStyle {
                 "https://protomaps.github.io/basemaps-assets/sprites/v4/light"
         }
         guard let data = try? JSONSerialization.data(withJSONObject:style,options:[.sortedKeys]) else { return nil }
-        // Version the URL by actual style contents: MapLibre must reload when sources
-        // change, but must not reload on unrelated SwiftUI/GPS updates.
-        let hash = SHA256.hash(data: data).prefix(12).map { String(format: "%02x", $0) }.joined()
-        let prefix = local ? (hybrid ? "protomaps-offline-hybrid" : "protomaps-offline-style") : "protomaps-online-style"
-        let url = folder.appendingPathComponent("\(prefix)-\(hash).json")
-        do {
-            if !FileManager.default.fileExists(atPath: url.path) { try data.write(to:url,options:.atomic) }
-            return url
-        }
+        let url = folder.appendingPathComponent(local ? (hybrid ? "protomaps-offline-hybrid.json" : "protomaps-offline-style.json") : "protomaps-online-style.json")
+        do { try data.write(to:url,options:.atomic); return url }
         catch { return nil }
     }
 }

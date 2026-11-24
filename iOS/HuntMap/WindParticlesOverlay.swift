@@ -26,43 +26,19 @@ final class WindParticlesOverlay: UIView {
     private let maximumTrail = 9
     private let particleCount = 85
 
-    init(mapView: MLNMapView, hostView: UIView) {
+    init(mapView: MLNMapView) {
         self.mapView = mapView
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
+        super.init(frame: mapView.bounds)
         backgroundColor = .clear
         isOpaque = false
         isUserInteractionEnabled = false
-        hostView.addSubview(self)
-        NSLayoutConstraint.activate([
-            leadingAnchor.constraint(equalTo: hostView.leadingAnchor),
-            trailingAnchor.constraint(equalTo: hostView.trailingAnchor),
-            topAnchor.constraint(equalTo: hostView.topAnchor),
-            bottomAnchor.constraint(equalTo: hostView.bottomAnchor)
-        ])
+        autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        mapView.addSubview(self)
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
-
-    func syncMapGeometry() {
-        guard let mapView, mapView.bounds.width > 0, mapView.bounds.height > 0 else { return }
-        // The sibling canvas is laid out by Auto Layout, never by MapLibre.
-        if bounds.size != mapView.bounds.size { setNeedsDisplay() }
-        superview?.bringSubviewToFront(self)
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        setNeedsDisplay()
-    }
-
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        DispatchQueue.main.async { [weak self] in self?.syncMapGeometry() }
-    }
     deinit { displayLink?.invalidate() }
 
     func configure(grid: ForecastGrid?, enabled: Bool) {
-        syncMapGeometry()
         guard enabled, let grid, grid.validated() else {
             forecast = nil
             forecastSignature = ""
@@ -76,9 +52,8 @@ final class WindParticlesOverlay: UIView {
         isHidden = false
         let b = grid.bounds
         let signature = "\(grid.forecastTimeUTC)|\(b.west)|\(b.south)|\(b.east)|\(b.north)|\(grid.gridWidth)x\(grid.gridHeight)|\(grid.points.first?.windSpeed ?? -1)|\(grid.points.last?.direction ?? -1)"
-        // Do not retain a stale field when only interior grid points changed.
-        forecast = grid
         if signature != forecastSignature {
+            forecast = grid
             forecastSignature = signature
             particles = (0..<particleCount).map { _ in spawn() }
             setNeedsDisplay()
@@ -124,22 +99,10 @@ final class WindParticlesOverlay: UIView {
             let radians = (direction + 180) * .pi / 180
             return (speed * sin(radians), speed * cos(radians))
         }
-        let neighbours: [((Double, Double)?, Double)] = [
-            (uv(0, 0), (1-u)*(1-v)),
-            (uv(1, 0), u*(1-v)),
-            (uv(0, 1), (1-u)*v),
-            (uv(1, 1), u*v)
-        ]
-        var east = 0.0, north = 0.0, total = 0.0
-        for (vector, weight) in neighbours {
-            guard let vector else { continue }
-            east += vector.0 * weight
-            north += vector.1 * weight
-            total += weight
-        }
-        guard total > 0.000001 else { return nil }
-        east /= total
-        north /= total
+        guard let a = uv(0, 0), let b = uv(1, 0),
+              let c = uv(0, 1), let d = uv(1, 1) else { return nil }
+        let east = a.0 * (1-u)*(1-v) + b.0*u*(1-v) + c.0*(1-u)*v + d.0*u*v
+        let north = a.1 * (1-u)*(1-v) + b.1*u*(1-v) + c.1*(1-u)*v + d.1*u*v
         return (east, north, hypot(east, north))
     }
 

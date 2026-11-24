@@ -9,7 +9,6 @@ final class LocalMBTilesServer {
     private var listener: NWListener?
     private var files: [String: URL] = [:]
     private var supportedFiles: Set<String> = []
-    private var readers: [String: OpaquePointer] = [:]
     private(set) var port: UInt16?
 
     private init() { start() }
@@ -32,44 +31,30 @@ final class LocalMBTilesServer {
         } catch { NSLog("HUNT MBTiles server: %@", error.localizedDescription) }
     }
 
-    private var registeredURLs: [URL]?
-    private var registeredRevision: Int?
+    func register(_ urls: [URL]) -> [(String, URL)] {
+        queue.sync {
+            // Remove obsolete registrations when a pack is deleted or replaced.
+            // Otherwise old URLs could remain reachable after switching maps.
+            files.removeAll()
+            supportedFiles.removeAll()
+            var registered: [(String, URL)] = []
+            for (index, file) in urls.enumerated() where file.isFileURL && file.pathExtension.lowercased() == "mbtiles" {
+                guard FileManager.default.fileExists(atPath: file.path) else { continue }
+                let key = "p\(index)"
+                guard isRasterMBTiles(file) else { continue }
+                files[key] = file
+                supportedFiles.insert(key)
+                registered.append((key, file))
+            }
+            return registered
+        }
+    }
 
-    // SQLite and tile-serving share a serial queue. Never wait for it on UIKit.
-    func prepareTemplates(_ urls: [URL], revision: Int, completion: @escaping ([String]) -> Void) {
-        queue.async { [self] in
-            if registeredURLs != urls || registeredRevision != revision {
-                for (_, db) in readers { sqlite3_close(db) }
-                readers.removeAll()
-                files.removeAll()
-                supportedFiles.removeAll()
-                for (index, file) in urls.enumerated() where file.isFileURL && file.pathExtension.lowercased() == "mbtiles" {
-                    guard FileManager.default.fileExists(atPath: file.path), isRasterMBTiles(file) else { continue }
-                    var db: OpaquePointer?
-                    guard sqlite3_open_v2(file.path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil) == SQLITE_OK,
-                          let db else {
-                        if let db { sqlite3_close(db) }
-                        continue
-                    }
-                    let key = "p\(index)-\(revision)"
-                    files[key] = file
-                    readers[key] = db
-                    supportedFiles.insert(key)
-                }
-                registeredURLs = urls
-                registeredRevision = revision
-            }
-            let templates: [String]
-            if let port {
-                templates = urls.indices.compactMap { index in
-                    let key = "p\(index)-\(revision)"
-                    guard supportedFiles.contains(key) else { return nil }
-                    return "http://127.0.0.1:\(port)/tiles/\(key)/{z}/{x}/{y}"
-                }
-            } else {
-                templates = []
-            }
-            DispatchQueue.main.async { completion(templates) }
+    func tileTemplate(for key: String) -> String? {
+        queue.sync {
+            guard let port else { return nil }
+            guard supportedFiles.contains(key) else { return nil }
+            return "http://127.0.0.1:\(port)/tiles/\(key)/{z}/{x}/{y}"
         }
     }
 
@@ -102,10 +87,11 @@ final class LocalMBTilesServer {
     }
 
     private func readTile(file: URL, z: Int, x: Int, y: Int) -> Data? {
-        // Reuse read-only SQLite handles while panning; this function only
-        // executes on the server's serial queue, never concurrently.
-        guard let key = files.first(where: { $0.value == file })?.key,
-              let db = readers[key] else { return nil }
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(file.path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil) == SQLITE_OK else {
+            if db != nil { sqlite3_close(db) }; return nil
+        }
+        defer { sqlite3_close(db) }
         var statement: OpaquePointer?
         guard sqlite3_prepare_v2(db, "SELECT tile_data FROM tiles WHERE zoom_level=? AND tile_column=? AND tile_row=? LIMIT 1", -1, &statement, nil) == SQLITE_OK else { return nil }
         defer { sqlite3_finalize(statement) }
