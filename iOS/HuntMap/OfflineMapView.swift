@@ -191,6 +191,8 @@ struct OfflineMapView: UIViewRepresentable {
         private var viewportWork: DispatchWorkItem?
         func cancelPendingUpdates() {
             rasterRequest += 1
+            zoneTask?.cancel()
+            zoneWorker?.cancel()
             viewportWork?.cancel()
             viewportWork = nil
             if let observer = tilesReadyObserver { NotificationCenter.default.removeObserver(observer); tilesReadyObserver = nil }
@@ -218,6 +220,12 @@ struct OfflineMapView: UIViewRepresentable {
         private var transientAnnotations: [MLNAnnotation] = []
         private var lastTransientKey: Int?
         private var zoneAnnotations: [MLNAnnotation] = []
+        private var zoneTask: Task<Void, Never>?
+        private var zoneWorker: Task<[BoundaryLine], Never>?
+        private struct BoundaryLine: Sendable {
+            let title: String
+            let points: [GeoPoint]
+        }
         private var lastZones: [GeoZone]?
         private var replayAnnotation: MLNPointAnnotation?
         private var markerCoordinates: [(UUID, CLLocationCoordinate2D)] = []
@@ -450,6 +458,64 @@ struct OfflineMapView: UIViewRepresentable {
             view.addAnnotations(shapes)
         }
 
+        private func prepareZones(_ zones: [GeoZone], in view: MLNMapView) {
+            zoneTask?.cancel()
+            zoneWorker?.cancel()
+            if !zoneAnnotations.isEmpty { view.removeAnnotations(zoneAnnotations) }
+            zoneAnnotations.removeAll()
+            let previous = zoneWorker
+            let worker = Task.detached(priority: .utility) {
+                _ = await previous?.value
+                var lines: [BoundaryLine] = []
+                for zone in zones {
+                    let title = zone.verified ? "Граница: \(zone.name)" : "НЕ ПРОВЕРЕНО: \(zone.name)"
+                    for polygon in zone.polygons {
+                        for ring in polygon.rings where ring.count >= 3 {
+                            guard !Task.isCancelled else { return [BoundaryLine]() }
+                            // Split long rings into overlapping pieces; retain every vertex.
+                            var start = 0
+                            while start < ring.count - 1 {
+                                guard !Task.isCancelled else { return [BoundaryLine]() }
+                                let end = min(start + 1024, ring.count - 1)
+                                lines.append(BoundaryLine(title: title, points: Array(ring[start...end])))
+                                start = end
+                            }
+                            if ring.first != ring.last, let first = ring.first, let last = ring.last {
+                                lines.append(BoundaryLine(title: title, points: [last, first]))
+                            }
+                        }
+                    }
+                }
+                return lines
+            }
+            zoneWorker = worker
+            zoneTask = Task { @MainActor [weak self, weak view] in
+                let lines = await worker.value
+                guard !Task.isCancelled else { return }
+                var batch: [MLNAnnotation] = []
+                var vertices = 0
+                for line in lines {
+                    guard !Task.isCancelled, let self, let view, self.map === view else { return }
+                    var coordinates = line.points.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+                    let shape = MLNPolyline(coordinates: &coordinates, count: UInt(coordinates.count))
+                    shape.title = line.title
+                    batch.append(shape)
+                    vertices += coordinates.count
+                    if vertices >= 2048 || batch.count >= 32 {
+                        view.addAnnotations(batch)
+                        self.zoneAnnotations.append(contentsOf: batch)
+                        batch.removeAll(keepingCapacity: true)
+                        vertices = 0
+                        try? await Task.sleep(nanoseconds: 16_000_000)
+                    }
+                }
+                if !Task.isCancelled, let self, let view, self.map === view, !batch.isEmpty {
+                    view.addAnnotations(batch)
+                    self.zoneAnnotations.append(contentsOf: batch)
+                }
+            }
+        }
+
         func updateAnnotations(view: MLNMapView, zones: [GeoZone], markers: [Marker], position: GeoPoint?, track: Track?, navigationPath: [GeoPoint], replayPosition: GeoPoint?,
                                weatherGrid: ForecastGrid?, weatherLayer: WeatherMapLayer,
                                offlineRoadLines: [OfflineRoadLine], offlineRoadRevision: Int) {
@@ -481,19 +547,7 @@ struct OfflineMapView: UIViewRepresentable {
             }
             if lastZones != zones {
                 lastZones = zones
-                if !zoneAnnotations.isEmpty { view.removeAnnotations(zoneAnnotations) }
-                zoneAnnotations.removeAll()
-                for zone in zones {
-                    for polygon in zone.polygons {
-                        for ring in polygon.rings where ring.count >= 3 {
-                            var coordinates = ring.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
-                            let line = MLNPolyline(coordinates: &coordinates, count: UInt(coordinates.count))
-                            line.title = zone.verified ? "Граница: \(zone.name)" : "НЕ ПРОВЕРЕНО: \(zone.name)"
-                            zoneAnnotations.append(line)
-                        }
-                    }
-                }
-                if !zoneAnnotations.isEmpty { view.addAnnotations(zoneAnnotations) }
+                prepareZones(zones, in: view)
             }
             if let replayPosition, replayPosition.valid {
                 let coordinate = CLLocationCoordinate2D(latitude: replayPosition.latitude, longitude: replayPosition.longitude)
