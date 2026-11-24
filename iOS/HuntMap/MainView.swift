@@ -792,27 +792,38 @@ struct MainView: View {
                                       mode: OfflineRouteGraph.TravelMode, valhallaError: String? = nil) {
         valhallaManeuvers = []
         nextTurnText = ""
-        do {
-            let graph: OfflineRouteGraph
-            if let downloaded = try? hosting.graph(start: current, destination: destination, mode: mode) {
-                graph = downloaded
-            } else if let bytes = try? Data(contentsOf: routingNetworkURL) {
-                graph = try OfflineRouteGraph(geoJSON: bytes, mode: mode)
-            } else {
-                graph = try hosting.graph(start: current, destination: destination, mode: mode)
+        let requestID = routeRequestID ?? UUID()
+        routeRequestID = requestID
+        navigationKind = "Подготовка локальной дорожной сети…"
+        let fallbackFile = routingNetworkURL
+        Task {
+            do {
+                let graph: OfflineRouteGraph
+                if let downloaded = try? await hosting.graphAsync(start: current, destination: destination, mode: mode) {
+                    graph = downloaded
+                } else {
+                    graph = try await Task.detached(priority: .userInitiated) {
+                        let bytes = try Data(contentsOf: fallbackFile, options: .mappedIfSafe)
+                        return try OfflineRouteGraph(geoJSON: bytes, mode: mode)
+                    }.value
+                }
+                let route = try await Task.detached(priority: .userInitiated) {
+                    try graph.path(from: current, to: destination)
+                }.value
+                guard routeRequestID == requestID, routeDestination == destination else { return }
+                guard route.count >= 2 else { throw OfflineRouteGraph.RouteError.disconnected }
+                navigationPath = route
+                navigationKind = mode == .foot ? "Локальный граф · пешком" : "Локальный граф · автомобиль"
+                routingError = nil
+            } catch {
+                guard routeRequestID == requestID, routeDestination == destination else { return }
+                navigationPath = []
+                navigationKind = "Маршрут недоступен"
+                AppDiagnosticLog.shared.recordError(subsystem: "Навигация",
+                    operation: "Резервный локальный граф, \(mode == .foot ? "пешком" : "авто")",
+                    error: error, usedCache: routeGraph != nil || !hosting.installedRoutes.isEmpty)
+                routingError = (valhallaError.map { "Valhalla: \($0). " } ?? "") + error.localizedDescription
             }
-            let route = try graph.path(from: current, to: destination)
-            guard route.count >= 2 else { throw OfflineRouteGraph.RouteError.disconnected }
-            navigationPath = route
-            navigationKind = mode == .foot ? "Локальный граф · пешком" : "Локальный граф · автомобиль"
-            routingError = nil
-        } catch {
-            navigationPath = []
-            navigationKind = "Маршрут недоступен"
-            AppDiagnosticLog.shared.recordError(subsystem: "Навигация",
-                operation: "Резервный локальный граф, \(mode == .foot ? "пешком" : "авто")",
-                error: error, usedCache: routeGraph != nil || !hosting.installedRoutes.isEmpty)
-            routingError = (valhallaError.map { "Valhalla: \($0). " } ?? "") + error.localizedDescription
         }
     }
 

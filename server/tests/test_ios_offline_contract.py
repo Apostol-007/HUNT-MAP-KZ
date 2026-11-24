@@ -299,3 +299,12 @@ def test_active_gps_track_append_only_journal():
     assert 'ORDER BY id' in journal
     assert 'pending.fixes = journalFixes' in model
     assert 'if let pending=obj.pendingTrack' not in model
+
+
+def test_legacy_routing_preparation_never_blocks_ui():
+    ui = (IOS / "MainView.swift").read_text()
+    hosting = (IOS / "HostingOfflineDownloads.swift").read_text()
+    assert 'await hosting.graphAsync(' in ui
+    assert 'Task.detached(priority: .userInitiated)' in ui
+    assert 'func graphAsync(' in hosting
+    assert 'Data(contentsOf: file, options: .mappedIfSafe)' in hosting

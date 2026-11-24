@@ -438,24 +438,29 @@ struct HostingZonePack: Decodable, Identifiable {
          .filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
-    /// Merge only installed packages intersecting the start-to-destination corridor.
-    /// A strict 200k-vertex limit prevents loading an entire nationwide graph into memory.
-    func graph(start: GeoPoint, destination: GeoPoint, mode: OfflineRouteGraph.TravelMode = .foot) throws -> OfflineRouteGraph {
+    /// Prepare the same bounded corridor graph away from UIKit. Both file reads
+    /// and GeoJSON parsing are expensive for multi-megabyte offline networks.
+    func graphAsync(start: GeoPoint, destination: GeoPoint,
+                    mode: OfflineRouteGraph.TravelMode = .foot) async throws -> OfflineRouteGraph {
         let margin = 0.03
         let west = min(start.longitude, destination.longitude) - margin
         let east = max(start.longitude, destination.longitude) + margin
         let south = min(start.latitude, destination.latitude) - margin
         let north = max(start.latitude, destination.latitude) + margin
-        let matching = routes.filter { pack in
+        let files = routes.filter { pack in
             guard installedRoutes.contains(pack.id), pack.bounds.count == 4 else { return false }
             return pack.bounds[0] <= east && pack.bounds[2] >= west &&
                    pack.bounds[1] <= north && pack.bounds[3] >= south
-        }
-        guard !matching.isEmpty else { throw HostingError.noRoute }
-        let parts = try matching.map { pack in
-            try Data(contentsOf: folder.appendingPathComponent(pack.id + ".geojson"))
-        }
-        return try OfflineRouteGraph(geoJSONParts: parts, mode: mode)
+        }.map { folder.appendingPathComponent($0.id + ".geojson") }
+        guard !files.isEmpty else { throw HostingError.noRoute }
+        return try await Task.detached(priority: .userInitiated) {
+            var parts: [Data] = []
+            for file in files {
+                try Task.checkCancellation()
+                parts.append(try Data(contentsOf: file, options: .mappedIfSafe))
+            }
+            return try OfflineRouteGraph(geoJSONParts: parts, mode: mode)
+        }.value
     }
 }
 
