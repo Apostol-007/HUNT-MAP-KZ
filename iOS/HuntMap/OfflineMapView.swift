@@ -412,7 +412,44 @@ struct OfflineMapView: UIViewRepresentable {
                                offlineRoadLines: [OfflineRoadLine], offlineRoadRevision: Int) {
             // Persistent MLNPointAnnotation identity is critical for tapping. Recreating
             // every marker on each GPS/SwiftUI update used to cancel selection gestures.
-            let transientKey = String(describing: zones) + "|" + String(describing: track) + "|" + String(describing: navigationPath) + "|" + String(describing: replayPosition) + "|" + String(offlineRoadRevision)
+            // Stable allocation-light fingerprint, including every geometry vertex.
+            // String(describing:) serialised entire arrays on every GPS/SwiftUI update.
+            var geometryHash = Hasher()
+            geometryHash.combine(offlineRoadRevision)
+            geometryHash.combine(zones.count)
+            for zone in zones {
+                geometryHash.combine(zone.id)
+                geometryHash.combine(zone.name)
+                geometryHash.combine(zone.verified)
+                for polygon in zone.polygons {
+                    geometryHash.combine(polygon.rings.count)
+                    for ring in polygon.rings {
+                        geometryHash.combine(ring.count)
+                        for point in ring {
+                            geometryHash.combine(point.latitude)
+                            geometryHash.combine(point.longitude)
+                        }
+                    }
+                }
+            }
+            if let track {
+                geometryHash.combine(track.id)
+                geometryHash.combine(track.fixes.count)
+                for fix in track.fixes {
+                    geometryHash.combine(fix.point.latitude)
+                    geometryHash.combine(fix.point.longitude)
+                }
+            }
+            geometryHash.combine(navigationPath.count)
+            for point in navigationPath {
+                geometryHash.combine(point.latitude)
+                geometryHash.combine(point.longitude)
+            }
+            if let replayPosition {
+                geometryHash.combine(replayPosition.latitude)
+                geometryHash.combine(replayPosition.longitude)
+            }
+            let transientKey = String(geometryHash.finalize())
             if transientKey != lastTransientKey {
                 if !transientAnnotations.isEmpty { view.removeAnnotations(transientAnnotations) }
                 transientAnnotations.removeAll()

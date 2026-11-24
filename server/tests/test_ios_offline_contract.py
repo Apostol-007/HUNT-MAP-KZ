@@ -308,3 +308,10 @@ def test_legacy_routing_preparation_never_blocks_ui():
     assert 'Task.detached(priority: .userInitiated)' in ui
     assert 'func graphAsync(' in hosting
     assert 'Data(contentsOf: file, options: .mappedIfSafe)' in hosting
+
+
+def test_map_geometry_changes_without_stringifying_every_point():
+    map_src = (IOS / "OfflineMapView.swift").read_text()
+    assert 'var geometryHash = Hasher()' in map_src
+    assert 'geometryHash.combine(point.latitude)' in map_src
+    assert 'String(describing: zones)' not in map_src
