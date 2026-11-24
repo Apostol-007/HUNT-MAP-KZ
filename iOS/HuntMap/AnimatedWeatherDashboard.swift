@@ -222,42 +222,83 @@ struct AnimatedWeatherDashboard: View {
         .background { SkyMotion(scene: scene, night: weather.current.isDay == 0, windy: (weather.current.windSpeedKmh ?? 0) >= 25).clipShape(RoundedRectangle(cornerRadius: 24)) }
     }
     private func hourly(_ hours: [WeatherHour]) -> some View {
-        surface {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(mode.rawValue).font(.headline)
-                        Text(mode.subtitle).font(.caption2).foregroundStyle(.white.opacity(0.75))
+        VStack(alignment: .leading, spacing: 10) {
+            hourlyHeading
+            hourlyTimeline(hours)
+            hourlySelection(hours)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(hex: "#293E55").opacity(0.88), in: RoundedRectangle(cornerRadius: 19))
+    }
+
+    private var hourlyHeading: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(mode.rawValue).font(.headline)
+                Text(mode.subtitle).font(.caption2).foregroundStyle(Color.white.opacity(0.75))
+            }
+            Spacer(minLength: 0)
+            modeControls
+        }
+    }
+
+    private var modeControls: some View {
+        HStack(spacing: 2) {
+            ForEach(ForecastMode.allCases, id: \.self) { item in
+                modeButton(item)
+            }
+        }
+        .background(Color.black.opacity(0.14), in: Capsule())
+    }
+
+    private func modeButton(_ item: ForecastMode) -> some View {
+        let fill: Color = mode == item ? Color.white.opacity(0.18) : Color.clear
+        return Button { mode = item } label: {
+            Image(systemName: item.icon)
+                .frame(width: 36, height: 40)
+                .background(fill, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(item.rawValue)
+    }
+
+    private func hourlyTimeline(_ hours: [WeatherHour]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            VStack(spacing: 3) {
+                HStack(spacing: 0) {
+                    ForEach(hours.indices, id: \.self) { index in
+                        hourCell(hours[index], first: index == 0)
                     }
-                    Spacer(minLength: 0)
-                    HStack(spacing: 2) {
-                        ForEach(ForecastMode.allCases, id: \.self) { item in
-                            Button { mode = item } label: {
-                                Image(systemName: item.icon).frame(width: 36, height: 40)
-                                    .background(mode == item ? Color.white.opacity(0.18) : Color.clear, in: Capsule())
-                            }.buttonStyle(.plain).accessibilityLabel(item.rawValue)
-                        }
-                    }.background(.black.opacity(0.14), in: Capsule())
                 }
-                ScrollView(.horizontal, showsIndicators: false) {
-                    VStack(spacing: 3) {
-                        HStack(spacing: 0) {
-                            ForEach(Array(hours.enumerated()), id: \.offset) { index, hour in
-                                hourCell(hour, first: index == 0)
-                            }
-                        }
-                        if mode == .wind {
-                            WeatherTrend(values: hours.map(\.windSpeedKmh), gusts: hours.map(\.windGustKmh))
-                                .frame(width: CGFloat(hours.count) * 60, height: 38)
-                        }
-                    }
-                }
-                if let selected, let hour = hours.first(where: { $0.timestamp == selected }) {
-                    Text(dateText(hour.timestamp, "dd.MM HH:mm") + " · " + unit(hour.temperatureC, "°") + " · " + n(hour.windSpeedKmh) + " км/ч · " + n(hour.precipitationMm, 1) + " мм").font(.caption)
-                }
+                if mode == .wind { hourlyWindTrend(hours) }
             }
         }
     }
+
+    private func hourlyWindTrend(_ hours: [WeatherHour]) -> some View {
+        let speeds: [Double?] = hours.map(\.windSpeedKmh)
+        let gusts: [Double?] = hours.map(\.windGustKmh)
+        let width: CGFloat = CGFloat(hours.count) * 60
+        return WeatherTrend(values: speeds, gusts: gusts)
+            .frame(width: width, height: 38)
+    }
+
+    @ViewBuilder
+    private func hourlySelection(_ hours: [WeatherHour]) -> some View {
+        if let selected, let hour = hours.first(where: { $0.timestamp == selected }) {
+            Text(hourSummary(hour)).font(.caption)
+        }
+    }
+
+    private func hourSummary(_ hour: WeatherHour) -> String {
+        let time = dateText(hour.timestamp, "dd.MM HH:mm")
+        let temperature = unit(hour.temperatureC, "°")
+        let wind = n(hour.windSpeedKmh) + " км/ч"
+        let rain = n(hour.precipitationMm, 1) + " мм"
+        return [time, temperature, wind, rain].joined(separator: " · ")
+    }
+
     private func hourCell(_ hour: WeatherHour, first: Bool) -> some View {
         Button { selected = hour.timestamp } label: {
             VStack(spacing: 7) {
