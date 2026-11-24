@@ -1,1 +1,2 @@
-# Offline raster MBTiles rendering; used by tools/build_osm_mbtiles.py\nPillow>=11.0,<13.0\n
+# Offline raster MBTiles rendering; used by tools/build_osm_mbtiles.py
+Pillow>=11.0,<13.0
