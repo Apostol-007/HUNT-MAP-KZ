@@ -219,3 +219,12 @@ def test_weather_uses_lightweight_overlay_without_maplibre_shape_flood():
     assert 'mapView.convert(screenPoint, toCoordinateFrom: self)' in overlay
     assert 'private let particleCount = 85' in wind
     assert 'link.preferredFramesPerSecond = 15' in wind
+
+
+def test_weather_reuses_latest_cached_hour():
+    weather = (IOS / "WeatherGridService.swift").read_text()
+    assert 'private func latestCachedGrid(region: Region)' in weather
+    assert 'latestCachedGrid(region: detailed) ?? latestCachedGrid(region: coarse)' in weather
+    assert 'let currentHourAvailable' in weather
+    assert 'if !currentHourAvailable' in weather
+    assert 'lastFailedKey == key' in weather
