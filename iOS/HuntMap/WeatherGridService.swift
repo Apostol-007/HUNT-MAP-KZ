@@ -153,6 +153,21 @@ struct ForecastGrid: Codable {
               abs(time.timeIntervalSince(date)) < 60 else { return nil }
         return value
     }
+    /// Retain the latest successfully saved forecast when the requested hour is not cached.
+    /// A stale forecast is explicitly labelled; it is never presented as current weather.
+    private func latestCachedGrid(region: Region) -> ForecastGrid? {
+        let prefix = "v2_\(region.key)_"
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: cacheDirectory, includingPropertiesForKeys: nil) else { return nil }
+        var latest: (Date, ForecastGrid)?
+        for file in files where file.lastPathComponent.hasPrefix(prefix) && file.pathExtension == "json" {
+            guard let data = try? Data(contentsOf: file),
+                  let value = try? JSONDecoder().decode(ForecastGrid.self, from: data),
+                  value.validated(), let date = value.forecastDate else { continue }
+            if latest == nil || date > latest!.0 { latest = (date, value) }
+        }
+        return latest?.1
+    }
     func stop() {
         task?.cancel()
         loading = false
@@ -294,6 +309,10 @@ struct ForecastGrid: Codable {
             // Show the overlapping previous region while new viewport data arrives.
             cached = true
             status = "Предыдущий участок виден · обновляем новую область"
+        } else if let saved = latestCachedGrid(region: detailed) ?? latestCachedGrid(region: coarse) {
+            grid = saved
+            cached = true
+            status = "Сохранённый прогноз за \(saved.forecastTimeUTC) · обновляем"
         } else {
             grid = nil
             cached = false
@@ -307,8 +326,9 @@ struct ForecastGrid: Codable {
             self.loading = true
             defer { self.loading = false }
             do {
-                // Show a low-cost grid first, then refine without blanking the map.
-                if self.grid == nil {
+                // Replace a stale fallback immediately with the correct target hour.
+                let currentHourAvailable = self.grid?.forecastDate.map { abs($0.timeIntervalSince(date)) < 60 } ?? false
+                if !currentHourAvailable {
                     let value = try await self.fetchGrid(region: coarse, at: date)
                     guard !Task.isCancelled, self.lastRequestedKey == key else { return }
                     self.grid = value
