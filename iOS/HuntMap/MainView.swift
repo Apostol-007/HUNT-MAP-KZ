@@ -504,7 +504,7 @@ struct MainView: View {
                            protomapsOnlineStyleURL: protomaps.onlineStyleURL,
                            protomapsOfflineStyleURL: protomaps.offlineStyleURL,
                            protomapsHybridStyleURL: protomaps.hybridOfflineStyleURL,
-                           online: online, active: tab == .map, selectedZone: $zone,
+                           online: online, active: tab == .map, zonesRevision: model.zoneRevision, selectedZone: $zone,
                            weatherGrid: tab == .map && weatherLayer != .none ? weatherGrid.grid : nil,
                            weatherLayer: tab == .map ? weatherLayer : .none,
                            centerRequest: centerRequest,
