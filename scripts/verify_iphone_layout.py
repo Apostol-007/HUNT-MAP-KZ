@@ -24,5 +24,11 @@ assert 'func makeUIView(context: Context) -> UIView' in map_view
 assert 'container.addSubview(view)' in map_view
 assert 'CFBundleShortVersionString' in diag
 assert 'WeatherMapSheet' in main
-assert 'if tab == .map {' in main
+assert '@State private var tab: Tab = .home' in main
+assert '@State private var mapOpened = false' in main
+assert 'if mapOpened || tab == .map {' in main
+assert 'if value == .map { mapOpened = true }' in main
+assert 'if tab != .map { mapOpened = false }' in main
+assert 'active: tab == .map' in main
+assert 'guard active else {' in map_view
 print("PASS: launch screen, XcodeGen Info.plist, fullscreen map, lazy MapLibre and version")
