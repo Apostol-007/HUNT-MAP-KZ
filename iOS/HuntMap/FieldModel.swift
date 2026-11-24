@@ -44,14 +44,21 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
     @Published var paused = false
     @Published var status = "GPS не запущен"
     @Published var lastWarning = "Границы не загружены"
-    @Published var zones: [GeoZone] = [] { didSet { zoneRevision += 1 } }
+    @Published var zones: [GeoZone] = [] {
+        didSet {
+            zoneRevision += 1
+            boundaryFixQueue.removeAll()
+            boundaryResetRequired = true
+        }
+    }
     @Published var strictOffline = true
     @Published var gpsAuthorization = "не определено"
     @Published var lastError = ""
     private let manager=CLLocationManager()
     private let boundaryWorker = BoundaryWorker()
     private var boundaryTask: Task<Void, Never>?
-    private var pendingBoundaryFix: GPSFix?
+    private var boundaryFixQueue = BoundaryFixQueue()
+    private var boundaryResetRequired = false
     private(set) var zoneRevision = 0
     private var lastFix: CLLocation?
     private let trackJournal = TrackPointJournal()
@@ -209,7 +216,15 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
             if !trackJournal.append(point) { persist() }
         }
         lastFix=fix
-        pendingBoundaryFix = GPSFix(position:p,accuracyMeters:fix.horizontalAccuracy,timestamp:fix.timestamp)
+        let boundaryFix = GPSFix(position:p,accuracyMeters:fix.horizontalAccuracy,timestamp:fix.timestamp)
+        if boundaryFixQueue.append(boundaryFix) {
+            boundaryResetRequired = true
+            lastWarning = "Очередь проверки границ перегружена; положение уточняется"
+            AppDiagnosticLog.shared.record(severity: "warning", subsystem: "Геозоны",
+                operation: "Проверка GPS", code: "BOUNDARY_BACKLOG",
+                rootCause: "Пропущена часть замеров при перегрузке",
+                nextAction: "Дождаться новых GPS-замеров")
+        }
         scheduleBoundaryCheck()
     }
 
@@ -217,13 +232,14 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         guard boundaryTask == nil else { return }
         boundaryTask = Task { [weak self] in
             guard let self else { return }
-            while let fix = self.pendingBoundaryFix {
-                self.pendingBoundaryFix = nil
+            while let fix = self.boundaryFixQueue.popFirst() {
                 let revision = self.zoneRevision
                 let snapshot = self.zones
-                let events = await self.boundaryWorker.process(fix, zones: snapshot, revision: revision)
+                let reset = self.boundaryResetRequired
+                self.boundaryResetRequired = false
+                let events = await self.boundaryWorker.process(fix, zones: snapshot, revision: revision, reset: reset)
                 guard !Task.isCancelled else { break }
-                if revision == self.zoneRevision {
+                if revision == self.zoneRevision && !self.boundaryResetRequired {
                     for event in events { self.publishBoundaryEvent(event) }
                 }
             }
@@ -360,8 +376,8 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
 private actor BoundaryWorker {
     private var engine = BoundaryEngine()
     private var revision = -1
-    func process(_ fix: GPSFix, zones: [GeoZone], revision: Int) -> [BoundaryEvent] {
-        if self.revision != revision {
+    func process(_ fix: GPSFix, zones: [GeoZone], revision: Int, reset: Bool) -> [BoundaryEvent] {
+        if reset || self.revision != revision {
             engine = BoundaryEngine()
             self.revision = revision
         }
