@@ -230,9 +230,32 @@ struct ForecastGrid: Codable {
                     guard let endpoint = url.url else { throw URLError(.badURL) }
                     var request = URLRequest(url: endpoint)
                     request.timeoutInterval = 16
-                    let (data, response) = try await URLSession.shared.data(for: request)
-                    guard let http = response as? HTTPURLResponse else {
+                    var (data, response) = try await URLSession.shared.data(for: request)
+                    guard var http = response as? HTTPURLResponse else {
                         throw URLError(.badServerResponse)
+                    }
+                    if http.statusCode == 400 {
+                        // Some provider versions reject explicit start_hour/end_hour.
+                        // Fall back to the full UTC forecast, but never mix the two
+                        // mutually exclusive ways of choosing a time range.
+                        let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+                        let reason = (json?["reason"] as? String ?? "").lowercased()
+                        if reason.contains("start_hour") || reason.contains("end_hour") ||
+                           reason.contains("forecast_days") {
+                            var fallback = url
+                            fallback.queryItems?.removeAll {
+                                $0.name == "start_hour" || $0.name == "end_hour"
+                            }
+                            fallback.queryItems?.append(URLQueryItem(name: "forecast_days", value: "8"))
+                            guard let fallbackURL = fallback.url else { throw URLError(.badURL) }
+                            var retry = URLRequest(url: fallbackURL)
+                            retry.timeoutInterval = 20
+                            (data, response) = try await URLSession.shared.data(for: retry)
+                            guard let fallbackHTTP = response as? HTTPURLResponse else {
+                                throw URLError(.badServerResponse)
+                            }
+                            http = fallbackHTTP
+                        }
                     }
                     if http.statusCode != 200 {
                         await AppDiagnosticLog.shared.recordHTTP(
@@ -243,7 +266,7 @@ struct ForecastGrid: Codable {
                         let reason = String(((json?["reason"] as? String) ?? "Ответ провайдера отклонён").prefix(180))
                         throw ProviderFailure(code: http.statusCode, reason: reason)
                     }
-                    guard data.count < 500_000 else {
+                    guard data.count < 2_000_000 else {
                         throw URLError(.dataLengthExceedsMaximum)
                     }
                     let result = try JSONDecoder().decode([OpenMeteoGridPoint].self, from: data)
