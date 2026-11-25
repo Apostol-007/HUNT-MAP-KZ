@@ -3,11 +3,15 @@ import XCTest
 final class TrackStatisticsTests:XCTestCase {
     func testIncrementalMatchesBatch() {
         let start = Date(timeIntervalSince1970: 1000)
-        let samples = (0..<100).map { index in
-            TrackSample(point: GeoPoint(43, 76 + Double(index) * 0.00001),
-                        time: start.addingTimeInterval(Double(index) * 2),
-                        accuracy: 5, altitude: Double(index * 5), speed: 1,
-                        segmentStart: index == 50)
+        var samples: [TrackSample] = []
+        for index in 0..<100 {
+            let longitude: Double = 76.0 + Double(index) * 0.00001
+            let point = GeoPoint(43.0, longitude)
+            let timestamp = start.addingTimeInterval(Double(index) * 2.0)
+            let altitude: Double = Double(index) * 5.0
+            let sample = TrackSample(point: point, time: timestamp, accuracy: 5.0,
+                                     altitude: altitude, speed: 1.0, segmentStart: index == 50)
+            samples.append(sample)
         }
         let batch = TrackStatistics.calculate(samples)
         var incremental = TrackStatistics.calculate([])
