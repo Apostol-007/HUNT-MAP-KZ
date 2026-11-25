@@ -1,8 +1,15 @@
 import Foundation
 
-struct GBIFTaxon: Identifiable { let id: String; let name: String }
+struct GBIFTaxon: Identifiable, Codable { let id: String; let name: String }
 
 enum GBIFDiscovery {
+    private static var cacheURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("gbif_taxa.json")
+    }
+    static func cached() -> [GBIFTaxon] {
+        guard let data = try? Data(contentsOf: cacheURL) else { return [] }
+        return (try? JSONDecoder().decode([GBIFTaxon].self, from: data)) ?? []
+    }
     struct FacetResult: Decodable {
         struct Facet: Decodable {
             struct Count: Decodable { let name: String; let count: Int }
@@ -31,6 +38,9 @@ enum GBIFDiscovery {
         }
         let parsed = try JSONDecoder().decode(FacetResult.self, from: data)
         let counts = parsed.facets?.first(where: { $0.field.lowercased() == "scientificname" })?.counts ?? []
-        return counts.filter { !$0.name.isEmpty }.map { GBIFTaxon(id: $0.name, name: "\($0.name) · записей: \($0.count)") }
+        let taxa = counts.filter { !$0.name.isEmpty }.map { GBIFTaxon(id: $0.name, name: "\($0.name) · записей: \($0.count)") }
+        try FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(taxa).write(to: cacheURL, options: .atomic)
+        return taxa
     }
 }

@@ -27,6 +27,7 @@ struct MainView: View {
     @StateObject private var animals = WildlifeStore()
     @StateObject private var connectivity = WeatherConnectivity()
     @StateObject private var weather = WeatherService()
+    @StateObject private var observations = ObservationStore()
     @StateObject private var weatherGrid = WeatherGridService()
 
     @AppStorage("hunt.onlineBasemap") private var online = true
@@ -1677,7 +1678,7 @@ struct MainView: View {
             HStack(spacing: 8) {
                 ReferenceChip(title: "Погода", selected: serviceSection == .weather) { serviceSection = .weather }
                 ReferenceChip(title: "Астрономия", selected: serviceSection == .astronomy) { serviceSection = .astronomy }.accessibilityIdentifier("service_astronomy")
-                ReferenceChip(title: "Животные", selected: serviceSection == .wildlife) { serviceSection = .wildlife }
+                ReferenceChip(title: "Животные", selected: serviceSection == .wildlife) { serviceSection = .wildlife }.accessibilityIdentifier("service_wildlife")
             }
             switch serviceSection {
             case .weather: weatherContent
@@ -1786,10 +1787,10 @@ struct MainView: View {
         VStack(alignment: .leading, spacing: 14) {
             ReferencePageHeader(title: "Животные")
             HStack(spacing: 8) {
-                ForEach(["По угодьям", "Справочник"], id: \.self) { name in
+                ForEach(["По угодьям", "Справочник", "Дневник"], id: \.self) { name in
                     ReferenceChip(title: name, selected: selectedWildlifeMode == name) {
                         selectedWildlifeMode = name
-                    }
+                    }.accessibilityIdentifier("wildlife_" + name)
                 }
             }
             if selectedWildlifeMode == "По угодьям" {
@@ -1822,6 +1823,9 @@ struct MainView: View {
                         }
                     }.fbCard()
                 }
+            } else if selectedWildlifeMode == "Дневник" {
+                ObservationJournal(store: observations, model: model, wildlife: animals, weather: weather.forecast,
+                    onMap: { point in mapFocus = point; centerRequest += 1; tab = .map })
             } else {
                 ReferenceEmptyCard(title: "Справочник наблюдений GBIF",
                                    detail: "Публичные наблюдения не подтверждают право на охоту",
@@ -1836,7 +1840,8 @@ struct MainView: View {
                 }
                 .disabled(showGBIF)
                 if let wildlifeError { Text(wildlifeError).foregroundStyle(.red).font(.caption) }
-                ForEach(taxa) { animal in
+                OfflineWildlifeCatalog(store: animals)
+                ForEach(taxa.isEmpty ? GBIFDiscovery.cached() : taxa) { animal in
                     HStack {
                         Image(systemName: "pawprint.fill").foregroundStyle(HuntReference.green)
                         Text(animal.name).font(.subheadline)

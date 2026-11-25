@@ -93,6 +93,24 @@ final class HuntSmokeTests: XCTestCase {
         capture("09-astronomy", app: app)
     }
 
+    func testObservationJournalNavigation() throws {
+        let app = openApp()
+        app.buttons["tab_Сервисы"].tap()
+        let wildlife = app.buttons["service_wildlife"]
+        XCTAssertTrue(wildlife.waitForExistence(timeout: 15))
+        wildlife.tap()
+        let journal = app.buttons["wildlife_Дневник"]
+        XCTAssertTrue(journal.waitForExistence(timeout: 10))
+        journal.tap()
+        let add = app.buttons["observation_add"]
+        XCTAssertTrue(add.waitForExistence(timeout: 10))
+        capture("10-observation-journal", app: app)
+        add.tap()
+        XCTAssertTrue(app.textFields["observation_species"].waitForExistence(timeout: 15))
+        capture("11-observation-editor", app: app)
+        app.buttons["observation_cancel"].tap()
+    }
+
     func testLaunchAndPrimaryNavigation() throws {
         let app = openApp()
         let tabs = [("Главная", "01-home"), ("Карта", "02-map"),
