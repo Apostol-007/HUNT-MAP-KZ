@@ -252,3 +252,13 @@ def test_ground_labels_offline_and_camera_contract():
     assert 'groundLabels?.configure(zones: zones, selectedID: highlightedGroundID, key: key)' in map_view
     assert 'groundLabels?.cameraChanged(force: true)' in map_view
     assert 'GroundLabelsOverlay(mapView: view, hostView: container)' in map_view
+
+
+def test_no_map_selection_grid_and_gps_follow():
+    ui = (IOS / 'MainView.swift').read_text()
+    native = (IOS / 'OfflineMapView.swift').read_text()
+    manager = (IOS / 'OfflineManagerScreen.swift').read_text()
+    assert 'gridMode' not in ui and 'renderGrid' not in native
+    assert 'Сетка карты' not in manager
+    assert 'routeGuidance || recordedRouteFollowing' in ui
+    assert 'followGPS(view: view, enabled: followsGPS' in native

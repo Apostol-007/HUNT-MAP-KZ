@@ -16,14 +16,11 @@ struct MainView: View {
     @StateObject private var valhalla = ValhallaRoutingStore()
     @State private var importingValhallaTiles = false
     @State private var routeRequestID: UUID?
-    @State private var gridMode = false
     @State private var measurementMode: MeasurementKind?
     @State private var measurementPoints: [GeoPoint] = []
     @State private var measurementMoveIndex: Int?
     @State private var profileTrack: Track?
     @State private var measurementArchive = MeasurementArchive()
-    @State private var gridStep = 0.1
-    @State private var selectedGridCells: Set<String> = []
     @StateObject private var animals = WildlifeStore()
     @StateObject private var connectivity = WeatherConnectivity()
     @StateObject private var weather = WeatherService()
@@ -52,7 +49,6 @@ struct MainView: View {
     @State private var showWeatherLayers = false
     @State private var showAbout = false
     @State private var showOfflineManager = false
-    @State private var offlineArea: [Double]? = nil
     @State private var showFieldMode = false
     @State private var showEmergency = false
     @State private var showLegalLibrary = false
@@ -405,7 +401,7 @@ struct MainView: View {
             HuntSettingsScreen(model: model, observations: observations,
                 online: $online, grounds: $showGrounds, markers: $showMarkersOnMap,
                 gps: $showGPSOnMap, track: $showTrackOnMap,
-                onStorage: { showSettings = false; offlineArea = nil; showOfflineManager = true },
+                onStorage: { showSettings = false; showOfflineManager = true },
                 onDiagnostics: { showSettings = false; showDiagnostics = true })
                 .huntModal()
         }
@@ -419,8 +415,7 @@ struct MainView: View {
         }
         .sheet(isPresented: $showOfflineManager) {
             OfflineManagerScreen(hosting: hosting, tiles: maps, protomaps: protomaps, valhalla: valhalla,
-                area: offlineArea, startupBusy: startupSync.presented || startupSync.isDownloading,
-                onSelectArea: { showOfflineManager = false; measurementMode = nil; gridMode = true; tab = .map })
+                startupBusy: startupSync.presented || startupSync.isDownloading)
                 .huntModal()
         }
         .sheet(isPresented: $showAbout) { AboutHuntView().huntModal() }
@@ -581,7 +576,7 @@ struct MainView: View {
             Text("Быстрые действия").font(.headline.bold())
             LazyVGrid(columns: [.init(.flexible()), .init(.flexible())], spacing: 10) {
                 ReferenceActionCard(title: "Карта", subtitle: "Открыть карту", symbol: "map") { tab = .map }
-                ReferenceActionCard(title: "Офлайн-карты", subtitle: "Пакеты и загрузки", symbol: "checkmark.icloud") { offlineArea = nil; showOfflineManager = true }
+                ReferenceActionCard(title: "Офлайн-карты", subtitle: "Пакеты и загрузки", symbol: "checkmark.icloud") { showOfflineManager = true }
                 ReferenceActionCard(title: "Мои маршруты", subtitle: "Треки и GPX", symbol: "mappin.and.ellipse") { dataSection = .routes; tab = .data }
                 ReferenceActionCard(title: "Метки", subtitle: "Сохранённые точки", symbol: "mappin.circle") { dataSection = .markers; tab = .data }
                 ReferenceActionCard(title: "Погода", subtitle: "Прогноз и карта", symbol: "cloud.sun") { serviceSection = .weather; tab = .services }
@@ -630,6 +625,8 @@ struct MainView: View {
                            online: online, selectedZone: $zone,
                            weatherGrid: tab == .map && weatherLayer != .none ? weatherGrid.grid : nil,
                            weatherLayer: tab == .map ? weatherLayer : .none,
+                           followsGPS: (model.recording && !model.paused) || routeGuidance || recordedRouteFollowing,
+                           followPosition: model.coordinate,
                            centerRequest: centerRequest,
                            zoomCommand: zoomCommand,
                            overviewCommand: overviewCommand,
@@ -677,13 +674,6 @@ struct MainView: View {
                                    selectedMapMarker = MapMarkerSelection(id: id)
                                }
                            },
-                           gridEnabled: gridMode,
-                           gridStep: gridStep,
-                           selectedGridCells: selectedGridCells,
-                           onGridTap: { id in
-                               if selectedGridCells.contains(id) { selectedGridCells.remove(id) }
-                               else if selectedGridCells.count < 100 { selectedGridCells.insert(id) }
-                           },
                            onViewportChanged: { bounds in
                                weatherGrid.updateViewport(bounds, active: weatherLayer != .none)
                                if !online {
@@ -726,11 +716,6 @@ struct MainView: View {
                 HStack {
                     Spacer()
                     VStack(spacing: 7) {
-                        circleMapButton(gridMode ? "square.grid.3x3.fill" : "square.grid.3x3", label: "Выбор сетки") {
-                            measurementMode = nil
-                            measurementMoveIndex = nil
-                            gridMode.toggle()
-                        }
                         circleMapButton("cloud.sun.fill", label: "Погода") {
                             if weatherLayer == .none { weatherLayer = .wind }
                             showWeatherLayers = true
@@ -779,11 +764,6 @@ struct MainView: View {
                         onClose: { measurementMode = nil; measurementMoveIndex = nil })
                         .padding(.horizontal, 12).padding(.bottom, 8)
                 }
-                if gridMode {
-                    gridSelectionBar
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 8)
-                }
                 if let movingMarkerID {
                     HStack(spacing: 8) {
                         Image(systemName: "hand.point.up.left.fill")
@@ -798,7 +778,7 @@ struct MainView: View {
                     .padding(.bottom, 8)
                     .accessibilityIdentifier("marker_move_mode")
                 }
-                if measurementMode == nil, routeDestination == nil, recordedRoute == nil, !gridMode, showGrounds, let ground = model.zones.first(where: { $0.id == highlightedGroundID }) {
+                if measurementMode == nil, routeDestination == nil, recordedRoute == nil, showGrounds, let ground = model.zones.first(where: { $0.id == highlightedGroundID }) {
                     selectedGroundBanner(ground)
                         .padding(.horizontal, 12)
                         .padding(.bottom, 8)
@@ -842,7 +822,6 @@ struct MainView: View {
                             Button(kind.rawValue) {
                                 measurementPoints = []
                                 measurementMoveIndex = nil
-                                gridMode = false
                                 movingMarkerID = nil
                                 measurementMode = kind
                             }
@@ -876,45 +855,6 @@ struct MainView: View {
         guard let point = measurementPoints.last ?? model.coordinate,
               let ground = model.zones.first(where: { $0.id == highlightedGroundID }) else { return nil }
         return ground.distanceToBoundaryMeters(point)
-    }
-
-    private var gridSelectionBar: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack {
-                Image(systemName: "square.grid.3x3.fill").foregroundStyle(HuntReference.green)
-                Text("Сетка · \(selectedGridCells.count) ячеек").font(.caption.bold())
-                Spacer()
-                Button("Закрыть") { gridMode = false }.font(.caption)
-            }
-            HStack(spacing: 8) {
-                ForEach([0.05, 0.1, 0.25, 0.5], id: \.self) { step in
-                    Button(String(format: "%.2f°", step)) {
-                        gridStep = step
-                        selectedGridCells.removeAll()
-                    }
-                    .font(.caption2.bold())
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .background(gridStep == step ? HuntReference.green.opacity(0.22) : Color.white.opacity(0.08),
-                                in: Capsule())
-                }
-            }
-            Text("Коснитесь ячеек на карте. Выделено до 100 участков.")
-                .font(.caption2).foregroundStyle(.secondary)
-            HStack {
-                Button("Очистить") { selectedGridCells.removeAll() }
-                    .disabled(selectedGridCells.isEmpty)
-                Spacer()
-                Button("Менеджер пакетов") {
-                    offlineArea = nil
-                    showOfflineManager = true
-                }.disabled(selectedGridCells.isEmpty)
-            }
-            .font(.caption)
-        }
-        .foregroundStyle(.white)
-        .padding(12)
-        .background(HuntReference.card.opacity(0.97), in: RoundedRectangle(cornerRadius: 14))
     }
 
     // MARK: - In-app offline guidance / routing
@@ -1733,7 +1673,6 @@ struct MainView: View {
                 HuntAction(title: "На карте", symbol: "map") {
                     pointDestination = serviceSection
                     pickingForecastPoint = true
-                    gridMode = false
                     measurementMode = nil
                     movingMarkerID = nil
                     tab = .map
@@ -1883,7 +1822,7 @@ struct MainView: View {
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "location.north.circle", title: "Полевой режим") { showFieldMode = true }
                 ReferenceMenuRow(symbol: "cross.case", title: "Экстренная помощь") { showEmergency = true }
-                ReferenceMenuRow(symbol: "externaldrive", title: "Офлайн-карты") { offlineArea = nil; showOfflineManager = true }
+                ReferenceMenuRow(symbol: "externaldrive", title: "Офлайн-карты") { showOfflineManager = true }
                 ReferenceMenuRow(symbol: "gearshape", title: "Настройки") { showSettings = true }.accessibilityIdentifier("settings_open")
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "info.circle", title: "О приложении") { showAbout = true }

@@ -5,9 +5,7 @@ struct OfflineManagerScreen: View {
     @ObservedObject var tiles: OfflineTileStore
     @ObservedObject var protomaps: ProtomapsOfflineStore
     @ObservedObject var valhalla: ValhallaRoutingStore
-    let area: [Double]?
     let startupBusy: Bool
-    let onSelectArea: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var filter: Filter = .all
     @State private var query = ""
@@ -98,7 +96,6 @@ struct OfflineManagerScreen: View {
                 HuntAction(title: "Обновить каталог", symbol: "arrow.clockwise") {
                     start { await hosting.refresh(); if !Task.isCancelled { await protomaps.refresh() } }
                 }.disabled(locked)
-                HuntAction(title: "Сетка карты", symbol: "square.grid.3x3") { onSelectArea() }.disabled(job != nil)
             }
             if startupBusy { Text("Синхронизация при запуске ещё выполняется.").font(.caption).foregroundStyle(.orange) }
         }

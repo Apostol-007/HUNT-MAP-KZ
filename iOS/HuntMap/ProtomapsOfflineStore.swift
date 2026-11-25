@@ -190,25 +190,11 @@ private struct ProtomapsCatalog: Codable { let schema: String; let packs: [Proto
     /// Automatically download all newly published packs. The existing installer
     /// performs size, PMTiles v3 magic and SHA-256 verification before replacement.
     func downloadAllAvailable() async {
-        let cells = available.compactMap { pack -> OfflineGridCell? in
-            guard pack.bounds.count == 4 else { return nil }
-            return OfflineGridCell(latitude: (pack.bounds[1] + pack.bounds[3]) / 2,
-                                   longitude: (pack.bounds[0] + pack.bounds[2]) / 2,
-                                   step: 1)
-        }
-        if !cells.isEmpty { await download(cells: cells) }
+        await installMissing(available)
     }
     func downloadPack(id: String) async {
         guard !busy, let item = available.first(where: { $0.id == id }) else { return }
         await installMissing([item])
-    }
-    func download(cells: [OfflineGridCell]) async {
-        guard !busy, !cells.isEmpty else { return }
-        let missing = available.filter { pack in
-            cells.contains(where: { $0.intersects(pack.bounds) }) &&
-            !installed.contains(where: { $0.id == pack.id && $0.sha256.lowercased() == pack.sha256.lowercased() })
-        }
-        await installMissing(missing)
     }
     private func installMissing(_ requested: [ProtomapsPack]) async {
         guard !busy else { return }
@@ -216,7 +202,7 @@ private struct ProtomapsCatalog: Codable { let schema: String; let packs: [Proto
             !installed.contains(where: { $0.id == item.id && $0.sha256.lowercased() == item.sha256.lowercased() })
         }
         guard !missing.isEmpty else {
-            status = "Нет новых PMTiles для выбранной сетки"
+            status = "Все доступные PMTiles установлены"
             if !assetsReady { await downloadAssets() }
             return
         }
