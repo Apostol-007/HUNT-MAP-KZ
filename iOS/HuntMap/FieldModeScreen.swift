@@ -4,6 +4,8 @@ import HuntCore
 
 struct FieldModeScreen: View {
     @ObservedObject var model: FieldModel
+    let onReturn: (Track) -> Void
+    @State private var confirmReturn = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var phase
     @State private var emergency = false
@@ -19,6 +21,7 @@ struct FieldModeScreen: View {
                             .huntSurface()
                         metrics(at: clock.date)
                         originCard(at: clock.date)
+                        returnControl(at: clock.date)
                         recordingControls
                         HuntAction(title: "Экстренная помощь", symbol: "cross.case") { emergency = true }
                             .accessibilityIdentifier("field_sos")
@@ -31,6 +34,16 @@ struct FieldModeScreen: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Готово") { dismiss() }.accessibilityIdentifier("field_close") } }
             .sheet(isPresented: $emergency) { EmergencyScreen(model: model).huntModal() }
+            .alert("Вернуться по записанному пути?", isPresented: $confirmReturn) {
+                Button("Начать возвращение") {
+                    guard let track = model.currentTrack, canReturn(at: Date()) else { return }
+                    onReturn(track)
+                    dismiss()
+                }
+                Button("Отмена", role: .cancel) {}
+            } message: {
+                Text("Будет использована обратная последовательность уже записанных GPS-точек. Запись не остановится. Учитывайте реальные препятствия и разрывы трека.")
+            }
             .confirmationDialog("Завершить запись маршрута?", isPresented: $confirmStop, titleVisibility: .visible) {
                 Button("Завершить", role: .destructive) { model.stopTrack() }
                 Button("Отмена", role: .cancel) {}
@@ -80,6 +93,25 @@ struct FieldModeScreen: View {
             Text("Исходная точка — первый сохранённый GPS-замер текущего трека.")
                 .font(.caption).foregroundStyle(HuntReference.muted)
         }.huntSurface()
+    }
+    private func canReturn(at now: Date) -> Bool {
+        guard fresh(now), let accuracy = model.accuracy, accuracy <= 50,
+              let track = model.currentTrack, track.fixes.count >= 2 else { return false }
+        return track.distanceMeters >= 15
+    }
+    private func returnControl(at now: Date) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HuntAction(title: "Вернуться по треку", symbol: "arrow.uturn.backward", primary: true) {
+                confirmReturn = true
+            }
+            .disabled(!canReturn(at: now))
+            .opacity(canReturn(at: now) ? 1 : 0.45)
+            .accessibilityIdentifier("field_return")
+            if !canReturn(at: now) {
+                Text("Нужны свежая GPS-позиция и записанный путь не менее 15 м.")
+                    .font(.caption).foregroundStyle(HuntReference.muted)
+            }
+        }
     }
     private var recordingControls: some View {
         VStack(spacing: 10) {

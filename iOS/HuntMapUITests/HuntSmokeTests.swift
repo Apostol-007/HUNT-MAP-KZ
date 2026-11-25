@@ -39,6 +39,13 @@ final class HuntSmokeTests: XCTestCase {
         field.tap()
         XCTAssertTrue(app.buttons["field_close"].waitForExistence(timeout: 15))
         capture("07-field-mode", app: app)
+        let backtrack = app.buttons["field_return"]
+        for _ in 0..<4 {
+            if backtrack.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(backtrack.exists)
+        XCTAssertFalse(backtrack.isEnabled, "Empty recording must not start backtracking")
         let sos = app.buttons["field_sos"]
         for _ in 0..<5 {
             if sos.isHittable { break }
