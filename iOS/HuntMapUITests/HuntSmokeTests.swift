@@ -111,6 +111,33 @@ final class HuntSmokeTests: XCTestCase {
         app.buttons["observation_cancel"].tap()
     }
 
+    func testObservationPersistence() throws {
+        var app = openApp()
+        let species = "CI-" + UUID().uuidString.prefix(8)
+        func openJournal(_ app: XCUIApplication) {
+            app.buttons["tab_Сервисы"].tap()
+            let wildlife = app.buttons["service_wildlife"]
+            XCTAssertTrue(wildlife.waitForExistence(timeout: 15))
+            wildlife.tap()
+            let journal = app.buttons["wildlife_Дневник"]
+            XCTAssertTrue(journal.waitForExistence(timeout: 10))
+            journal.tap()
+        }
+        openJournal(app)
+        app.buttons["observation_add"].tap()
+        let name=app.textFields["observation_species"]
+        XCTAssertTrue(name.waitForExistence(timeout:15))
+        name.tap();name.typeText(species)
+        app.buttons["observation_save"].tap()
+        let id="observation_record_"+species
+        XCTAssertTrue(app.staticTexts[id].waitForExistence(timeout:15))
+        app.terminate()
+        app=openApp()
+        openJournal(app)
+        XCTAssertTrue(app.staticTexts[id].waitForExistence(timeout:15),"Saved observation missing after relaunch")
+        capture("14-observation-persisted",app:app)
+    }
+
     func testSettingsNavigation() throws {
         let app = openApp()
         app.buttons["tab_Ещё"].tap()
@@ -123,6 +150,10 @@ final class HuntSmokeTests: XCTestCase {
         let backup = app.buttons["backup_create"]
         for _ in 0..<6 { if backup.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(backup.isHittable)
+        backup.tap()
+        let share = app.buttons["backup_share"]
+        for _ in 0..<5 { if share.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(share.exists, "Backup creation did not expose a shareable file")
         capture("13-backup", app: app)
     }
 

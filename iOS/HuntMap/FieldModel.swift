@@ -70,6 +70,7 @@ struct LocalData: Codable {
     @Published var zones: [GeoZone] = []
     @Published private(set) var groundRevisions: [GroundRevision] = []
     private var deletedGroundIDs: Set<String> = []
+    private var fieldStorageReadable = true
     @Published var strictOffline = true
     @Published var gpsAuthorization = "не определено"
     @Published var lastError = ""
@@ -95,6 +96,7 @@ struct LocalData: Codable {
         loadBundledGrounds()
     }
     private func loadBundledGrounds() {
+        guard fieldStorageReadable else { return }
         let seedKey = "hunt.grounds.seed.153.v1"
         guard !UserDefaults.standard.bool(forKey: seedKey) else { return }
         guard let url = Bundle.main.url(forResource: "HuntGrounds153", withExtension: "geojson") else {
@@ -273,6 +275,7 @@ struct LocalData: Codable {
         else { try commitGroundDeletion(revision.groundID) }
     }
     private func writeGroundChange(_ next: [GeoZone], deleted: Set<String>, revision: GroundRevision) throws {
+        guard fieldStorageReadable else { throw CocoaError(.fileReadCorruptFile) }
         let sorted = next.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         let history = Array(([revision] + groundRevisions).prefix(200))
         let data = LocalData(markers: markers, tracks: tracks, pendingTrack: currentTrack, zones: sorted,
@@ -420,7 +423,10 @@ struct LocalData: Codable {
         groundRevisions=data.groundRevisions ?? [];deletedGroundIDs=data.deletedGroundIDs ?? []
     }
     private func load() {
-        guard let bytes=try? Data(contentsOf:documentURL),let obj=try? JSONDecoder().decode(LocalData.self,from:bytes) else {return}
+        guard FileManager.default.fileExists(atPath:documentURL.path) else { return }
+        let obj: LocalData
+        do { obj = try JSONDecoder().decode(LocalData.self,from:Data(contentsOf:documentURL)) }
+        catch { fieldStorageReadable = false; lastError = "Не удалось прочитать field.json. Исходный файл защищён от перезаписи."; return }
         markers=obj.markers;tracks=obj.tracks;zones=obj.zones
         groundRevisions = obj.groundRevisions ?? []
         deletedGroundIDs = obj.deletedGroundIDs ?? []
@@ -436,8 +442,10 @@ struct LocalData: Codable {
         }
     }
     private func persist() {
+        guard fieldStorageReadable else { return }
         guard let encoded=try? JSONEncoder().encode(LocalData(markers:markers,tracks:tracks,pendingTrack:currentTrack,zones:zones,groundRevisions:groundRevisions,deletedGroundIDs:deletedGroundIDs)) else {return}
-        try? encoded.write(to:documentURL,options:[.atomic,.completeFileProtectionUnlessOpen])
+        do { try encoded.write(to:documentURL,options:[.atomic,.completeFileProtectionUnlessOpen]) }
+        catch { lastError = "Ошибка сохранения полевых данных: " + error.localizedDescription }
     }
     func exportGPX(_ track:Track)->URL? {
         func xml(_ s:String)->String {s.replacingOccurrences(of:"&",with:"&amp;").replacingOccurrences(of:"<",with:"&lt;").replacingOccurrences(of:">",with:"&gt;").replacingOccurrences(of:"\"",with:"&quot;")}

@@ -68,7 +68,7 @@ struct ObservationJournal: View {
                             Image(uiImage:image).resizable().scaledToFill().frame(width:60,height:60).clipped().clipShape(RoundedRectangle(cornerRadius:8))
                         }
                         VStack(alignment:.leading,spacing:4) {
-                            Text(item.species).font(.headline)
+                            Text(item.species).font(.headline).accessibilityIdentifier("observation_record_"+item.species)
                             Text(item.observedAt.formatted(date:.abbreviated,time:.shortened)+" · "+String(item.count)+" особей").font(.caption)
                             if let ground=item.groundName {Text(ground).font(.caption)}
                             if !item.notes.isEmpty {Text(item.notes).font(.caption).lineLimit(3)}
@@ -179,7 +179,7 @@ struct ObservationEditor:View {
             .toolbar {
                 ToolbarItem(placement:.cancellationAction) {Button("Отмена") {dismiss()}.accessibilityIdentifier("observation_cancel")}
                 ToolbarItem(placement:.confirmationAction) {
-                    Button("Сохранить") {do {try store.save(value);dismiss()} catch {self.error=error.localizedDescription}}.disabled(!value.valid || loading)
+                    Button("Сохранить") {do {try store.save(value);dismiss()} catch {self.error=error.localizedDescription}}.disabled(!value.valid || loading).accessibilityIdentifier("observation_save")
                 }
             }
             .task(id:photo) {

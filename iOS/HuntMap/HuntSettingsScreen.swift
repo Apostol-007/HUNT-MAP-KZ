@@ -79,6 +79,7 @@ struct HuntSettingsScreen:View {
     @AppStorage("hunt.weather.pressureMMHG") private var pressureMMHG=false
     @State private var importing=false
     @State private var pending:BackupContents?
+    @State private var recoveryURL: URL?
     @State private var shareURL:URL?
     @State private var status=""
     @State private var showReset=false
@@ -118,6 +119,7 @@ struct HuntSettingsScreen:View {
                 }
             }
             .navigationTitle("Настройки").navigationBarTitleDisplayMode(.inline)
+            .onAppear { findRecoveryCopy() }
             .toolbar {ToolbarItem(placement:.topBarTrailing) {Button("Готово"){dismiss()}}}
             .fileImporter(isPresented:$importing,allowedContentTypes:[UTType(filenameExtension:"huntbackup") ?? .data],allowsMultipleSelection:false) { result in
                 do {
@@ -151,9 +153,19 @@ struct HuntSettingsScreen:View {
                     shareURL=url;status="Копия подготовлена"
                 } catch {status=error.localizedDescription}
             }.accessibilityIdentifier("backup_create").disabled(busy)
-            if let shareURL {ShareLink(item:shareURL){Label("Сохранить или передать копию",systemImage:"square.and.arrow.up")}}
+            if let shareURL {ShareLink(item:shareURL){Label("Сохранить или передать копию",systemImage:"square.and.arrow.up").accessibilityIdentifier("backup_share")}}
+            if let recoveryURL {ShareLink(item:recoveryURL) {Label("Последняя страховочная копия",systemImage:"clock.arrow.circlepath")}}
             Button("Восстановить из файла") {importing=true}.accessibilityIdentifier("backup_import").disabled(busy)
             if !status.isEmpty {Text(status).font(.caption).foregroundStyle(HuntReference.muted)}
+        }
+    }
+    private func findRecoveryCopy() {
+        let dir=FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0].appendingPathComponent("Recovery",isDirectory:true)
+        let files=(try? FileManager.default.contentsOfDirectory(at:dir,includingPropertiesForKeys:[.contentModificationDateKey],options:[.skipsHiddenFiles])) ?? []
+        recoveryURL=files.filter{$0.pathExtension=="huntbackup"}.max { a,b in
+            let x=(try? a.resourceValues(forKeys:[.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let y=(try? b.resourceValues(forKeys:[.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return x<y
         }
     }
     private func snapshot()->BackupContents {
@@ -171,6 +183,7 @@ struct HuntSettingsScreen:View {
             let safety=directory.appendingPathComponent("before-"+UUID().uuidString+".huntbackup")
             try HuntBackup.encode(previous).write(to:safety,options:[.atomic,.completeFileProtectionUnlessOpen])
             shareURL=safety
+            recoveryURL=safety
             let next=replace ? incoming:HuntBackup.merge(previous,incoming)
             try model.installBackupSnapshot(next.field)
             do {try observations.installBackupEntries(next.observations)}
