@@ -157,6 +157,22 @@ final class HuntSmokeTests: XCTestCase {
         capture("13-backup", app: app)
     }
 
+    func testOfflineManagerRepeatedOpen() throws {
+        let app = openApp()
+        app.buttons["tab_Ещё"].tap()
+        let entry = app.buttons["offline_manager_open"]
+        for _ in 0..<5 { if entry.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(entry.isHittable)
+        for iteration in 0..<3 {
+            entry.tap()
+            XCTAssertTrue(app.staticTexts["offline_manager_ready"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.buttons["offline_manager_close"].isHittable)
+            if iteration == 0 { capture("16-offline-manager", app: app) }
+            app.buttons["offline_manager_close"].tap()
+            XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        }
+    }
+
     func testIconSettingsNavigation() throws {
         let app = openApp()
         app.buttons["tab_Ещё"].tap()

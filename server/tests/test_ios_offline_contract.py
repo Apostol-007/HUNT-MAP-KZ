@@ -287,3 +287,13 @@ def test_alternate_icons_registered_and_complete():
             assert struct.unpack(">II", raw[16:24]) == (size, size)
         assert (assets / (icon + "Preview.imageset") / "preview.png").exists()
     assert "AdaptiveIconSettings(manager: adaptiveIcons)" in (IOS / "MainView.swift").read_text()
+
+
+def test_offline_manager_defers_catalog_render_and_storage_probe():
+    source = (IOS / "OfflineManagerScreen.swift").read_text()
+    assert "LazyVStack" in source
+    assert "if showPackages" in source
+    assert "Task.detached(priority: .utility)" in source
+    assert "installedByID" in source
+    assert "let hashes = Set(" in source
+    assert "switch packageKind" in source

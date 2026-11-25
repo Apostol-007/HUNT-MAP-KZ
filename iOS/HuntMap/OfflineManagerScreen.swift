@@ -10,6 +10,10 @@ struct OfflineManagerScreen: View {
     @State private var filter: Filter = .all
     @State private var query = ""
     @State private var catalogAddress = ""
+    @State private var freeBytes: Int64?
+    @State private var showPackages = false
+    @State private var packageKind: PackageKind = .vector
+    private enum PackageKind: String, CaseIterable { case vector = "PMTiles", raster = "MBTiles", roads = "Дороги", navigation = "Valhalla" }
     @State private var job: Task<Void, Never>?
     @State private var deletePack: ProtomapsPack?
     private enum Filter: String, CaseIterable { case all = "Все", installed = "Установлено", missing = "Доступно" }
@@ -31,14 +35,23 @@ struct OfflineManagerScreen: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                LazyVStack(alignment: .leading, spacing: 12) {
                     summary
                     controls
                     if hosting.busy || protomaps.busy || job != nil { progress }
-                    vectorSection
-                    rasterSection
-                    roadsSection
-                    navigationSection
+                    if showPackages {
+                        Picker("Тип пакета", selection: $packageKind) {
+                            ForEach(PackageKind.allCases, id: \.self) { kind in Text(kind.rawValue).tag(kind) }
+                        }.pickerStyle(.segmented)
+                        switch packageKind {
+                        case .vector: vectorSection
+                        case .raster: rasterSection
+                        case .roads: roadsSection
+                        case .navigation: navigationSection
+                        }
+                    } else {
+                        ProgressView("Подготовка списка…").font(.caption)
+                    }
                 }.padding(.horizontal, 18).padding(.vertical, 14)
             }.background(HuntReference.background.ignoresSafeArea())
             .navigationTitle("Офлайн-карты")
@@ -57,10 +70,22 @@ struct OfflineManagerScreen: View {
         }
         .interactiveDismissDisabled(job != nil)
         .onAppear { catalogAddress = protomaps.catalogAddress }
+        .task {
+            // Let the sheet present before constructing any catalogue rows.
+            do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
+            guard !Task.isCancelled else { return }
+            showPackages = true
+            let free = await Task.detached(priority: .utility) {
+                let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+                return try? folder?.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage
+            }.value
+            guard !Task.isCancelled else { return }
+            freeBytes = free
+        }
     }
     private var summary: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Установленные данные").font(.headline)
+            Text("Установленные данные").font(.headline).accessibilityIdentifier("offline_manager_ready")
             HStack {
                 count("PMTiles", protomaps.installed.count)
                 Spacer()
@@ -68,8 +93,7 @@ struct OfflineManagerScreen: View {
                 Spacer()
                 count("Дороги", hosting.installedRoutes.count)
             }
-            if let free = try? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage {
+            if let free = freeBytes {
                 Text("Свободно для загрузок: " + size(free)).font(.caption).foregroundStyle(HuntReference.muted)
             }
             Text("Установленные пакеты доступны без сети. Наличие пакета не гарантирует покрытие всей территории.")
@@ -129,16 +153,18 @@ struct OfflineManagerScreen: View {
         }.huntSurface()
     }
     private var vectorSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        LazyVStack(alignment: .leading, spacing: 10) {
             Text("Векторные карты · PMTiles").font(.headline)
-            let items = protomaps.available + protomaps.installed.filter { item in !protomaps.available.contains { $0.id == item.id } }
-            ForEach(items) { item in
-                let existing = protomaps.installed.first { $0.id == item.id }
+            let availableIDs = Set(protomaps.available.map(\.id))
+            let installedByID = Dictionary(protomaps.installed.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            let items = protomaps.available + protomaps.installed.filter { !availableIDs.contains($0.id) }
+            ForEach(items.filter { matches($0.name, installed: installedByID[$0.id] != nil) }) { item in
+                let existing = installedByID[item.id]
                 let current = existing?.sha256.lowercased() == item.sha256.lowercased()
                 if matches(item.name, installed: existing != nil) {
                     VStack(alignment: .leading, spacing: 8) {
                         packageTitle(item.name, detail: size(item.bytes) + " · zoom \(item.minzoom)–\(item.maxzoom)", state: current ? "Установлено" : existing == nil ? "Доступно" : "Есть обновление")
-                        if !current && protomaps.available.contains(where: { $0.id == item.id }) {
+                        if !current && availableIDs.contains(item.id) {
                             HuntAction(title: existing == nil ? "Скачать" : "Обновить", symbol: "arrow.down.circle") {
                                 start { await protomaps.downloadPack(id: item.id) }
                             }.disabled(locked)
@@ -154,10 +180,11 @@ struct OfflineManagerScreen: View {
         }
     }
     private var rasterSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        LazyVStack(alignment: .leading, spacing: 10) {
             Text("Растровые карты · MBTiles").font(.headline)
-            ForEach(hosting.maps) { item in
-                let installed = tiles.installed.contains { $0.sha256.lowercased() == item.sha256.lowercased() }
+            let hashes = Set(tiles.installed.map { $0.sha256.lowercased() })
+            ForEach(hosting.maps.filter { matches($0.name, installed: hashes.contains($0.sha256.lowercased())) }) { item in
+                let installed = hashes.contains(item.sha256.lowercased())
                 if matches(item.name, installed: installed) {
                     VStack(alignment: .leading, spacing: 8) {
                         packageTitle(item.name, detail: size(item.bytes), state: installed ? "Установлено" : "Доступно")
@@ -173,9 +200,9 @@ struct OfflineManagerScreen: View {
         }
     }
     private var roadsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        LazyVStack(alignment: .leading, spacing: 10) {
             Text("Дорожные сети").font(.headline)
-            ForEach(hosting.routes) { item in
+            ForEach(hosting.routes.filter { matches($0.name, installed: hosting.installedRoutes.contains($0.id)) }) { item in
                 let installed = hosting.installedRoutes.contains(item.id)
                 if matches(item.name, installed: installed) {
                     VStack(alignment: .leading, spacing: 8) {

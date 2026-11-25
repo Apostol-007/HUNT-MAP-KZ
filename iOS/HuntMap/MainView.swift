@@ -1837,7 +1837,7 @@ struct MainView: View {
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "location.north.circle", title: "Полевой режим") { showFieldMode = true }
                 ReferenceMenuRow(symbol: "cross.case", title: "Экстренная помощь") { showEmergency = true }
-                ReferenceMenuRow(symbol: "externaldrive", title: "Офлайн-карты") { showOfflineManager = true }
+                ReferenceMenuRow(symbol: "externaldrive", title: "Офлайн-карты") { showOfflineManager = true }.accessibilityIdentifier("offline_manager_open")
                 ReferenceMenuRow(symbol: "app.badge", title: "Значок приложения") { showIconSettings = true }.accessibilityIdentifier("icon_settings_open")
                 ReferenceMenuRow(symbol: "gearshape", title: "Настройки") { showSettings = true }.accessibilityIdentifier("settings_open")
                 Divider().overlay(HuntReference.separator)
