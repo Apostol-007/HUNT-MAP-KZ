@@ -44,6 +44,8 @@ struct MainView: View {
     @State private var showWeather = false
     @State private var showWeatherLayers = false
     @State private var showAbout = false
+    @State private var showOfflineManager = false
+    @State private var offlineArea: [Double]? = nil
     @State private var showFieldMode = false
     @State private var showEmergency = false
     @State private var showLegalLibrary = false
@@ -354,6 +356,12 @@ struct MainView: View {
                 centerRequest += 1
             }).huntModal()
         }
+        .sheet(isPresented: $showOfflineManager) {
+            OfflineManagerScreen(hosting: hosting, tiles: maps, protomaps: protomaps, valhalla: valhalla,
+                area: offlineArea, startupBusy: startupSync.presented || startupSync.isDownloading,
+                onSelectArea: { showOfflineManager = false; measurementMode = nil; gridMode = true; tab = .map })
+                .huntModal()
+        }
         .sheet(isPresented: $showFieldMode) {
             FieldModeScreen(model: model, onReturn: { track in
                 beginFieldReturn(track)
@@ -508,7 +516,7 @@ struct MainView: View {
             Text("Быстрые действия").font(.headline.bold())
             LazyVGrid(columns: [.init(.flexible()), .init(.flexible())], spacing: 10) {
                 ReferenceActionCard(title: "Карта", subtitle: "Открыть карту", symbol: "map") { tab = .map }
-                ReferenceActionCard(title: "Офлайн-карты", subtitle: "Обновляются автоматически", symbol: "checkmark.icloud") { tab = .map }
+                ReferenceActionCard(title: "Офлайн-карты", subtitle: "Пакеты и загрузки", symbol: "checkmark.icloud") { offlineArea = nil; showOfflineManager = true }
                 ReferenceActionCard(title: "Мои маршруты", subtitle: "Треки и GPX", symbol: "mappin.and.ellipse") { dataSection = .routes; tab = .data }
                 ReferenceActionCard(title: "Метки", subtitle: "Сохранённые точки", symbol: "mappin.circle") { dataSection = .markers; tab = .data }
                 ReferenceActionCard(title: "Погода", subtitle: "Прогноз и карта", symbol: "cloud.sun") { serviceSection = .weather; tab = .services }
@@ -821,7 +829,10 @@ struct MainView: View {
                 Button("Очистить") { selectedGridCells.removeAll() }
                     .disabled(selectedGridCells.isEmpty)
                 Spacer()
-                Text("Карты обновляются при запуске").fontWeight(.semibold)
+                Button("Менеджер пакетов") {
+                    offlineArea = nil
+                    showOfflineManager = true
+                }.disabled(selectedGridCells.isEmpty)
             }
             .font(.caption)
         }
@@ -1732,6 +1743,7 @@ struct MainView: View {
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "location.north.circle", title: "Полевой режим") { showFieldMode = true }
                 ReferenceMenuRow(symbol: "cross.case", title: "Экстренная помощь") { showEmergency = true }
+                ReferenceMenuRow(symbol: "externaldrive", title: "Офлайн-карты") { offlineArea = nil; showOfflineManager = true }
                 ReferenceMenuRow(symbol: "gearshape", title: "Настройки") { showLayers = true }
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "info.circle", title: "О приложении") { showAbout = true }

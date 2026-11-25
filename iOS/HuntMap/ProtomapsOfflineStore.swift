@@ -198,11 +198,22 @@ private struct ProtomapsCatalog: Codable { let schema: String; let packs: [Proto
         }
         if !cells.isEmpty { await download(cells: cells) }
     }
+    func downloadPack(id: String) async {
+        guard !busy, let item = available.first(where: { $0.id == id }) else { return }
+        await installMissing([item])
+    }
     func download(cells: [OfflineGridCell]) async {
         guard !busy, !cells.isEmpty else { return }
         let missing = available.filter { pack in
             cells.contains(where: { $0.intersects(pack.bounds) }) &&
             !installed.contains(where: { $0.id == pack.id && $0.sha256.lowercased() == pack.sha256.lowercased() })
+        }
+        await installMissing(missing)
+    }
+    private func installMissing(_ requested: [ProtomapsPack]) async {
+        guard !busy else { return }
+        let missing = requested.filter { item in
+            !installed.contains(where: { $0.id == item.id && $0.sha256.lowercased() == item.sha256.lowercased() })
         }
         guard !missing.isEmpty else {
             status = "Нет новых PMTiles для выбранной сетки"
@@ -218,6 +229,10 @@ private struct ProtomapsCatalog: Codable { let schema: String; let packs: [Proto
                 guard let catalog = URL(string: loadedCatalogURL),
                       let url = downloadableURL(item.url, catalog: catalog) else {
                     throw NSError(domain: "Protomaps", code: 3, userInfo:[NSLocalizedDescriptionKey:"Небезопасный URL"])
+                }
+                if let capacity = try? folder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage,
+                   capacity < item.bytes * 2 + 50_000_000 {
+                    throw NSError(domain: "Protomaps", code: 8, userInfo: [NSLocalizedDescriptionKey: "Недостаточно свободного места"])
                 }
                 let (temp, response) = try await URLSession.shared.download(from: url)
                 guard (response as? HTTPURLResponse)?.statusCode == 200 else {
