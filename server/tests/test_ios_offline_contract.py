@@ -67,7 +67,14 @@ def test_protomaps_native_pmtiles_integration():
     ui = (IOS / 'MainView.swift').read_text()
     assert 'pmtiles://' in style and 'absoluteString' in style
     assert 'roads' in style and 'path' in style and 'water' in style
-    assert 'PMTiles' in code and 'SHA256' in code
+    worker = (IOS / 'HuntBackgroundWork.swift').read_text()
+    assert 'PMTiles' in code
+    assert 'try await HuntBackgroundWork.digest(temp, pmtiles: true)' in code
+    assert 'var hash = SHA256()' in worker
+    assert 'hash.update(data: bytes)' in worker
+    assert 'magic[7] == 3' in worker
+    assert 'guard digest == item.sha256.lowercased()' in code
+    assert code.index('guard digest == item.sha256.lowercased()') < code.index('replaceItemAt(destination')
     assert 'protomapsOfflineStyleURL' in view
     assert 'ProtomapsOfflineStore()' in ui
 
@@ -308,5 +315,8 @@ def test_heavy_offline_work_is_awaited():
     assert "Task.detached(priority: .utility)" in worker
     assert "try await HuntBackgroundWork.append" in hosting
     assert "try await HuntBackgroundWork.digest" in pmtiles
-    assert "try await hosting.graph" in main
+    assert "try? await hosting.graph" in main
+    assert "async throws -> OfflineRouteGraph" in hosting
+    assert "try await HuntBackgroundWork.run { try graph.path" in main
+    assert "routeRequestID == requestID, routeDestination == destination" in main
     assert "legacyRouteTask?.cancel()" in main
