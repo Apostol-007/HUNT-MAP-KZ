@@ -21,13 +21,27 @@ struct TrackFix: Codable {
     var accuracy: Double
     var altitude: Double
     var verticalAccuracy: Double? = nil
+    var segmentStart: Bool? = nil
+    var speedMetersPerSecond: Double? = nil
 }
 struct Track: Identifiable, Codable {
     var id: UUID = UUID()
     var name: String
     var createdAt: Date = Date()
     var fixes: [TrackFix] = []
-    var distanceMeters: Double { zip(fixes, fixes.dropFirst()).reduce(0) { $0 + GeoMath.meters($1.0.point, $1.1.point) } }
+    var statistics: TrackStatistics {
+        TrackStatistics.calculate(fixes.map { TrackSample(point:$0.point,time:$0.timestamp,accuracy:$0.accuracy,
+            altitude:$0.verticalAccuracy.map { $0 >= 0 && $0 <= 30 } == true ? $0.altitude:nil,
+            speed:$0.speedMetersPerSecond,segmentStart:$0.segmentStart ?? false) })
+    }
+    var distanceMeters: Double { statistics.distance }
+    var hasDiscontinuity: Bool {
+        zip(fixes,fixes.dropFirst()).contains { a,b in
+            b.segmentStart == true || b.timestamp.timeIntervalSince(a.timestamp) > 120
+        }
+    }
+    var sessionEnd: Date? = nil
+    func elapsed(at now:Date)->TimeInterval { max(0,(sessionEnd ?? now).timeIntervalSince(createdAt)) }
     /// Elapsed time between first and last accepted fix; does not invent time for empty tracks.
     var durationSeconds: TimeInterval {
         guard let start = fixes.first?.timestamp, let finish = fixes.last?.timestamp else { return 0 }
@@ -82,6 +96,8 @@ struct LocalData: Codable {
     private var groundWasInside = false
     private var groundOutsideCount = 0
     private var lastFix: CLLocation?
+    private var newSegment = true
+    @Published private(set) var recoveredSession = false
     private var documentURL:URL {
         let dir=FileManager.default.urls(for:.applicationSupportDirectory,in:.userDomainMask)[0]
         try? FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
@@ -167,7 +183,7 @@ struct LocalData: Codable {
     }
 
     func startTrack() {
-        guard !recording else {return}
+        guard !recording, fieldStorageReadable else {return}
         guard CLLocationManager.locationServicesEnabled() else {
             status = "GPS выключен в настройках iPhone"; lastError = status; return
         }
@@ -177,6 +193,7 @@ struct LocalData: Codable {
             if manager.authorizationStatus == .notDetermined { manager.requestWhenInUseAuthorization() }
             return
         }
+        newSegment=true; recoveredSession=false
         lastFix=nil // Do not reuse the last fix from a previous recording session.
         currentTrack=Track(name:"Маршрут \(Date.now.formatted(date:.numeric,time:.shortened))")
         recording=true;paused=false
@@ -193,13 +210,16 @@ struct LocalData: Codable {
     func togglePause() {
         guard recording else { return }
         paused.toggle()
+        newSegment=true
+        if !paused { recoveredSession=false }
         lastFix = nil // A paused interval must not create a jump when recording resumes.
         status = paused ? "Запись приостановлена" : "Запись продолжена"
         persist()
     }
     func stopTrack() {
         guard recording else {return}
-        if let track=currentTrack, !track.fixes.isEmpty {tracks.insert(track,at:0)}
+        if var track=currentTrack, !track.fixes.isEmpty {track.sessionEnd=Date(); tracks.insert(track,at:0)}
+        recoveredSession=false;newSegment=true
         currentTrack=nil;recording=false;paused=false
         lastFix=nil
         if manager.allowsBackgroundLocationUpdates && !navigatingRecordedTrack && monitoredGroundID == nil { manager.allowsBackgroundLocationUpdates=false }
@@ -363,12 +383,14 @@ struct LocalData: Codable {
         status="GPS ±\(Int(fix.horizontalAccuracy)) м"
         checkSelectedGround(fix, point: p)
         if recording && !paused {
-            if let last=lastFix, fix.timestamp.timeIntervalSince(last.timestamp)<1 {return}
-            if let last=lastFix {
+            if !newSegment, let last=lastFix, fix.timestamp.timeIntervalSince(last.timestamp)<1 {return}
+            if !newSegment, let last=lastFix {
                 let dt=fix.timestamp.timeIntervalSince(last.timestamp)
-                if dt>0 && GeoMath.meters(GeoPoint(last.coordinate.latitude,last.coordinate.longitude),p)/dt>80 {return}
+                if dt>120 { newSegment=true }
+                if !newSegment && dt>0 && GeoMath.meters(GeoPoint(last.coordinate.latitude,last.coordinate.longitude),p)/dt>80 {return}
             }
-            currentTrack?.fixes.append(TrackFix(point:p,timestamp:fix.timestamp,accuracy:fix.horizontalAccuracy,altitude:fix.altitude,verticalAccuracy:fix.verticalAccuracy))
+            currentTrack?.fixes.append(TrackFix(point:p,timestamp:fix.timestamp,accuracy:fix.horizontalAccuracy,altitude:fix.altitude.isFinite ? fix.altitude : 0,verticalAccuracy:fix.altitude.isFinite ? fix.verticalAccuracy : nil,segmentStart:newSegment,speedMetersPerSecond:fix.speed.isFinite && fix.speed >= 0 ? fix.speed:nil))
+            newSegment=false
             persist() // Atomic write of current track after each accepted fix.
         }
         lastFix=fix
@@ -430,15 +452,15 @@ struct LocalData: Codable {
         markers=obj.markers;tracks=obj.tracks;zones=obj.zones
         groundRevisions = obj.groundRevisions ?? []
         deletedGroundIDs = obj.deletedGroundIDs ?? []
-        // An interrupted recording is restored exactly once. Clear pendingTrack on disk
-        // immediately, otherwise every relaunch would duplicate the recovered route.
+        // Resume explicitly: never record a straight line over a process interruption.
         if let pending=obj.pendingTrack {
-            if !pending.fixes.isEmpty && !tracks.contains(where: { $0.id == pending.id }) {
-                tracks.insert(Track(id:pending.id, name:pending.name+" (восстановлен)",
-                                    createdAt:pending.createdAt, fixes:pending.fixes), at:0)
-            }
-            lastWarning = "Запись после закрытия приложения восстановлена"
-            persist()
+            if tracks.contains(where:{$0.id==pending.id}) { persist(); return }
+            currentTrack=pending
+            recording=true
+            paused=true
+            recoveredSession=true
+            newSegment=true
+            lastWarning="Незавершённая запись восстановлена на паузе. Продолжите или завершите маршрут."
         }
     }
     private func persist() {
@@ -451,9 +473,12 @@ struct LocalData: Codable {
         func xml(_ s:String)->String {s.replacingOccurrences(of:"&",with:"&amp;").replacingOccurrences(of:"<",with:"&lt;").replacingOccurrences(of:">",with:"&gt;").replacingOccurrences(of:"\"",with:"&quot;")}
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let points = track.fixes.map { fix -> String in
-            let elevation = fix.altitude.isFinite ? "<ele>\(fix.altitude)</ele>" : ""
-            return "<trkpt lat=\"\(fix.point.latitude)\" lon=\"\(fix.point.longitude)\">\(elevation)<time>\(formatter.string(from:fix.timestamp))</time></trkpt>"
+        var segmentIndex = 0
+        let points = track.fixes.enumerated().map { index, fix -> String in
+            let elevation = fix.altitude.isFinite && fix.verticalAccuracy.map({$0 >= 0 && $0 <= 30}) == true ? "<ele>\(fix.altitude)</ele>" : ""
+            let split = index > 0 && (fix.segmentStart == true || fix.timestamp.timeIntervalSince(track.fixes[index-1].timestamp)>120)
+            if split { segmentIndex += 1 }
+            return (split ? "</trkseg><trkseg>" : "") + "<trkpt lat=\"\(fix.point.latitude)\" lon=\"\(fix.point.longitude)\">\(elevation)<time>\(formatter.string(from:fix.timestamp))</time></trkpt>"
         }.joined()
         let data="<?xml version=\"1.0\" encoding=\"UTF-8\"?><gpx version=\"1.1\" creator=\"HUNT MAP KZ\" xmlns=\"http://www.topografix.com/GPX/1/1\"><trk><name>\(xml(track.name))</name><trkseg>\(points)</trkseg></trk></gpx>"
         let url=FileManager.default.temporaryDirectory.appendingPathComponent("route-\(track.id).gpx")

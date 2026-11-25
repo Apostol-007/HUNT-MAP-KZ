@@ -1536,7 +1536,7 @@ struct MainView: View {
                     Image(systemName: "record.circle.fill").foregroundStyle(.red)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(model.currentTrack?.name ?? "Активная запись").font(.subheadline.bold())
-                        Text(model.paused ? "На паузе" : "Идёт запись").font(.caption).foregroundStyle(HuntReference.muted)
+                        Text(model.recoveredSession ? "Восстановлен · на паузе" : model.paused ? "На паузе" : "Идёт запись").font(.caption).foregroundStyle(HuntReference.muted)
                     }
                     Spacer()
                     Button(model.paused ? "Продолжить" : "Пауза") { model.togglePause() }
@@ -1595,10 +1595,10 @@ struct MainView: View {
                 }
                 Button("Пройти от начала", systemImage: "figure.walk") {
                     showRecordedTrack(track, direction: .forward, follow: true)
-                }
+                }.disabled(track.hasDiscontinuity)
                 Button("Пройти от конца", systemImage: "figure.walk.motion") {
                     showRecordedTrack(track, direction: .backward, follow: true)
-                }
+                }.disabled(track.hasDiscontinuity)
                 if let file = model.exportGPX(track) {
                     ShareLink(item: file) { Label("Поделиться GPX", systemImage: "square.and.arrow.up") }
                 }

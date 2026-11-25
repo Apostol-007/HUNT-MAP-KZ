@@ -77,12 +77,12 @@ struct FieldModeScreen: View {
     private func metrics(at now: Date) -> some View {
         let valid = fresh(now)
         let distance = model.currentTrack?.distanceMeters
-        let elapsed = model.currentTrack?.durationSeconds
+        let elapsed = model.currentTrack?.elapsed(at: now)
         return LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 12) {
             FieldMetricTile(title: "Скорость", value: fieldNumber(valid ? model.fieldSpeed : nil, digits: 1), unit: "км/ч")
             FieldMetricTile(title: "Высота", value: fieldNumber(valid ? model.fieldAltitude : nil, digits: 0), unit: "м")
             FieldMetricTile(title: "Пройдено", value: fieldNumber(distance.map { $0 / 1000 }, digits: 2), unit: "км")
-            FieldMetricTile(title: "Длительность трека", value: elapsed.map { fieldDuration($0) } ?? "—", unit: "ч:мин:сек")
+            FieldMetricTile(title: "Время с начала", value: elapsed.map { fieldDuration($0) } ?? "—", unit: "ч:мин:сек")
         }
     }
     private func originCard(at now: Date) -> some View {
@@ -100,7 +100,7 @@ struct FieldModeScreen: View {
     private func canReturn(at now: Date) -> Bool {
         guard fresh(now), let accuracy = model.accuracy, accuracy <= 50,
               let track = model.currentTrack, track.fixes.count >= 2 else { return false }
-        return track.distanceMeters >= 15
+        return track.distanceMeters >= 15 && !track.hasDiscontinuity
     }
     private func returnControl(at now: Date) -> some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -111,7 +111,7 @@ struct FieldModeScreen: View {
             .opacity(canReturn(at: now) ? 1 : 0.45)
             .accessibilityIdentifier("field_return")
             if !canReturn(at: now) {
-                Text("Нужны свежая GPS-позиция и записанный путь не менее 15 м.")
+                Text(model.currentTrack?.hasDiscontinuity == true ? "Трек содержит разрывы. Возвращение через неизвестный участок заблокировано." : "Нужны свежая GPS-позиция и записанный путь не менее 15 м.")
                     .font(.caption).foregroundStyle(HuntReference.muted)
             }
         }
