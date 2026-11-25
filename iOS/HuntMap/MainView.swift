@@ -629,6 +629,7 @@ struct MainView: View {
     private var mapScreen: some View {
         ZStack {
             OfflineMapView(zones: showGrounds ? model.zones : [],
+                           groundRevision: model.groundGeometryRevision,
                            position: (showGPSOnMap || model.recording || routeGuidance || recordedRouteFollowing) ? model.coordinate : nil,
                            markers: showMarkersOnMap ? model.markers : [],
                            track: showTrackOnMap ? (model.tracks.first(where: { $0.id == selectedRecordedTrackID }) ?? model.currentTrack) : nil,

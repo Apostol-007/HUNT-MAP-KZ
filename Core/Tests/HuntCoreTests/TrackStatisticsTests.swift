@@ -1,6 +1,24 @@
 import XCTest
 @testable import HuntCore
 final class TrackStatisticsTests:XCTestCase {
+    func testIncrementalMatchesBatch() {
+        let start = Date(timeIntervalSince1970: 1000)
+        let samples = (0..<100).map { index in
+            TrackSample(point: GeoPoint(43, 76 + Double(index) * 0.00001),
+                        time: start.addingTimeInterval(Double(index) * 2),
+                        accuracy: 5, altitude: Double(index * 5), speed: 1,
+                        segmentStart: index == 50)
+        }
+        let batch = TrackStatistics.calculate(samples)
+        var incremental = TrackStatistics.calculate([])
+        for (a,b) in zip(samples, samples.dropFirst()) { incremental.append(from:a,to:b) }
+        XCTAssertEqual(batch.distance, incremental.distance, accuracy: 0.000001)
+        XCTAssertEqual(batch.gapSeconds, incremental.gapSeconds)
+        XCTAssertEqual(batch.movingSeconds, incremental.movingSeconds)
+        XCTAssertEqual(batch.ascent, incremental.ascent)
+        XCTAssertEqual(batch.maximumSpeed, incremental.maximumSpeed)
+    }
+
     func testGapIsNotDistance() {
         let now=Date()
         func sample(_ lat:Double,_ t:Double,_ split:Bool,_ h:Double)->TrackSample {

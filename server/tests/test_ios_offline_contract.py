@@ -320,3 +320,17 @@ def test_heavy_offline_work_is_awaited():
     assert "try await HuntBackgroundWork.run { try graph.path" in main
     assert "routeRequestID == requestID, routeDestination == destination" in main
     assert "legacyRouteTask?.cancel()" in main
+
+
+def test_map_annotation_groups_and_track_stats_are_incremental():
+    native = (IOS / "OfflineMapView.swift").read_text()
+    field = (IOS / "FieldModel.swift").read_text()
+    assert "String(describing: track)" not in native
+    assert "lastRoadRevision != offlineRoadRevision" in native
+    assert "lastTrackFixes != fixes" in native
+    assert "lastNavigationPath != navigationPath" in native
+    assert "gps.coordinate = coordinate" in native
+    assert "TrackRendering.simplified" in native
+    assert "fix.segmentStart == true" in native
+    assert "currentTrack?.appendFix(" in field
+    assert "cachedStatistics = nil" in field

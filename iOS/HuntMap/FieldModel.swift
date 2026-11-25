@@ -5,7 +5,7 @@ import AudioToolbox
 import UIKit
 import HuntCore
 
-struct Marker: Identifiable, Codable {
+struct Marker: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
     var title: String
     var kind: String
@@ -15,7 +15,7 @@ struct Marker: Identifiable, Codable {
     var symbol: String? = nil
     var colorHex: String? = nil
 }
-struct TrackFix: Codable {
+struct TrackFix: Codable, Equatable {
     var point: GeoPoint
     var timestamp: Date
     var accuracy: Double
@@ -28,11 +28,26 @@ struct Track: Identifiable, Codable {
     var id: UUID = UUID()
     var name: String
     var createdAt: Date = Date()
-    var fixes: [TrackFix] = []
+    var fixes: [TrackFix] = [] { didSet { cachedStatistics = nil } }
+    private var cachedStatistics: TrackStatistics? = nil
+    private enum CodingKeys: String, CodingKey { case id, name, createdAt, fixes, sessionEnd }
+    init(id: UUID = UUID(), name: String, createdAt: Date = Date(), fixes: [TrackFix] = [], sessionEnd: Date? = nil) {
+        self.id = id; self.name = name; self.createdAt = createdAt; self.fixes = fixes; self.sessionEnd = sessionEnd
+    }
+    private static func sample(_ fix: TrackFix) -> TrackSample {
+        TrackSample(point:fix.point,time:fix.timestamp,accuracy:fix.accuracy,
+            altitude:fix.verticalAccuracy.map { $0 >= 0 && $0 <= 30 } == true ? fix.altitude:nil,
+            speed:fix.speedMetersPerSecond,segmentStart:fix.segmentStart ?? false)
+    }
     var statistics: TrackStatistics {
-        TrackStatistics.calculate(fixes.map { TrackSample(point:$0.point,time:$0.timestamp,accuracy:$0.accuracy,
-            altitude:$0.verticalAccuracy.map { $0 >= 0 && $0 <= 30 } == true ? $0.altitude:nil,
-            speed:$0.speedMetersPerSecond,segmentStart:$0.segmentStart ?? false) })
+        cachedStatistics ?? TrackStatistics.calculate(fixes.map(Self.sample))
+    }
+    mutating func cacheStatistics() { cachedStatistics = statistics }
+    mutating func appendFix(_ fix: TrackFix) {
+        var next = statistics
+        if let previous = fixes.last { next.append(from: Self.sample(previous), to: Self.sample(fix)) }
+        fixes.append(fix)
+        cachedStatistics = next
     }
     var distanceMeters: Double { statistics.distance }
     var hasDiscontinuity: Bool {
@@ -81,7 +96,8 @@ struct LocalData: Codable {
     @Published var paused = false
     @Published var status = "GPS не запущен"
     @Published var lastWarning = "Границы не загружены"
-    @Published var zones: [GeoZone] = []
+    @Published var zones: [GeoZone] = [] { didSet { groundGeometryRevision &+= 1 } }
+    private(set) var groundGeometryRevision: Int = 0
     @Published private(set) var groundRevisions: [GroundRevision] = []
     private var deletedGroundIDs: Set<String> = []
     private var fieldStorageReadable = true
@@ -389,7 +405,7 @@ struct LocalData: Codable {
                 if dt>120 { newSegment=true }
                 if !newSegment && dt>0 && GeoMath.meters(GeoPoint(last.coordinate.latitude,last.coordinate.longitude),p)/dt>80 {return}
             }
-            currentTrack?.fixes.append(TrackFix(point:p,timestamp:fix.timestamp,accuracy:fix.horizontalAccuracy,altitude:fix.altitude.isFinite ? fix.altitude : 0,verticalAccuracy:fix.altitude.isFinite ? fix.verticalAccuracy : nil,segmentStart:newSegment,speedMetersPerSecond:fix.speed.isFinite && fix.speed >= 0 ? fix.speed:nil))
+            currentTrack?.appendFix(TrackFix(point:p,timestamp:fix.timestamp,accuracy:fix.horizontalAccuracy,altitude:fix.altitude.isFinite ? fix.altitude : 0,verticalAccuracy:fix.altitude.isFinite ? fix.verticalAccuracy : nil,segmentStart:newSegment,speedMetersPerSecond:fix.speed.isFinite && fix.speed >= 0 ? fix.speed:nil))
             newSegment=false
             persist() // Atomic write of current track after each accepted fix.
         }
@@ -441,7 +457,7 @@ struct LocalData: Codable {
         try validateBackupTarget()
         let encoded=try JSONEncoder().encode(data)
         try encoded.write(to:documentURL,options:[.atomic,.completeFileProtectionUnlessOpen])
-        markers=data.markers;tracks=data.tracks;zones=data.zones
+        markers=data.markers;tracks=data.tracks.map { track in var item = track; item.cacheStatistics(); return item };zones=data.zones
         groundRevisions=data.groundRevisions ?? [];deletedGroundIDs=data.deletedGroundIDs ?? []
     }
     private func load() {
@@ -449,13 +465,15 @@ struct LocalData: Codable {
         let obj: LocalData
         do { obj = try JSONDecoder().decode(LocalData.self,from:Data(contentsOf:documentURL)) }
         catch { fieldStorageReadable = false; lastError = "Не удалось прочитать field.json. Исходный файл защищён от перезаписи."; return }
-        markers=obj.markers;tracks=obj.tracks;zones=obj.zones
+        markers=obj.markers;tracks=obj.tracks.map { track in var item = track; item.cacheStatistics(); return item };zones=obj.zones
         groundRevisions = obj.groundRevisions ?? []
         deletedGroundIDs = obj.deletedGroundIDs ?? []
         // Resume explicitly: never record a straight line over a process interruption.
         if let pending=obj.pendingTrack {
             if tracks.contains(where:{$0.id==pending.id}) { persist(); return }
-            currentTrack=pending
+            var recovered = pending
+            recovered.cacheStatistics()
+            currentTrack=recovered
             recording=true
             paused=true
             recoveredSession=true

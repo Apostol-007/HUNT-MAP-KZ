@@ -11,6 +11,7 @@ struct OfflineMapView: UIViewRepresentable {
     }
 
     let zones: [GeoZone]
+    var groundRevision: Int = 0
     let position: GeoPoint?
     let markers: [Marker]
     let track: Track?
@@ -150,11 +151,15 @@ struct OfflineMapView: UIViewRepresentable {
                           abs(mapFrame.minY - windowFrame.minY) <= 1 &&
                           abs(mapFrame.width - windowFrame.width) <= 1 &&
                           abs(mapFrame.height - windowFrame.height) <= 1
-            UserDefaults.standard.set("\(Int(mapFrame.minX)),\(Int(mapFrame.minY)),\(Int(mapFrame.width))x\(Int(mapFrame.height))", forKey: "hunt.diag.mapFrame")
-            UserDefaults.standard.set(matches, forKey: "hunt.diag.fullscreenMap")
+            let geometry = "\(Int(mapFrame.minX)),\(Int(mapFrame.minY)),\(Int(mapFrame.width))x\(Int(mapFrame.height))"
+            let defaults = UserDefaults.standard
+            if defaults.string(forKey: "hunt.diag.mapFrame") != geometry || defaults.bool(forKey: "hunt.diag.fullscreenMap") != matches {
+                defaults.set(geometry, forKey: "hunt.diag.mapFrame")
+                defaults.set(matches, forKey: "hunt.diag.fullscreenMap")
+            }
         }
         context.coordinator.highlightedGroundID = highlightedGroundID
-        context.coordinator.updateAnnotations(view: view, zones: zones, markers: markers, position: position, track: track, navigationPath: navigationPath, replayPosition: replayPosition,
+        context.coordinator.updateAnnotations(view: view, zones: zones, groundRevision: groundRevision, markers: markers, position: position, track: track, navigationPath: navigationPath, replayPosition: replayPosition,
                                               weatherGrid: weatherGrid, weatherLayer: weatherLayer,
                                               offlineRoadLines: online ? [] : offlineRoadLines, offlineRoadRevision: offlineRoadRevision)
         context.coordinator.applyCameraCommands(view: view, position: focusCoordinate ?? position,
@@ -217,12 +222,28 @@ struct OfflineMapView: UIViewRepresentable {
         private var markerSignatures: [UUID: String] = [:]
         private var stableMarkers: [UUID: MLNPointAnnotation] = [:]
         private var gpsAnnotation: MLNPointAnnotation?
-        private var transientAnnotations: [MLNAnnotation] = []
+        private var roadAnnotations: [MLNAnnotation] = []
+        private var trackAnnotations: [MLNAnnotation] = []
+        private var routeAnnotations: [MLNAnnotation] = []
+        private var replayAnnotation: MLNPointAnnotation?
+        private var lastRoadRevision: Int?
+        private var lastRoadCount: Int?
+        private var lastTrackID: UUID?
+        private var lastTrackFixes: [TrackFix] = []
+        private var lastNavigationPath: [GeoPoint] = []
+        private var lastMarkers: [Marker]?
+        private var lastGroundRevision: Int?
+        private var lastGroundCount: Int?
+        private var lastHighlightedGroundID: String?
         private var groundAnnotations: [MLNAnnotation] = []
         private var groundKey = ""
         var highlightedGroundID: String?
         private var appliedGroundFitRequest = 0
-        private func updateGroundAnnotations(_ view: MLNMapView, zones: [GeoZone]) {
+        private func updateGroundAnnotations(_ view: MLNMapView, zones: [GeoZone], revision: Int) {
+            guard revision != lastGroundRevision || zones.count != lastGroundCount || highlightedGroundID != lastHighlightedGroundID else { return }
+            lastGroundRevision = revision
+            lastGroundCount = zones.count
+            lastHighlightedGroundID = highlightedGroundID
             var components: [String] = []
             components.reserveCapacity(zones.count + 1)
             for zone in zones {
@@ -231,6 +252,7 @@ struct OfflineMapView: UIViewRepresentable {
                 components.append(component)
             }
             components.append(highlightedGroundID ?? "")
+            components.append(String(revision))
             let key: String = components.joined(separator: "|")
             groundLabels?.configure(zones: zones, selectedID: highlightedGroundID, key: key)
             guard key != groundKey else { return }
@@ -263,7 +285,6 @@ struct OfflineMapView: UIViewRepresentable {
             }
             if !groundAnnotations.isEmpty { view.addAnnotations(groundAnnotations) }
         }
-        private var lastTransientKey: String?
         private var markerCoordinates: [(UUID, CLLocationCoordinate2D)] = []
         init(selectedZone: Binding<GeoZone?>) { self.selectedZone = selectedZone }
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -507,50 +528,81 @@ struct OfflineMapView: UIViewRepresentable {
             onViewportChanged(bounds)
         }
 
-        func updateAnnotations(view: MLNMapView, zones: [GeoZone], markers: [Marker], position: GeoPoint?, track: Track?, navigationPath: [GeoPoint], replayPosition: GeoPoint?,
+        func updateAnnotations(view: MLNMapView, zones: [GeoZone], groundRevision: Int, markers: [Marker], position: GeoPoint?, track: Track?, navigationPath: [GeoPoint], replayPosition: GeoPoint?,
                                weatherGrid: ForecastGrid?, weatherLayer: WeatherMapLayer,
                                offlineRoadLines: [OfflineRoadLine], offlineRoadRevision: Int) {
             // Persistent MLNPointAnnotation identity is critical for tapping. Recreating
             // every marker on each GPS/SwiftUI update used to cancel selection gestures.
-            updateGroundAnnotations(view, zones: zones)
-            let transientKey = String(describing: track) + "|" + String(describing: navigationPath) + "|" + String(describing: replayPosition) + "|" + String(offlineRoadRevision)
-            if transientKey != lastTransientKey {
-                if !transientAnnotations.isEmpty { view.removeAnnotations(transientAnnotations) }
-                transientAnnotations.removeAll()
-                lastTransientKey = transientKey
+            updateGroundAnnotations(view, zones: zones, revision: groundRevision)
+            if lastRoadRevision != offlineRoadRevision || lastRoadCount != offlineRoadLines.count {
+                lastRoadRevision = offlineRoadRevision
+                lastRoadCount = offlineRoadLines.count
+                if !roadAnnotations.isEmpty { view.removeAnnotations(roadAnnotations) }
+                roadAnnotations = offlineRoadLines.compactMap { road in
+                    guard road.points.count >= 2 else { return nil }
+                    var coordinates = road.points.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+                    let line = MLNPolyline(coordinates: &coordinates, count: UInt(coordinates.count))
+                    line.title = road.isTrail ? "OFFLINE|TRAIL" : "OFFLINE|ROAD"
+                    return line
+                }
+                if !roadAnnotations.isEmpty { view.addAnnotations(roadAnnotations) }
             }
-            var updated: [MLNAnnotation] = []
-            // Hold transient annotation building behind a change check; GPS is refreshed separately.
-            if transientAnnotations.isEmpty && transientKey == lastTransientKey {
-            // Weather shades are drawn by WeatherFieldOverlay in a lightweight canvas.
-            // Never add hundreds of weather polygons/arrow annotations to MapLibre.
-            for road in offlineRoadLines where road.points.count >= 2 {
-                var coords = road.points.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
-                let line = MLNPolyline(coordinates: &coords, count: UInt(coords.count))
-                line.title = road.isTrail ? "OFFLINE|TRAIL" : "OFFLINE|ROAD"
-                updated.append(line)
+            let fixes = track?.fixes ?? []
+            if lastTrackID != track?.id || lastTrackFixes != fixes {
+                lastTrackID = track?.id
+                lastTrackFixes = fixes
+                if !trackAnnotations.isEmpty { view.removeAnnotations(trackAnnotations) }
+                trackAnnotations = []
+                var segment: [GeoPoint] = []
+                func finishSegment() {
+                    guard segment.count >= 2 else { segment.removeAll(keepingCapacity: true); return }
+                    // Rendering only: full-resolution fixes remain untouched.
+                    let visible = TrackRendering.simplified(segment, toleranceMeters: 2, maxPoints: 4000)
+                    var coordinates = visible.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+                    let line = MLNPolyline(coordinates: &coordinates, count: UInt(coordinates.count))
+                    line.title = "Записанный маршрут"
+                    trackAnnotations.append(line)
+                    segment.removeAll(keepingCapacity: true)
+                }
+                for (index, fix) in fixes.enumerated() {
+                    if index > 0 {
+                        let dt = fix.timestamp.timeIntervalSince(fixes[index - 1].timestamp)
+                        if fix.segmentStart == true || dt > 120 || dt <= 0 { finishSegment() }
+                    }
+                    if fix.point.valid { segment.append(fix.point) } else { finishSegment() }
+                }
+                finishSegment()
+                if !trackAnnotations.isEmpty { view.addAnnotations(trackAnnotations) }
             }
-            if let track, track.fixes.count > 1 {
-                var coordinates = track.fixes.map { CLLocationCoordinate2D(latitude: $0.point.latitude, longitude: $0.point.longitude) }
-                let line = MLNPolyline(coordinates: &coordinates, count: UInt(coordinates.count))
-                line.title = "Записанный маршрут"
-                updated.append(line)
+            if lastNavigationPath != navigationPath {
+                lastNavigationPath = navigationPath
+                if !routeAnnotations.isEmpty { view.removeAnnotations(routeAnnotations) }
+                routeAnnotations = []
+                if navigationPath.count >= 2 {
+                    var coords = navigationPath.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+                    let route = MLNPolyline(coordinates: &coords, count: UInt(coords.count))
+                    route.title = "NAV|HUNT"
+                    routeAnnotations = [route]
+                    view.addAnnotations(routeAnnotations)
+                }
             }
-            if let replayPosition {
-                let pin = MLNPointAnnotation()
-                pin.coordinate = CLLocationCoordinate2D(latitude: replayPosition.latitude, longitude: replayPosition.longitude)
-                pin.title = "REPLAY|LOCATION"
-                updated.append(pin)
+            if let replayPosition, replayPosition.valid {
+                let coordinate = CLLocationCoordinate2D(latitude: replayPosition.latitude, longitude: replayPosition.longitude)
+                if let pin = replayAnnotation {
+                    if pin.coordinate.latitude != coordinate.latitude || pin.coordinate.longitude != coordinate.longitude { pin.coordinate = coordinate }
+                } else {
+                    let pin = MLNPointAnnotation()
+                    pin.coordinate = coordinate
+                    pin.title = "REPLAY|LOCATION"
+                    replayAnnotation = pin
+                    view.addAnnotation(pin)
+                }
+            } else if let pin = replayAnnotation {
+                view.removeAnnotation(pin)
+                replayAnnotation = nil
             }
-            if navigationPath.count >= 2 {
-                var routeCoords = navigationPath.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
-                let route = MLNPolyline(coordinates: &routeCoords, count: UInt(routeCoords.count))
-                route.title = "NAV|HUNT"
-                updated.append(route)
-            }
-            transientAnnotations = updated
-            if !updated.isEmpty { view.addAnnotations(updated) }
-            }
+            if lastMarkers != markers {
+                lastMarkers = markers
             let incoming = Set(markers.map(\.id))
             for (id, annotation) in stableMarkers where !incoming.contains(id) {
                 view.removeAnnotation(annotation)
@@ -584,15 +636,20 @@ struct OfflineMapView: UIViewRepresentable {
                 }
                 markerCoordinates.append((marker.id, annotation.coordinate))
             }
+            }
             // Keep GPS independent from editable markers (never assign a marker UUID).
             if let position, position.valid {
-                if let gpsAnnotation { view.removeAnnotation(gpsAnnotation) }
-                let gps = MLNPointAnnotation()
-                gps.title = "GPS · текущая позиция"
-                gps.coordinate = CLLocationCoordinate2D(latitude: position.latitude, longitude: position.longitude)
-                gpsAnnotation = gps
-                view.addAnnotation(gps)
-                if !centeredOnGPS { view.setCenter(gps.coordinate, animated: false); centeredOnGPS = true }
+                let coordinate = CLLocationCoordinate2D(latitude: position.latitude, longitude: position.longitude)
+                if let gps = gpsAnnotation {
+                    if gps.coordinate.latitude != coordinate.latitude || gps.coordinate.longitude != coordinate.longitude { gps.coordinate = coordinate }
+                } else {
+                    let gps = MLNPointAnnotation()
+                    gps.title = "GPS · текущая позиция"
+                    gps.coordinate = coordinate
+                    gpsAnnotation = gps
+                    view.addAnnotation(gps)
+                }
+                if !centeredOnGPS { view.setCenter(coordinate, animated: false); centeredOnGPS = true }
             } else if let gpsAnnotation {
                 view.removeAnnotation(gpsAnnotation)
                 self.gpsAnnotation = nil
