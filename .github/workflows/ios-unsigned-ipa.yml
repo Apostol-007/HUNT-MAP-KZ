@@ -2,11 +2,20 @@ name: HUNT MAP KZ - unsigned iOS IPA
 
 on:
   workflow_dispatch:
-  push:
+  pull_request:
     paths:
       - 'iOS/**'
       - 'Core/**'
-      - 'server/tests/**'
+      - 'server/**'
+      - 'scripts/**'
+      - '.github/workflows/ios-unsigned-ipa.yml'
+  push:
+    branches: [main, 'ci/**']
+    paths:
+      - 'iOS/**'
+      - 'Core/**'
+      - 'server/**'
+      - 'scripts/**'
       - 'tools/prepare_protomaps_grid.py'
       - '.github/workflows/ios-unsigned-ipa.yml'
 
@@ -36,7 +45,7 @@ jobs:
 
   ios:
     name: Compile iOS and package unsigned IPA
-    needs: verify
+    needs: [verify, simulator]
     runs-on: macos-15
     timeout-minutes: 60
     steps:
@@ -116,3 +125,55 @@ jobs:
           path: ${{ runner.temp }}/ios-build.log
           if-no-files-found: ignore
           retention-days: 7
+
+  simulator:
+    name: iOS simulator smoke tests
+    needs: verify
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate Xcode project
+        working-directory: iOS
+        run: |
+          brew install xcodegen
+          xcodegen generate --spec project.yml
+      - name: Select available iPhone simulator
+        run: |
+          set -euo pipefail
+          xcrun simctl list devices available -j > "$RUNNER_TEMP/devices.json"
+          python3 scripts/select_ios_simulator.py "$RUNNER_TEMP/devices.json" >> "$GITHUB_ENV"
+      - name: Boot simulator
+        run: |
+          xcrun simctl boot "$HUNT_SIMULATOR_ID" || true
+          xcrun simctl bootstatus "$HUNT_SIMULATOR_ID" -b
+      - name: Run real application UI smoke tests
+        working-directory: iOS
+        run: |
+          set -o pipefail
+          xcodebuild -project HuntMapKZ.xcodeproj \
+            -scheme HuntMapKZ -configuration Debug \
+            -destination "platform=iOS Simulator,id=$HUNT_SIMULATOR_ID" \
+            -parallel-testing-enabled NO \
+            -resultBundlePath "$RUNNER_TEMP/hunt-ui.xcresult" \
+            -derivedDataPath "$RUNNER_TEMP/HuntSimulatorBuild" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            test 2>&1 | tee "$RUNNER_TEMP/ios-ui-test.log"
+      - name: Export screenshot attachments
+        if: always()
+        run: |
+          if test -d "$RUNNER_TEMP/hunt-ui.xcresult"; then
+            mkdir -p "$RUNNER_TEMP/hunt-screenshots"
+            xcrun xcresulttool export attachments --path "$RUNNER_TEMP/hunt-ui.xcresult" --output-path "$RUNNER_TEMP/hunt-screenshots"
+          fi
+      - name: Upload UI test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hunt-ui-evidence
+          path: |
+            ${{ runner.temp }}/hunt-ui.xcresult
+            ${{ runner.temp }}/hunt-screenshots/
+            ${{ runner.temp }}/ios-ui-test.log
+          if-no-files-found: error
+          retention-days: 14

@@ -64,3 +64,26 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
         CODE_SIGN_STYLE: Automatic
+
+  HuntMapUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - HuntMapUITests
+    dependencies:
+      - target: HuntMapKZ
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: kz.huntmap.field.uitests
+        SWIFT_VERSION: 5.0
+schemes:
+  HuntMapKZ:
+    build:
+      targets:
+        HuntMapKZ: all
+        HuntMapUITests: [test]
+    test:
+      targets:
+        - HuntMapUITests
+      config: Debug
