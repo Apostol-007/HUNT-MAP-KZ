@@ -68,6 +68,8 @@ struct GroundsCatalogView: View {
     @State private var error = ""
     @State private var admin = false
     @State private var showManagement = false
+    @State private var creating = false
+    @State private var history = false
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -93,6 +95,10 @@ struct GroundsCatalogView: View {
                 VStack(spacing: 8) {
                     HuntAction(title: "Импорт GeoJSON", symbol: "square.and.arrow.down") { importing = true }
                     HuntAction(title: admin ? "Администратор разблокирован" : "Локальный администратор", symbol: "lock.shield") { unlock() }
+                    if admin {
+                        HuntAction(title: "Создать угодье", symbol: "plus") { creating = true }
+                        HuntAction(title: "История изменений", symbol: "clock.arrow.circlepath") { history = true }
+                    }
                     if admin, let file = GroundsExport.file(model.zones) {
                         ShareLink(item: file) { HuntRow(title: "Резервная копия", subtitle: "Экспорт GeoJSON", symbol: "square.and.arrow.up") }
                     }
@@ -107,6 +113,11 @@ struct GroundsCatalogView: View {
                 }
             }
         }
+        .sheet(isPresented: $creating) {
+            GroundEditor(zone: GeoZone(id: "LOCAL-" + UUID().uuidString, name: "", kind: .huntingGround,
+                verified: false, source: "Локальный пользовательский контур", polygons: []), model: model).huntModal()
+        }
+        .sheet(isPresented: $history) { GroundHistoryScreen(model: model).huntModal() }
         .fileImporter(isPresented: $importing, allowedContentTypes: [UTType(filenameExtension: "geojson") ?? .json, .json]) { result in
             do {
                 let url = try result.get()
@@ -253,9 +264,15 @@ struct GroundEditor: View {
     @State private var values: [String: String]
     @State private var newKey = ""
     @State private var deleting = false
+    @State private var geometry: [[[GeoPoint]]]
+    @State private var editGeometry = false
+    @State private var saveError = ""
     init(zone: GeoZone, model: FieldModel) {
         self.zone = zone; self.model = model
         _name = State(initialValue: zone.name)
+        _geometry = State(initialValue: zone.polygons.map { $0.rings.map { ring in
+            ring.count > 1 && ring.first == ring.last ? Array(ring.dropLast()) : ring
+        } })
         var attributes = zone.attributes ?? [:]
         for key in ["description", "phone", "email", "website", "organization", "region", "animals", "entrance_lat", "entrance_lon"] where attributes[key] == nil { attributes[key] = "" }
         _values = State(initialValue: attributes)
@@ -278,7 +295,14 @@ struct GroundEditor: View {
                         newKey = ""
                     }
                 }
-                Button("Удалить угодье", role: .destructive) { deleting = true }
+                Section("Геометрия") {
+                    Button("Редактировать контур") { editGeometry = true }
+                    Text("Полигонов: \(geometry.count)").font(.caption)
+                    if !saveError.isEmpty { Text(saveError).foregroundStyle(.orange) }
+                }
+                if model.zones.contains(where: { $0.id == zone.id }) {
+                    Button("Удалить угодье", role: .destructive) { deleting = true }
+                }
             }.scrollContentBackground(.hidden).background(HuntReference.background).navigationTitle("Редактор угодья")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Отмена") { dismiss() } }
@@ -286,13 +310,33 @@ struct GroundEditor: View {
                     Button("Сохранить") {
                         values["local_revision"] = UUID().uuidString
                         values["name"] = name
-                        model.saveGround(GeoZone(id: zone.id, name: name, kind: zone.kind, verified: false, source: zone.source, polygons: zone.polygons, attributes: values))
-                        dismiss()
+                        do {
+                            let unchanged = geometry == zone.polygons.map { $0.rings.map { ring in
+                                ring.count > 1 && ring.first == ring.last ? Array(ring.dropLast()) : ring
+                            } }
+                            if !unchanged || zone.polygons.isEmpty {
+                                try GroundGeometryValidation.validate(geometry)
+                                values.removeValue(forKey: "area_ha")
+                                values.removeValue(forKey: "area_hectares")
+                            }
+                            values["legal_boundary_confirmed"] = "false"
+                            values["is_hunting_ground_boundary"] = "false"
+                            let polygons = geometry.map { GeoPolygon(rings: $0) }
+                            try model.commitGround(GeoZone(id: zone.id, name: name, kind: zone.kind, verified: false, source: zone.source, polygons: polygons, attributes: values))
+                            dismiss()
+                        } catch { saveError = error.localizedDescription }
                     }.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
+            .sheet(isPresented: $editGeometry) {
+                GroundGeometryScreen(geometry: $geometry, initialCenter: model.coordinate).huntModal()
+            }
             .confirmationDialog("Удалить локальное угодье?", isPresented: $deleting) {
-                Button("Удалить", role: .destructive) { model.deleteGround(zone.id); dismiss() }
+                Button("Удалить", role: .destructive) {
+                    do { try model.commitGroundDeletion(zone.id); dismiss() }
+                    catch { saveError = error.localizedDescription }
+                }
+                Button("Отмена", role: .cancel) {}
             }
         }
     }

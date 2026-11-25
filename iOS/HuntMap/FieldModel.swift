@@ -34,7 +34,21 @@ struct Track: Identifiable, Codable {
         return max(0, finish.timeIntervalSince(start))
     }
 }
-struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var pendingTrack:Track?=nil; var zones:[GeoZone]=[] }
+struct GroundRevision: Codable, Identifiable {
+    var id = UUID()
+    let date: Date
+    let groundID: String
+    let previous: GeoZone?
+    let action: String
+}
+struct LocalData: Codable {
+    var markers:[Marker]=[]
+    var tracks:[Track]=[]
+    var pendingTrack:Track?=nil
+    var zones:[GeoZone]=[]
+    var groundRevisions:[GroundRevision]?=nil
+    var deletedGroundIDs:Set<String>?=nil
+}
 
 @MainActor final class FieldModel: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var coordinate: GeoPoint?
@@ -54,6 +68,8 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
     @Published var status = "GPS не запущен"
     @Published var lastWarning = "Границы не загружены"
     @Published var zones: [GeoZone] = []
+    @Published private(set) var groundRevisions: [GroundRevision] = []
+    private var deletedGroundIDs: Set<String> = []
     @Published var strictOffline = true
     @Published var gpsAuthorization = "не определено"
     @Published var lastError = ""
@@ -224,21 +240,51 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
     func setImportedZones(_ imported:[GeoZone]) {
         let existing = Dictionary(zones.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var merged = existing
-        for ground in imported where existing[ground.id] == nil { merged[ground.id] = ground }
+        for ground in imported where existing[ground.id] == nil && !deletedGroundIDs.contains(ground.id) { merged[ground.id] = ground }
         zones = merged.values.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         lastWarning = "Импортированные границы юридически не проверены"
         persist()
     }
     func saveGround(_ ground: GeoZone) {
-        if let index = zones.firstIndex(where: { $0.id == ground.id }) { zones[index] = ground }
-        else { zones.append(ground) }
-        if monitoredGroundID == ground.id { groundWasInside = false; groundOutsideCount = 0 }
-        persist()
+        do { try commitGround(ground) }
+        catch { lastError = error.localizedDescription }
     }
     func deleteGround(_ id: String) {
-        if monitoredGroundID == id { stopGroundMonitor() }
-        zones.removeAll { $0.id == id }
-        persist()
+        do { try commitGroundDeletion(id) }
+        catch { lastError = error.localizedDescription }
+    }
+    func commitGround(_ ground: GeoZone) throws {
+        var next = zones
+        let previous = next.first { $0.id == ground.id }
+        if let i = next.firstIndex(where: { $0.id == ground.id }) { next[i] = ground }
+        else { next.append(ground) }
+        var deleted = deletedGroundIDs
+        deleted.remove(ground.id)
+        try writeGroundChange(next, deleted: deleted, revision: GroundRevision(date: Date(), groundID: ground.id, previous: previous, action: previous == nil ? "Создание" : "Редактирование"))
+    }
+    func commitGroundDeletion(_ id: String) throws {
+        guard let previous = zones.first(where: { $0.id == id }) else { return }
+        var deleted = deletedGroundIDs
+        deleted.insert(id)
+        try writeGroundChange(zones.filter { $0.id != id }, deleted: deleted, revision: GroundRevision(date: Date(), groundID: id, previous: previous, action: "Удаление"))
+    }
+    func restoreGroundRevision(_ revision: GroundRevision) throws {
+        if let previous = revision.previous { try commitGround(previous) }
+        else { try commitGroundDeletion(revision.groundID) }
+    }
+    private func writeGroundChange(_ next: [GeoZone], deleted: Set<String>, revision: GroundRevision) throws {
+        let sorted = next.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        let history = Array(([revision] + groundRevisions).prefix(200))
+        let data = LocalData(markers: markers, tracks: tracks, pendingTrack: currentTrack, zones: sorted,
+                             groundRevisions: history, deletedGroundIDs: deleted)
+        try JSONEncoder().encode(data).write(to: documentURL, options: [.atomic,.completeFileProtectionUnlessOpen])
+        zones = sorted
+        groundRevisions = history
+        deletedGroundIDs = deleted
+        if monitoredGroundID == revision.groundID {
+            if deleted.contains(revision.groundID) { stopGroundMonitor() }
+            else { groundWasInside = false; groundOutsideCount = 0 }
+        }
     }
     func startGroundMonitor(_ ground: GeoZone) {
         monitoredGroundID = ground.id
@@ -357,6 +403,8 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
     private func load() {
         guard let bytes=try? Data(contentsOf:documentURL),let obj=try? JSONDecoder().decode(LocalData.self,from:bytes) else {return}
         markers=obj.markers;tracks=obj.tracks;zones=obj.zones
+        groundRevisions = obj.groundRevisions ?? []
+        deletedGroundIDs = obj.deletedGroundIDs ?? []
         // An interrupted recording is restored exactly once. Clear pendingTrack on disk
         // immediately, otherwise every relaunch would duplicate the recovered route.
         if let pending=obj.pendingTrack {
@@ -369,7 +417,7 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         }
     }
     private func persist() {
-        guard let encoded=try? JSONEncoder().encode(LocalData(markers:markers,tracks:tracks,pendingTrack:currentTrack,zones:zones)) else {return}
+        guard let encoded=try? JSONEncoder().encode(LocalData(markers:markers,tracks:tracks,pendingTrack:currentTrack,zones:zones,groundRevisions:groundRevisions,deletedGroundIDs:deletedGroundIDs)) else {return}
         try? encoded.write(to:documentURL,options:[.atomic,.completeFileProtectionUnlessOpen])
     }
     func exportGPX(_ track:Track)->URL? {
