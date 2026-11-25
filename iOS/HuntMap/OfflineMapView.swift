@@ -338,8 +338,9 @@ struct OfflineMapView: UIViewRepresentable {
         }
 
         func mapView(_ mapView: MLNMapView, imageFor annotation: MLNAnnotation) -> MLNAnnotationImage? {
-            if annotation.title?.hasPrefix("MEASURE|") == true {
-                let id = annotation.title ?? "MEASURE|"
+            if let pointAnnotation = annotation as? MLNPointAnnotation,
+               let id = pointAnnotation.title,
+               id.hasPrefix("MEASURE|") {
                 if let cached = mapView.dequeueReusableAnnotationImage(withIdentifier: id) { return cached }
                 let image = UIGraphicsImageRenderer(size: CGSize(width: 28, height: 28)).image { _ in
                     UIColor(red: 0.16, green: 0.85, blue: 0.40, alpha: 1).setFill()

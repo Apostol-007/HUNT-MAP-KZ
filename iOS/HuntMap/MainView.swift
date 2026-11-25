@@ -119,7 +119,9 @@ struct MainView: View {
     private enum DataSection: String, CaseIterable { case routes = "Маршруты", markers = "Метки", grounds = "Угодья" }
     private enum ServiceSection: String, CaseIterable { case weather = "Погода", wildlife = "Животные" }
 
-    var body: some View {
+    var body: some View { featurePresentation }
+
+    private var rootLayout: some View {
         ZStack {
             // Keep the expensive MapLibre instance alive when switching tabs.
             // Only controls disappear; the map remains genuinely full-screen.
@@ -141,6 +143,10 @@ struct MainView: View {
         .tint(HuntReference.green)
         .environment(\.locale, Locale(identifier: "ru_KZ"))
         .background(ShakeDetector().frame(width: 1, height: 1))
+    }
+
+    private var lifecycleLayout: some View {
+        rootLayout
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
         .onAppear {
             loadRoutingNetwork()
@@ -160,6 +166,10 @@ struct MainView: View {
         }
         .onDisappear { playbackTask?.cancel() }
         .onChange(of: online) { _, enabled in if enabled { offlineRoads.clear() } }
+    }
+
+    private var guidanceLayout: some View {
+        lifecycleLayout
         .onChange(of: model.coordinate) { _, newPoint in
             if let point = newPoint {
                 weather.updateIfNeeded(latitude: point.latitude, longitude: point.longitude)
@@ -212,6 +222,10 @@ struct MainView: View {
                 navigationKind = "Исходная точка достигнута"
             }
         }
+    }
+
+    private var importLayout: some View {
+        guidanceLayout
         .fileImporter(isPresented: $importingValhallaTiles,
                       allowedContentTypes: [UTType(filenameExtension: "tar") ?? .data],
                       allowsMultipleSelection: false) { result in
@@ -238,6 +252,10 @@ struct MainView: View {
         .alert("Маршрутизация", isPresented: Binding(get: { routingError != nil }, set: { if !$0 { routingError = nil } })) {
             Button("Понятно") { routingError = nil }
         } message: { Text(routingError ?? "") }
+    }
+
+    private var mapPresentation: some View {
+        importLayout
         .sheet(isPresented: $showLayers) { layerSheet.huntModal() }
         .sheet(isPresented: $showSearch) { mapSearchSheet.huntModal() }
         .sheet(item: $selectedMapMarker) { selection in
@@ -288,6 +306,10 @@ struct MainView: View {
                 Text(String(format: "Широта %.6f, долгота %.6f", point.latitude, point.longitude))
             }
         }
+    }
+
+    private var editingPresentation: some View {
+        mapPresentation
         .sheet(item: $creatingMapMarker) { marker in
             MarkerEditor(marker: marker, isNew: true,
                          onSave: { changed in
@@ -319,6 +341,10 @@ struct MainView: View {
             }
             Button("Отмена", role: .cancel) { trackToDelete = nil }
         }
+    }
+
+    private var servicePresentation: some View {
+        editingPresentation
         .sheet(isPresented: $showWeather) {
             WeatherPanel(service: weather, coordinate: model.coordinate, online: online)
                 .huntModal()
@@ -348,6 +374,10 @@ struct MainView: View {
                             protomapsStatus: protomaps.status,
                             valhallaStatus: valhalla.status).huntModal()
         }
+    }
+
+    private var featurePresentation: some View {
+        servicePresentation
         .sheet(item: $profileTrack) { track in
             TrackProfileScreen(track: track, onMap: { point in
                 profileTrack = nil
