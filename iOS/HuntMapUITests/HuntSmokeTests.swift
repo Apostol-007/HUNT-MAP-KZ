@@ -15,15 +15,23 @@ final class HuntSmokeTests: XCTestCase {
     private func openApp() -> XCUIApplication {
         let app = XCUIApplication()
         app.launch()
-        let skip = app.buttons["Открыть приложение без ожидания"]
+        let skip = app.buttons["startup_skip"]
         let home = app.buttons["tab_Главная"]
-        let deadline = Date().addingTimeInterval(45)
-        while Date() < deadline && !home.isHittable {
-            if skip.exists && skip.isHittable { skip.tap() }
-            else { RunLoop.current.run(until: Date().addingTimeInterval(0.5)) }
+        let deadline = Date().addingTimeInterval(90)
+        var ready = false
+        while Date() < deadline {
+            // A visible startup gate always takes precedence over underlying controls.
+            if skip.exists {
+                if skip.isHittable { skip.tap() }
+            } else if home.exists && home.isHittable && home.isEnabled {
+                ready = true
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
         }
-        XCTAssertTrue(home.waitForExistence(timeout: 15), "Main navigation missing")
-        XCTAssertTrue(home.isHittable, "Startup gate blocks navigation")
+        XCTAssertTrue(ready, "Startup gate did not release navigation")
+        XCTAssertFalse(skip.exists, "Startup screen still covers the application")
+        XCTAssertTrue(home.isHittable && home.isEnabled)
         return app
     }
 
@@ -36,6 +44,7 @@ final class HuntSmokeTests: XCTestCase {
             app.swipeUp()
         }
         XCTAssertTrue(field.isHittable)
+        XCTAssertFalse(app.buttons["startup_skip"].exists, "Startup gate reappeared")
         XCTAssertTrue(field.isEnabled, "Field entry disabled")
         field.tap()
         let ready = app.staticTexts["field_screen_ready"]

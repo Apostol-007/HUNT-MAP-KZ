@@ -133,16 +133,17 @@ struct MainView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .safeAreaInset(edge: .bottom, spacing: 0) { navigation }
-        .accessibilityHidden(showFieldMode || showEmergency)
-        .allowsHitTesting(!showFieldMode && !showEmergency)
+        .accessibilityHidden(startupSync.presented || showFieldMode || showEmergency)
+        .allowsHitTesting(!startupSync.presented && !showFieldMode && !showEmergency)
         .overlay {
             if startupSync.presented {
                 StartupSyncScreen(sync: startupSync, hosting: hosting, protomaps: protomaps)
                     .transition(.opacity)
+                    .accessibilityAddTraits(.isModal)
             }
         }
         .overlay {
-            if showFieldMode || showEmergency {
+            if !startupSync.presented && (showFieldMode || showEmergency) {
                 fieldFeatureOverlay
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(HuntReference.background.ignoresSafeArea())

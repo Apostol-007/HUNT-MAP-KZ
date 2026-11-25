@@ -241,10 +241,17 @@ struct StartupSyncScreen: View {
                         .id(index).transition(.opacity)
                 }
                 Spacer()
-                Button("Открыть приложение без ожидания") { sync.skip() }
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.white.opacity(0.75))
-                    .padding(.bottom, 16)
+                Button { sync.skip() } label: {
+                    Text("Открыть приложение без ожидания")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                        .contentShape(Rectangle())
+                        .foregroundStyle(HuntReference.green)
+                        .background(HuntReference.card, in: RoundedRectangle(cornerRadius: 12))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("startup_skip")
+                .padding(.bottom, 16)
             }
             .padding(.horizontal, 24)
         }
