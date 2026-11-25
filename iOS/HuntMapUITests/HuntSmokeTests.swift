@@ -36,6 +36,7 @@ final class HuntSmokeTests: XCTestCase {
             app.swipeUp()
         }
         XCTAssertTrue(field.isHittable)
+        XCTAssertTrue(field.isEnabled, "Field entry disabled")
         field.tap()
         let ready = app.staticTexts["field_screen_ready"]
         if !ready.waitForExistence(timeout: 15) {
@@ -65,6 +66,12 @@ final class HuntSmokeTests: XCTestCase {
         app.buttons["sos_close"].tap()
         app.buttons["field_close"].tap()
         XCTAssertTrue(app.buttons["tab_Главная"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["field_screen_ready"].exists, "Field overlay did not close")
+        let directSOS = app.buttons["sos_home"]
+        XCTAssertTrue(directSOS.waitForExistence(timeout: 10))
+        directSOS.tap()
+        XCTAssertTrue(app.staticTexts["sos_screen_ready"].waitForExistence(timeout: 15), "Direct SOS entry did not open")
+        app.buttons["sos_close"].tap()
     }
 
     func testLaunchAndPrimaryNavigation() throws {

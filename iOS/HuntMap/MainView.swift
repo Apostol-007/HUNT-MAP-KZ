@@ -128,14 +128,25 @@ struct MainView: View {
             mapScreen
                 .opacity(tab == .map ? 1 : 0)
                 .allowsHitTesting(tab == .map)
+                .accessibilityHidden(tab != .map)
             if tab != .map { themedScreen }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .safeAreaInset(edge: .bottom, spacing: 0) { navigation }
+        .accessibilityHidden(showFieldMode || showEmergency)
+        .allowsHitTesting(!showFieldMode && !showEmergency)
         .overlay {
             if startupSync.presented {
                 StartupSyncScreen(sync: startupSync, hosting: hosting, protomaps: protomaps)
                     .transition(.opacity)
+            }
+        }
+        .overlay {
+            if showFieldMode || showEmergency {
+                fieldFeatureOverlay
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(HuntReference.background.ignoresSafeArea())
+                    .zIndex(10)
             }
         }
         .background(HuntReference.background.ignoresSafeArea())
@@ -392,16 +403,20 @@ struct MainView: View {
                 onSelectArea: { showOfflineManager = false; measurementMode = nil; gridMode = true; tab = .map })
                 .huntModal()
         }
-        .fullScreenCover(isPresented: $showFieldMode) {
-            FieldModeScreen(model: model, onReturn: { track in
-                beginFieldReturn(track)
-            }).huntModal()
-        }
-        .fullScreenCover(isPresented: $showEmergency) {
-            EmergencyScreen(model: model).huntModal()
-        }
         .sheet(isPresented: $showAbout) { AboutHuntView().huntModal() }
         .sheet(isPresented: $showLegalLibrary) { LegalLibraryView().huntModal() }
+    }
+
+    @ViewBuilder
+    private var fieldFeatureOverlay: some View {
+        if showEmergency {
+            EmergencyScreen(model: model, onClose: { showEmergency = false })
+        } else if showFieldMode {
+            FieldModeScreen(model: model, onReturn: { track in
+                showFieldMode = false
+                beginFieldReturn(track)
+            }, onClose: { showFieldMode = false })
+        }
     }
 
     // MARK: - Root layout

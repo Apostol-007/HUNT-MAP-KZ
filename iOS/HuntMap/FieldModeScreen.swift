@@ -5,6 +5,7 @@ import HuntCore
 struct FieldModeScreen: View {
     @ObservedObject var model: FieldModel
     let onReturn: (Track) -> Void
+    var onClose: (() -> Void)? = nil
     @State private var confirmReturn = false
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var phase
@@ -33,13 +34,13 @@ struct FieldModeScreen: View {
             .background(HuntReference.background.ignoresSafeArea())
             .navigationTitle("Полевой режим")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Готово") { dismiss() }.accessibilityIdentifier("field_close") } }
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Готово") { close() }.accessibilityIdentifier("field_close") } }
             .sheet(isPresented: $emergency) { EmergencyScreen(model: model).huntModal() }
             .alert("Вернуться по записанному пути?", isPresented: $confirmReturn) {
                 Button("Начать возвращение") {
                     guard let track = model.currentTrack, canReturn(at: Date()) else { return }
                     onReturn(track)
-                    dismiss()
+                    close()
                 }
                 Button("Отмена", role: .cancel) {}
             } message: {
@@ -58,6 +59,7 @@ struct FieldModeScreen: View {
         }
     }
 
+    private func close() { if let onClose { onClose() } else { dismiss() } }
     private func fresh(_ now: Date) -> Bool {
         guard let at = model.fieldFixTime else { return false }
         return now.timeIntervalSince(at) < 30 && now.timeIntervalSince(at) >= -5
@@ -182,6 +184,7 @@ private struct FieldCompass: View {
 
 struct EmergencyScreen: View {
     @ObservedObject var model: FieldModel
+    var onClose: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @State private var copied = false
@@ -219,7 +222,7 @@ struct EmergencyScreen: View {
             .background(HuntReference.background.ignoresSafeArea())
             .navigationTitle("Экстренная помощь")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Готово") { dismiss() }.accessibilityIdentifier("sos_close") } }
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Готово") { if let onClose { onClose() } else { dismiss() } }.accessibilityIdentifier("sos_close") } }
             .confirmationDialog("Позвонить 112?", isPresented: $confirmCall, titleVisibility: .visible) {
                 Button("Позвонить") { if let url = URL(string: "tel:112") { openURL(url) } }
                 Button("Отмена", role: .cancel) {}
