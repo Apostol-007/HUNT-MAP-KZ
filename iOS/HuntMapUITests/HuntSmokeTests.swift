@@ -157,6 +157,17 @@ final class HuntSmokeTests: XCTestCase {
         capture("13-backup", app: app)
     }
 
+    func testRepeatedColdLaunch() throws {
+        for iteration in 0..<3 {
+            let app = openApp()
+            XCTAssertEqual(app.state, .runningForeground)
+            RunLoop.current.run(until: Date().addingTimeInterval(3))
+            XCTAssertEqual(app.state, .runningForeground, "Cold launch crashed")
+            capture("cold-launch-\(iteration)", app: app)
+            app.terminate()
+        }
+    }
+
     func testLaunchAndPrimaryNavigation() throws {
         let app = openApp()
         let tabs = [("Главная", "01-home"), ("Карта", "02-map"),

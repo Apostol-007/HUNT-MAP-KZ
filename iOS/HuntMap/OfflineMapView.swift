@@ -7,7 +7,7 @@ import HuntCore
 struct OfflineMapView: UIViewRepresentable {
     @AppStorage("hunt.map.style") private var mapStyle = MapBasemap.protomaps.rawValue
     private var selectedStyle: URL {
-        (MapBasemap(rawValue: mapStyle) ?? .outdoors).styleURL(apiKey: MapTilerConfiguration.apiKey) ?? MapBasemap.outdoors.styleURL(apiKey: "")!
+        (MapBasemap(rawValue: mapStyle) ?? .outdoors).styleURL(apiKey: MapTilerConfiguration.apiKey) ?? MapBasemap.outdoors.styleURL(apiKey: "") ?? OfflineMapStyle.url
     }
 
     let zones: [GeoZone]

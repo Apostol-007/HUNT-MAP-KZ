@@ -131,10 +131,7 @@ struct MainView: View {
         ZStack {
             // Keep the expensive MapLibre instance alive when switching tabs.
             // Only controls disappear; the map remains genuinely full-screen.
-            mapScreen
-                .opacity(tab == .map ? 1 : 0)
-                .allowsHitTesting(tab == .map)
-                .accessibilityHidden(tab != .map)
+            if tab == .map && !startupSync.presented { mapScreen }
             if tab != .map { themedScreen }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -167,17 +164,17 @@ struct MainView: View {
         rootLayout
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
         .onAppear {
-            loadRoutingNetwork()
             startupSync.begin(hosting: hosting, tiles: maps, protomaps: protomaps,
                               model: model, valhalla: valhalla)
-            refreshWeatherOnLaunch()
-            weatherGrid.load(hourOffset: 0)
+        }
+        .onChange(of: tab) { _, value in
+            if value == .services { refreshWeatherOnLaunch() }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { refreshWeatherOnLaunch() }
+            if phase == .active && tab == .services { refreshWeatherOnLaunch() }
         }
         .onChange(of: connectivity.connected) { _, connected in
-            if connected { refreshWeatherOnLaunch() }
+            if connected && tab == .services { refreshWeatherOnLaunch() }
         }
         .onChange(of: weatherLayer) { _, value in
             if value != .none { weatherGrid.load(hourOffset: weatherGrid.chosenOffset) }
@@ -189,7 +186,7 @@ struct MainView: View {
     private var guidanceLayout: some View {
         lifecycleLayout
         .onChange(of: model.coordinate) { _, newPoint in
-            if forecastPoint == nil, let point = newPoint {
+            if tab == .services, forecastPoint == nil, let point = newPoint {
                 weather.updateIfNeeded(latitude: point.latitude, longitude: point.longitude)
             }
             if newPoint != nil, navigationKind == "Ожидание GPS", let destination = routeDestination {
@@ -919,7 +916,9 @@ struct MainView: View {
     }
 
     private func loadRoutingNetwork() {
-        guard let bytes = try? Data(contentsOf: routingNetworkURL),
+        guard let size = try? routingNetworkURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size > 0, size <= 15_000_000,
+              let bytes = try? Data(contentsOf: routingNetworkURL),
               let graph = try? OfflineRouteGraph(geoJSON: bytes, mode: travelMode) else { return }
         routeGraph = graph
         routeGraphCount = graph.count
@@ -933,6 +932,7 @@ struct MainView: View {
     }
     private func planRoute(to destination: GeoPoint, title: String, markerID: UUID? = nil) {
         if recordedRoute != nil { stopRecordedTrack() }
+        if routeGraph == nil && !valhalla.tilesInstalled { loadRoutingNetwork() }
         if !routeGuidance { navigationPath = [] }
         routeDestination = destination
         routeTitle = title
