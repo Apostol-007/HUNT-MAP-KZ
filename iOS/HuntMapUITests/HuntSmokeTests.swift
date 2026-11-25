@@ -83,6 +83,16 @@ final class HuntSmokeTests: XCTestCase {
         app.buttons["sos_close"].tap()
     }
 
+    func testAstronomyNavigation() throws {
+        let app = openApp()
+        app.buttons["tab_Сервисы"].tap()
+        let astronomy = app.buttons["service_astronomy"]
+        XCTAssertTrue(astronomy.waitForExistence(timeout: 15))
+        astronomy.tap()
+        XCTAssertTrue(app.staticTexts["astronomy_ready"].waitForExistence(timeout: 15))
+        capture("09-astronomy", app: app)
+    }
+
     func testLaunchAndPrimaryNavigation() throws {
         let app = openApp()
         let tabs = [("Главная", "01-home"), ("Карта", "02-map"),

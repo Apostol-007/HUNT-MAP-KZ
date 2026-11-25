@@ -81,6 +81,7 @@ struct AnimatedWeatherDashboard: View {
     let coordinate: GeoPoint?
     let onMap: (WeatherMapLayer) -> Void
     let onDetails: () -> Void
+    var locationTitle = "Текущая GPS-позиция"
     @State private var mode = ForecastMode.temperature
     @State private var selected: Date?
     private let accent = HuntReference.green
@@ -141,10 +142,11 @@ struct AnimatedWeatherDashboard: View {
         let scene = WeatherScene(weather.current.weatherCode)
         return VStack(spacing: 12) {
             ReferencePageHeader(title: "Погода")
-            Label("По текущей GPS-позиции", systemImage: "mappin.circle.fill")
+            Label(locationTitle, systemImage: "mappin.circle.fill")
                 .font(.caption)
                 .foregroundStyle(HuntReference.muted)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            Text(String(format: "Точка прогноза: %.4f, %.4f", weather.latitude, weather.longitude)).font(.caption2).foregroundStyle(HuntReference.muted)
             currentConditions(weather, today: today, scene: scene)
             hourly(upcoming)
             surface {
@@ -164,6 +166,11 @@ struct AnimatedWeatherDashboard: View {
                     metric("Порывы", n(weather.current.windGustKmh, 1) + " км/ч", "wind")
                     metric("Давление", n(weather.current.pressureMSLHpa) + " гПа", "barometer")
                     metric("Осадки", n(weather.current.precipitationMm, 1) + " мм", "drop")
+                    metric("Вероятность осадков", unit(weather.current.precipitationProbabilityPercent, "%"), "umbrella")
+                    metric("Облачность", unit(weather.current.cloudCoverPercent, "%"), "cloud")
+                    metric("Видимость", unit(weather.current.visibilityMeters.map { $0 / 1000 }, " км"), "eye")
+                    metric("УФ-индекс", n(weather.current.uvIndex, 1), "sun.max")
+                    metric("Направление ветра (откуда)", unit(weather.current.windDirectionFromDegrees, "°"), "location.north.line")
                 }
             }
             surface {

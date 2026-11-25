@@ -36,6 +36,10 @@ struct MainView: View {
     @State private var tab: Tab = .home
     @State private var dataSection: DataSection = .routes
     @State private var serviceSection: ServiceSection = .weather
+    @State private var forecastPoint: GeoPoint?
+    @State private var forecastTitle = "Текущая GPS-позиция"
+    @State private var pickingForecastPoint = false
+    @State private var pointDestination: ServiceSection = .weather
     @State private var weatherLayer: WeatherMapLayer = .none
     @State private var zone: GeoZone?
     @State private var highlightedGroundID: String?
@@ -117,7 +121,7 @@ struct MainView: View {
         }
     }
     private enum DataSection: String, CaseIterable { case routes = "Маршруты", markers = "Метки", grounds = "Угодья" }
-    private enum ServiceSection: String, CaseIterable { case weather = "Погода", wildlife = "Животные" }
+    private enum ServiceSection: String, CaseIterable { case weather = "Погода", astronomy = "Астрономия", wildlife = "Животные" }
 
     var body: some View { featurePresentation }
 
@@ -183,7 +187,7 @@ struct MainView: View {
     private var guidanceLayout: some View {
         lifecycleLayout
         .onChange(of: model.coordinate) { _, newPoint in
-            if let point = newPoint {
+            if forecastPoint == nil, let point = newPoint {
                 weather.updateIfNeeded(latitude: point.latitude, longitude: point.longitude)
             }
             if newPoint != nil, navigationKind == "Ожидание GPS", let destination = routeDestination {
@@ -358,7 +362,7 @@ struct MainView: View {
     private var servicePresentation: some View {
         editingPresentation
         .sheet(isPresented: $showWeather) {
-            WeatherPanel(service: weather, coordinate: model.coordinate, online: online)
+            WeatherPanel(service: weather, coordinate: forecastPoint ?? model.coordinate, online: connectivity.connected)
                 .huntModal()
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
@@ -621,6 +625,10 @@ struct MainView: View {
                            measurementClosed: measurementMode == .area,
                            measurementActive: measurementMode != nil,
                            onMapTap: { point in
+                               if pickingForecastPoint {
+                                   selectForecastPoint(point, title: "Точка на карте", destination: pointDestination)
+                                   return
+                               }
                                if measurementMode != nil {
                                    if let index = measurementMoveIndex, measurementPoints.indices.contains(index) {
                                        measurementPoints[index] = point
@@ -742,6 +750,13 @@ struct MainView: View {
                     .background(HuntReference.card.opacity(0.96), in: RoundedRectangle(cornerRadius: 10))
                     .padding(.horizontal, 12)
                     .padding(.bottom, 6)
+                }
+                if pickingForecastPoint {
+                    HStack {
+                        Text("Выберите точку на карте").font(.caption.bold())
+                        Spacer()
+                        Button("Отмена") { pickingForecastPoint = false; tab = .services }
+                    }.huntSurface().padding(.horizontal, 12)
                 }
                 if let kind = measurementMode {
                     MeasurementPanel(kind: kind, points: $measurementPoints, moveIndex: $measurementMoveIndex,
@@ -1661,16 +1676,73 @@ struct MainView: View {
         VStack(alignment: .leading, spacing: 17) {
             HStack(spacing: 8) {
                 ReferenceChip(title: "Погода", selected: serviceSection == .weather) { serviceSection = .weather }
+                ReferenceChip(title: "Астрономия", selected: serviceSection == .astronomy) { serviceSection = .astronomy }.accessibilityIdentifier("service_astronomy")
                 ReferenceChip(title: "Животные", selected: serviceSection == .wildlife) { serviceSection = .wildlife }
             }
-            if serviceSection == .weather { weatherContent } else { wildlifeContent }
+            switch serviceSection {
+            case .weather: weatherContent
+            case .astronomy: astronomyContent
+            case .wildlife: wildlifeContent
+            }
         }
     }
 
     private var weatherContent: some View {
-        AnimatedWeatherDashboard(service: weather, coordinate: model.coordinate,
-            onMap: { layer in weatherLayer = layer; openWeatherMap() },
-            onDetails: { showWeather = true })
+        VStack(spacing: 12) {
+            forecastLocationControls
+            AnimatedWeatherDashboard(service: weather, coordinate: forecastPoint ?? model.coordinate,
+                onMap: { layer in weatherLayer = layer; openWeatherMap() },
+                onDetails: { showWeather = true }, locationTitle: forecastTitle)
+        }
+    }
+    private var astronomyContent: some View {
+        VStack(spacing: 12) {
+            forecastLocationControls
+            AstronomyScreen(point: forecastPoint ?? model.coordinate)
+        }
+    }
+    private var forecastLocationControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(forecastTitle).font(.subheadline.bold())
+            HStack {
+                HuntAction(title: "GPS", symbol: "location.fill") {
+                    forecastPoint = nil
+                    forecastTitle = "Текущая GPS-позиция"
+                    if serviceSection == .weather, let point = model.coordinate {
+                        weather.updateIfNeeded(latitude: point.latitude, longitude: point.longitude, force: true)
+                    }
+                }
+                HuntAction(title: "На карте", symbol: "map") {
+                    pointDestination = serviceSection
+                    pickingForecastPoint = true
+                    gridMode = false
+                    measurementMode = nil
+                    movingMarkerID = nil
+                    tab = .map
+                }
+                Menu {
+                    ForEach(model.zones) { ground in
+                        Button(ground.name) {
+                            if let point = ground.groundCenter {
+                                selectForecastPoint(point, title: ground.name, destination: serviceSection)
+                            }
+                        }
+                    }
+                } label: {
+                    Label("Угодье", systemImage: "map.fill").font(.caption.bold()).foregroundStyle(HuntReference.green).frame(minHeight: 44)
+                }
+            }
+        }.huntSurface()
+    }
+    private func selectForecastPoint(_ point: GeoPoint, title: String, destination: ServiceSection) {
+        forecastPoint = point
+        forecastTitle = title
+        pickingForecastPoint = false
+        serviceSection = destination
+        tab = .services
+        if destination == .weather {
+            weather.updateIfNeeded(latitude: point.latitude, longitude: point.longitude, force: true)
+        }
     }
     private func weatherMetric(_ title: String, value: String, icon: String) -> some View {
         HStack(spacing: 9) {
@@ -1696,8 +1768,8 @@ struct MainView: View {
     private func refreshWeatherOnLaunch() {
         // GPS may not yet have a fix on launch. In that case refresh for the last
         // known weather location; the first new GPS fix will correct it if needed.
-        guard let latitude = model.coordinate?.latitude ?? weather.forecast?.latitude,
-              let longitude = model.coordinate?.longitude ?? weather.forecast?.longitude else { return }
+        guard let latitude = forecastPoint?.latitude ?? model.coordinate?.latitude ?? weather.forecast?.latitude,
+              let longitude = forecastPoint?.longitude ?? model.coordinate?.longitude ?? weather.forecast?.longitude else { return }
         // A network request is attempted even if the map itself uses offline PMTiles.
         weather.updateIfNeeded(latitude: latitude, longitude: longitude, force: true)
         if weatherLayer != .none {

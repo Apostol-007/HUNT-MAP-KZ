@@ -14,6 +14,10 @@ public struct WeatherHour: Codable, Equatable, Sendable {
     public var temperatureC: Double? = nil
     public var weatherCode: Int? = nil
     public var isDay: Int? = nil
+    public var humidityPercent: Double? = nil
+    public var cloudCoverPercent: Double? = nil
+    public var visibilityMeters: Double? = nil
+    public var uvIndex: Double? = nil
 
     public var windDirectionToDegrees: Double? {
         windDirectionFromDegrees.map { WeatherMath.normalizeDirection($0 + 180) }
@@ -69,6 +73,7 @@ public enum OpenMeteoDecoder {
         let precipitation: Double?
         let weather_code: Int?
         let is_day: Int?
+        let cloud_cover: Double?
     }
     private struct Hourly: Decodable {
         let time: [String]
@@ -82,6 +87,10 @@ public enum OpenMeteoDecoder {
         let temperature_2m: [Double?]?
         let weather_code: [Int?]?
         let is_day: [Int?]?
+        let relative_humidity_2m: [Double?]?
+        let cloud_cover: [Double?]?
+        let visibility: [Double?]?
+        let uv_index: [Double?]?
     }
     private static func parseUTC(_ value: String) -> Date? {
         let parser = ISO8601DateFormatter()
@@ -101,7 +110,7 @@ public enum OpenMeteoDecoder {
                h.precipitation_probability.count].allSatisfy({ $0 == count }) else {
             throw WeatherDecodeError.inconsistentHourlyArrays
         }
-        for length in [h.temperature_2m?.count, h.weather_code?.count, h.is_day?.count].compactMap({ $0 }) {
+        for length in [h.temperature_2m?.count, h.weather_code?.count, h.is_day?.count, h.relative_humidity_2m?.count, h.cloud_cover?.count, h.visibility?.count, h.uv_index?.count].compactMap({ $0 }) {
             guard length == count else { throw WeatherDecodeError.inconsistentHourlyArrays }
         }
         guard let currentTime = parseUTC(payload.current.time) else { throw WeatherDecodeError.invalidResponse }
@@ -115,8 +124,9 @@ public enum OpenMeteoDecoder {
                                      pressureMSLHpa: h.pressure_msl[index],
                                      surfacePressureHpa: h.surface_pressure[index],
                                      precipitationMm: h.precipitation[index],
-                                     precipitationProbabilityPercent: h.precipitation_probability[index], temperatureC: h.temperature_2m?[index], weatherCode: h.weather_code?[index], isDay: h.is_day?[index]))
+                                     precipitationProbabilityPercent: h.precipitation_probability[index], temperatureC: h.temperature_2m?[index], weatherCode: h.weather_code?[index], isDay: h.is_day?[index], humidityPercent: h.relative_humidity_2m?[index], cloudCoverPercent: h.cloud_cover?[index], visibilityMeters: h.visibility?[index], uvIndex: h.uv_index?[index]))
         }
+        let matchingHour = hours.last { $0.timestamp <= currentTime && currentTime.timeIntervalSince($0.timestamp) < 3600 }
         let current = WeatherHour(timestamp: currentTime,
                                   windSpeedKmh: payload.current.wind_speed_10m,
                                   windDirectionFromDegrees: payload.current.wind_direction_10m,
@@ -124,7 +134,7 @@ public enum OpenMeteoDecoder {
                                   pressureMSLHpa: payload.current.pressure_msl,
                                   surfacePressureHpa: payload.current.surface_pressure,
                                   precipitationMm: payload.current.precipitation,
-                                  precipitationProbabilityPercent: nil, temperatureC: payload.current.temperature_2m, weatherCode: payload.current.weather_code, isDay: payload.current.is_day)
+                                  precipitationProbabilityPercent: matchingHour?.precipitationProbabilityPercent, temperatureC: payload.current.temperature_2m, weatherCode: payload.current.weather_code, isDay: payload.current.is_day, humidityPercent: payload.current.relative_humidity_2m, cloudCoverPercent: payload.current.cloud_cover, visibilityMeters: matchingHour?.visibilityMeters, uvIndex: matchingHour?.uvIndex)
         return PointWeather(latitude: payload.latitude, longitude: payload.longitude,
                             retrievedAt: retrievedAt, source: "Open-Meteo Forecast API",
                             temperatureC: payload.current.temperature_2m,

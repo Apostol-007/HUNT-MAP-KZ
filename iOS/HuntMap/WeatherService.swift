@@ -14,6 +14,7 @@ import CoreLocation
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         return folder.appendingPathComponent("hunt_weather_point.json")
     }()
+    private var requestGeneration = UUID()
     private var lastRequest: Date?
     private var lastCoordinate: CLLocationCoordinate2D?
 
@@ -47,6 +48,9 @@ import CoreLocation
 
     func refresh(latitude: Double, longitude: Double, strictOffline: Bool) {
         task?.cancel()
+        requestGeneration = UUID()
+        let generation = requestGeneration
+        busy = false
         guard !strictOffline else {
             message = forecast == nil ? "Нет сохранённого прогноза. Отключите строгий офлайн-режим для обновления" : "Офлайн · показан ранее загруженный прогноз"
             return
@@ -55,10 +59,16 @@ import CoreLocation
             message = "Некорректная точка прогноза"
             return
         }
+        if let cached = forecast,
+           CLLocation(latitude: cached.latitude, longitude: cached.longitude)
+               .distance(from: CLLocation(latitude: latitude, longitude: longitude)) > 10_000 {
+            forecast = nil
+            isCached = false
+        }
         task = Task { [weak self] in
             guard let self else { return }
             self.busy = true
-            defer { self.busy = false }
+            defer { if self.requestGeneration == generation { self.busy = false } }
             do {
                 var url = URLComponents(string: "https://api.open-meteo.com/v1/forecast")!
                 url.queryItems = [
@@ -67,8 +77,8 @@ import CoreLocation
                     URLQueryItem(name: "timezone", value: "UTC"),
                     URLQueryItem(name: "forecast_days", value: "7"),
                     URLQueryItem(name: "wind_speed_unit", value: "kmh"),
-                    URLQueryItem(name: "current", value: "temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,pressure_msl,surface_pressure,precipitation,weather_code,is_day"),
-                    URLQueryItem(name: "hourly", value: "wind_speed_10m,wind_direction_10m,wind_gusts_10m,pressure_msl,surface_pressure,precipitation,precipitation_probability,temperature_2m,weather_code,is_day")
+                    URLQueryItem(name: "current", value: "temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,wind_direction_10m,wind_gusts_10m,pressure_msl,surface_pressure,precipitation,weather_code,is_day,cloud_cover"),
+                    URLQueryItem(name: "hourly", value: "wind_speed_10m,wind_direction_10m,wind_gusts_10m,pressure_msl,surface_pressure,precipitation,precipitation_probability,temperature_2m,weather_code,is_day,relative_humidity_2m,cloud_cover,visibility,uv_index")
                 ]
                 guard let target = url.url else { throw URLError(.badURL) }
                 var request = URLRequest(url: target)
@@ -86,7 +96,7 @@ import CoreLocation
                 }
                 guard data.count < 2_000_000 else { throw URLError(.dataLengthExceedsMaximum) }
                 let result = try OpenMeteoDecoder.decode(data)
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, self.requestGeneration == generation else { return }
                 self.forecast = result
                 self.isCached = false
                 self.message = "Прогноз загружен · Open-Meteo"
@@ -98,7 +108,7 @@ import CoreLocation
                     try? encoded.write(to: self.cacheURL, options: [.atomic])
                 }
             } catch {
-                guard !Task.isCancelled else { return }
+                guard !Task.isCancelled, self.requestGeneration == generation else { return }
                 AppDiagnosticLog.shared.recordError(subsystem: "Погода",
                     operation: "Точечный прогноз", error: error,
                     endpoint: "/v1/forecast", usedCache: self.forecast != nil)
