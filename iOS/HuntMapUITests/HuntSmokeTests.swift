@@ -27,6 +27,32 @@ final class HuntSmokeTests: XCTestCase {
         return app
     }
 
+    func testFieldAndEmergencyScreens() throws {
+        let app = openApp()
+        app.buttons["tab_Главная"].tap()
+        let field = app.buttons["field_mode_home"]
+        for _ in 0..<4 {
+            if field.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(field.isHittable)
+        field.tap()
+        XCTAssertTrue(app.buttons["field_close"].waitForExistence(timeout: 15))
+        capture("07-field-mode", app: app)
+        let sos = app.buttons["field_sos"]
+        for _ in 0..<5 {
+            if sos.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(sos.isHittable)
+        sos.tap()
+        XCTAssertTrue(app.buttons["sos_call"].waitForExistence(timeout: 15))
+        capture("08-emergency", app: app)
+        app.buttons["sos_close"].tap()
+        app.buttons["field_close"].tap()
+        XCTAssertTrue(app.buttons["tab_Главная"].waitForExistence(timeout: 10))
+    }
+
     func testLaunchAndPrimaryNavigation() throws {
         let app = openApp()
         let tabs = [("Главная", "01-home"), ("Карта", "02-map"),

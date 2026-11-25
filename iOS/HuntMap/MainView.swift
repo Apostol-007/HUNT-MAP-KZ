@@ -39,6 +39,8 @@ struct MainView: View {
     @State private var showWeather = false
     @State private var showWeatherLayers = false
     @State private var showAbout = false
+    @State private var showFieldMode = false
+    @State private var showEmergency = false
     @State private var showLegalLibrary = false
     @State private var showDiagnostics = false
     @State private var showGBIF = false
@@ -320,6 +322,12 @@ struct MainView: View {
                             protomapsStatus: protomaps.status,
                             valhallaStatus: valhalla.status).huntModal()
         }
+        .sheet(isPresented: $showFieldMode) {
+            FieldModeScreen(model: model).huntModal()
+        }
+        .sheet(isPresented: $showEmergency) {
+            EmergencyScreen(model: model).huntModal()
+        }
         .sheet(isPresented: $showAbout) { AboutHuntView().huntModal() }
         .sheet(isPresented: $showLegalLibrary) { LegalLibraryView().huntModal() }
     }
@@ -433,6 +441,13 @@ struct MainView: View {
                     HuntAction(title: "Карта", symbol: "map") { showGrounds = true; tab = .map }
                 }
             }.huntSurface()
+            VStack(alignment: .leading, spacing: 12) {
+                Button { showFieldMode = true } label: {
+                    HuntRow(title: "Полевой режим", subtitle: model.recording ? "Запись маршрута активна" : "Компас · GPS · Маршрут", symbol: "location.north.circle")
+                }.buttonStyle(.plain).accessibilityIdentifier("field_mode_home")
+                HuntAction(title: "Экстренная помощь", symbol: "cross.case") { showEmergency = true }
+                    .accessibilityIdentifier("sos_home")
+            }
             Button { showLegalLibrary = true } label: {
                 HStack(spacing: 14) {
                     Image(systemName: "books.vertical.fill")
@@ -1604,6 +1619,8 @@ struct MainView: View {
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "waveform.path.ecg", title: "Диагностика") { showDiagnostics = true }
                 Divider().overlay(HuntReference.separator)
+                ReferenceMenuRow(symbol: "location.north.circle", title: "Полевой режим") { showFieldMode = true }
+                ReferenceMenuRow(symbol: "cross.case", title: "Экстренная помощь") { showEmergency = true }
                 ReferenceMenuRow(symbol: "gearshape", title: "Настройки") { showLayers = true }
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "info.circle", title: "О приложении") { showAbout = true }

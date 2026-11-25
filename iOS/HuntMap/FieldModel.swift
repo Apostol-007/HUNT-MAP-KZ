@@ -38,6 +38,12 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
 @MainActor final class FieldModel: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published var coordinate: GeoPoint?
     @Published var accuracy: Double?
+    @Published private(set) var fieldFixTime: Date?
+    @Published private(set) var fieldSpeed: Double?
+    @Published private(set) var fieldAltitude: Double?
+    @Published private(set) var fieldHeading: Double?
+    @Published private(set) var fieldHeadingIsTrue = false
+    @Published private(set) var fieldCourse: Double?
     @Published var markers: [Marker] = []
     @Published var tracks: [Track] = []
     @Published var currentTrack: Track?
@@ -89,6 +95,26 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
                 self?.lastWarning = "Ошибка загрузки встроенных угодий: " + error.localizedDescription
             }
         }
+    }
+
+    func startFieldHeading() {
+        requestGPS()
+        if CLLocationManager.headingAvailable() {
+            manager.headingFilter = 3
+            manager.startUpdatingHeading()
+        }
+    }
+    func stopFieldHeading() {
+        manager.stopUpdatingHeading()
+        fieldHeading = nil
+    }
+    func locationManager(_ manager: CLLocationManager, didUpdateHeading heading: CLHeading) {
+        guard heading.headingAccuracy >= 0, heading.headingAccuracy <= 45 else {
+            fieldHeading = nil
+            return
+        }
+        fieldHeadingIsTrue = heading.trueHeading >= 0
+        fieldHeading = fieldHeadingIsTrue ? heading.trueHeading : heading.magneticHeading
     }
 
     func requestGPS() {
@@ -280,6 +306,10 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
         let p=GeoPoint(fix.coordinate.latitude,fix.coordinate.longitude)
         guard p.valid else {return}
         coordinate=p;accuracy=fix.horizontalAccuracy
+        fieldFixTime = fix.timestamp
+        fieldSpeed = fix.speed >= 0 && fix.speed.isFinite ? fix.speed * 3.6 : nil
+        fieldAltitude = fix.verticalAccuracy >= 0 && fix.altitude.isFinite ? fix.altitude : nil
+        fieldCourse = fix.course >= 0 && fix.course.isFinite ? fix.course : nil
         status="GPS ±\(Int(fix.horizontalAccuracy)) м"
         checkSelectedGround(fix, point: p)
         if recording && !paused {
