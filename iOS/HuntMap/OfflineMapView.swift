@@ -7,7 +7,7 @@ import HuntCore
 struct OfflineMapView: UIViewRepresentable {
     @AppStorage("hunt.map.style") private var mapStyle = MapBasemap.protomaps.rawValue
     private var selectedStyle: URL {
-        (MapBasemap(rawValue: mapStyle) ?? .outdoors).styleURL(apiKey: MapTilerConfiguration.apiKey) ?? MapBasemap.outdoors.styleURL(apiKey: "")!
+        (MapBasemap(rawValue: mapStyle) ?? .outdoors).styleURL(apiKey: MapTilerConfiguration.apiKey) ?? MapBasemap.outdoors.styleURL(apiKey: "") ?? OfflineMapStyle.url
     }
 
     let zones: [GeoZone]
@@ -29,6 +29,8 @@ struct OfflineMapView: UIViewRepresentable {
     @Binding var selectedZone: GeoZone?
     let weatherGrid: ForecastGrid?
     let weatherLayer: WeatherMapLayer
+    var followsGPS = false
+    var followPosition: GeoPoint? = nil
     var centerRequest: Int = 0
     var zoomCommand: Int = 0
     var overviewCommand: Int = 0
@@ -40,10 +42,6 @@ struct OfflineMapView: UIViewRepresentable {
     var measurementActive = false
     var onMapTap: (GeoPoint) -> Void = { _ in }
     var onMarkerTap: (UUID) -> Void = { _ in }
-    var gridEnabled = false
-    var gridStep = 0.1
-    var selectedGridCells: Set<String> = []
-    var onGridTap: (String) -> Void = { _ in }
     var onViewportChanged: ([Double]) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator(selectedZone: $selectedZone) }
@@ -73,10 +71,6 @@ struct OfflineMapView: UIViewRepresentable {
         context.coordinator.measurementActive = measurementActive
         context.coordinator.updateMeasurement(view, points: measurementPoints, closed: measurementClosed)
         context.coordinator.onMarkerTap = onMarkerTap
-        context.coordinator.gridEnabled = gridEnabled
-        context.coordinator.gridStep = gridStep
-        context.coordinator.selectedGridCells = selectedGridCells
-        context.coordinator.onGridTap = onGridTap
         context.coordinator.onViewportChanged = onViewportChanged
         context.coordinator.isOffline = !online
         context.coordinator.hybridOffline = !online && mapStyle == MapBasemap.hybrid.rawValue
@@ -105,7 +99,6 @@ struct OfflineMapView: UIViewRepresentable {
         }
         view.setCenter(CLLocationCoordinate2D(latitude: 43.24, longitude: 76.91), zoomLevel: 11, animated: false)
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
-        context.coordinator.renderGrid(in: view)
         DispatchQueue.main.async { [weak coordinator = context.coordinator, weak view] in
             if let coordinator, let view { coordinator.reportViewport(in: view) }
         }
@@ -130,13 +123,6 @@ struct OfflineMapView: UIViewRepresentable {
         context.coordinator.measurementActive = measurementActive
         context.coordinator.updateMeasurement(view, points: measurementPoints, closed: measurementClosed)
         context.coordinator.onMarkerTap = onMarkerTap
-        let changedGrid = context.coordinator.gridEnabled != gridEnabled ||
-                          context.coordinator.gridStep != gridStep ||
-                          context.coordinator.selectedGridCells != selectedGridCells
-        context.coordinator.gridEnabled = gridEnabled
-        context.coordinator.gridStep = gridStep
-        context.coordinator.selectedGridCells = selectedGridCells
-        context.coordinator.onGridTap = onGridTap
         context.coordinator.onViewportChanged = onViewportChanged
         let needsRoadRefresh = context.coordinator.isOffline != !online ||
                                context.coordinator.routingGeneration != routingGeneration
@@ -152,7 +138,6 @@ struct OfflineMapView: UIViewRepresentable {
                 if let coordinator, let view { coordinator.reportViewport(in: view) }
             }
         }
-        if changedGrid { context.coordinator.renderGrid(in: view) }
         context.coordinator.apply(view: view, files: tileFiles, revision: tileRevision)
         context.coordinator.fieldOverlay?.configure(grid: weatherGrid, layer: weatherLayer)
         context.coordinator.windOverlay?.configure(grid: weatherGrid, enabled: weatherLayer == .wind)
@@ -176,6 +161,7 @@ struct OfflineMapView: UIViewRepresentable {
                                                 centerRequest: centerRequest, zoomCommand: zoomCommand)
         context.coordinator.fitCountryIfNeeded(view: view, command: overviewCommand)
         context.coordinator.fitGroundIfNeeded(view: view, command: groundFitRequest, ground: zones.first(where: { $0.id == highlightedGroundID }))
+        context.coordinator.followGPS(view: view, enabled: followsGPS, position: followPosition)
     }
 
     final class Coordinator: NSObject, MLNMapViewDelegate, UIGestureRecognizerDelegate {
@@ -221,16 +207,11 @@ struct OfflineMapView: UIViewRepresentable {
         }
         var onMapTap: (GeoPoint) -> Void = { _ in }
         var onMarkerTap: (UUID) -> Void = { _ in }
-        var gridEnabled = false
-        var gridStep = 0.1
-        var selectedGridCells: Set<String> = []
-        var onGridTap: (String) -> Void = { _ in }
         var onViewportChanged: ([Double]) -> Void = { _ in }
         var isOffline = false
         var hybridOffline = false
         func invalidateRasterLayout() { lastRevision = -1 }
         var routingGeneration = 0
-        private var gridAnnotations: [MLNShape] = []
         private var markerAnnotations: [ObjectIdentifier: UUID] = [:]
         private var markerAppearance: [ObjectIdentifier: Marker] = [:]
         private var markerSignatures: [UUID: String] = [:]
@@ -309,13 +290,6 @@ struct OfflineMapView: UIViewRepresentable {
                 let coordinate = map.convert(screenPoint, toCoordinateFrom: map)
                 let point = GeoPoint(coordinate.latitude, coordinate.longitude)
                 if point.valid { onMapTap(point) }
-                return
-            }
-            if gridEnabled {
-                let coordinate = map.convert(screenPoint, toCoordinateFrom: map)
-                if let cell = OfflineGridCell(latitude: coordinate.latitude, longitude: coordinate.longitude, step: gridStep) {
-                    onGridTap(cell.id)
-                }
                 return
             }
             // MapLibre can also dispatch didSelect for markers. Only handle it once.
@@ -402,6 +376,8 @@ struct OfflineMapView: UIViewRepresentable {
         private var lastStyle: MLNStyle?
         private var latestFiles: [URL] = []
         private var centeredOnGPS = false
+        private var lastFollowPoint: GeoPoint?
+        private var followingGPS = false
         private var appliedCenterRequest = 0
         private var appliedZoomCommand = 0
         private var appliedOverviewCommand = 0
@@ -423,6 +399,20 @@ struct OfflineMapView: UIViewRepresentable {
             appliedOverviewCommand = command
             view.setCenter(CLLocationCoordinate2D(latitude: 48.6, longitude: 67.0),
                            zoomLevel: 3.25, animated: true)
+        }
+
+        func followGPS(view: MLNMapView, enabled: Bool, position: GeoPoint?) {
+            guard enabled, let position, position.valid else {
+                followingGPS = false
+                lastFollowPoint = nil
+                return
+            }
+            let initial = !followingGPS
+            followingGPS = true
+            guard initial || lastFollowPoint != position else { return }
+            lastFollowPoint = position
+            let center = CLLocationCoordinate2D(latitude: position.latitude, longitude: position.longitude)
+            view.setCenter(center, zoomLevel: initial ? max(14, view.zoomLevel) : view.zoomLevel, animated: !initial)
         }
 
         func applyCameraCommands(view: MLNMapView, position: GeoPoint?, centerRequest: Int, zoomCommand: Int) {
@@ -504,7 +494,6 @@ struct OfflineMapView: UIViewRepresentable {
         func mapView(_ mapView: MLNMapView, regionDidChangeAnimated animated: Bool) {
             groundLabels?.cameraChanged(force: true)
             fieldOverlay?.setNeedsDisplay()
-            if gridEnabled { renderGrid(in: mapView) }
             reportViewport(in: mapView)
         }
 
@@ -516,45 +505,6 @@ struct OfflineMapView: UIViewRepresentable {
                           max(area.sw.latitude, area.ne.latitude)]
             guard bounds.allSatisfy({ $0.isFinite }) else { return }
             onViewportChanged(bounds)
-        }
-
-        func renderGrid(in view: MLNMapView) {
-            if !gridAnnotations.isEmpty {
-                view.removeAnnotations(gridAnnotations)
-                gridAnnotations.removeAll()
-            }
-            guard gridEnabled, (0.01...1).contains(gridStep) else { return }
-            let area = view.visibleCoordinateBounds
-            let south = max(-90, min(area.sw.latitude, area.ne.latitude))
-            let north = min(90, max(area.sw.latitude, area.ne.latitude))
-            let west = max(-180, min(area.sw.longitude, area.ne.longitude))
-            let east = min(180, max(area.sw.longitude, area.ne.longitude))
-            guard south.isFinite, north.isFinite, west.isFinite, east.isFinite else { return }
-            let minX = Int(floor(west / gridStep))
-            let maxX = Int(floor(east / gridStep))
-            let minY = Int(floor(south / gridStep))
-            let maxY = Int(floor(north / gridStep))
-            guard maxX >= minX, maxY >= minY,
-                  (maxX - minX + 1) * (maxY - minY + 1) <= 144 else { return }
-            var shapes: [MLNShape] = []
-            for x in minX...maxX {
-                for y in minY...maxY {
-                    let key = "\(x)_\(y)"
-                    let a = Double(x) * gridStep, b = Double(y) * gridStep
-                    var coords = [
-                        CLLocationCoordinate2D(latitude: b, longitude: a),
-                        CLLocationCoordinate2D(latitude: b, longitude: a + gridStep),
-                        CLLocationCoordinate2D(latitude: b + gridStep, longitude: a + gridStep),
-                        CLLocationCoordinate2D(latitude: b + gridStep, longitude: a),
-                        CLLocationCoordinate2D(latitude: b, longitude: a)
-                    ]
-                    let boundary = MLNPolyline(coordinates: &coords, count: UInt(coords.count))
-                    boundary.title = selectedGridCells.contains(key) ? "GRID|SELECTED" : "GRID|AVAILABLE"
-                    shapes.append(boundary)
-                }
-            }
-            gridAnnotations = shapes
-            view.addAnnotations(shapes)
         }
 
         func updateAnnotations(view: MLNMapView, zones: [GeoZone], markers: [Marker], position: GeoPoint?, track: Track?, navigationPath: [GeoPoint], replayPosition: GeoPoint?,
@@ -677,8 +627,6 @@ struct OfflineMapView: UIViewRepresentable {
             if annotation.title == "MEASURE_LINE" || annotation.title == "MEASURE_AREA" { return .white }
             if annotation.title == "GROUND_SELECTED_BORDER" || annotation.title?.hasPrefix("GROUND_SELECTED|") == true { return UIColor(red: 0.48, green: 1, blue: 0.36, alpha: 1) }
             if annotation.title == "GROUND_BORDER" || annotation.title?.hasPrefix("GROUND|") == true { return UIColor(red: 0.12, green: 0.89, blue: 0.22, alpha: 1) }
-            if annotation.title == "GRID|SELECTED" { return .systemGreen }
-            if annotation.title == "GRID|AVAILABLE" { return UIColor.white.withAlphaComponent(0.65) }
             if annotation.title?.hasPrefix("WX-ISOBAR|") == true { return .white }
             if annotation.title?.hasPrefix("WX-WIND|") == true { return .white }
             if annotation.title == "OFFLINE|TRAIL" { return .systemOrange }
@@ -691,8 +639,6 @@ struct OfflineMapView: UIViewRepresentable {
             if annotation.title == "MEASURE_LINE" { return 2 }
             if annotation.title == "GROUND_SELECTED_BORDER" { return 6 }
             if annotation.title == "GROUND_BORDER" { return 3.5 }
-            if annotation.title == "GRID|SELECTED" { return 3 }
-            if annotation.title == "GRID|AVAILABLE" { return 1 }
             if annotation.title?.hasPrefix("WX-ISOBAR|") == true { return 1.8 }
             if annotation.title?.hasPrefix("WX-WIND|") == true { return 2.3 }
             if annotation.title == "OFFLINE|TRAIL" { return 2.5 }

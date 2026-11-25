@@ -312,50 +312,6 @@ struct HostingZonePack: Decodable, Identifiable {
             status = "Границы: \(error.localizedDescription)"
         }
     }
-    func routePacks(in cells: [OfflineGridCell]) -> [HostingRoutingPack] {
-        guard !cells.isEmpty else { return [] }
-        return routes.filter { pack in cells.contains(where: { $0.intersects(pack.bounds) }) }
-    }
-
-    func mapPacks(in cells: [OfflineGridCell]) -> [HostingMapPack] {
-        guard !cells.isEmpty else { return [] }
-        return maps.filter { pack in
-            guard let bounds = pack.bounds else { return false }
-            return cells.contains(where: { $0.intersects(bounds) })
-        }
-    }
-
-    /// Download only catalogue packages intersecting the selected WGS84 grid cells.
-    /// GeoJSON roads and raster MBTiles remain different data types.
-    func downloadGrid(cells: [OfflineGridCell], tiles: OfflineTileStore) async {
-        guard !busy else { return }
-        let chosenMaps = mapPacks(in: cells).filter { pack in
-            !tiles.installed.contains(where: { $0.sha256.lowercased() == pack.sha256.lowercased() })
-        }
-        let chosenRoutes = routePacks(in: cells).filter { !installedRoutes.contains($0.id) }
-        plannedPacks = chosenMaps.count + chosenRoutes.count
-        completedPacks = 0
-        if plannedPacks == 0 {
-            status = "В выбранной сетке нет новых пакетов с координатными границами"
-            return
-        }
-        for pack in chosenMaps {
-            if Task.isCancelled { break }
-            await installMap(pack, tiles: tiles)
-            completedPacks += 1
-        }
-        for pack in chosenRoutes {
-            if Task.isCancelled { break }
-            await installRoute(pack)
-            completedPacks += 1
-        }
-        if Task.isCancelled {
-            status = "Загрузка сетки остановлена, установленные файлы сохранены"
-        } else {
-            status += " · обработано \(completedPacks) из \(plannedPacks)"
-        }
-    }
-
     func downloadAll(tiles: OfflineTileStore, model: FieldModel) async {
         let pendingMaps = maps.filter { pack in
             !tiles.installed.contains(where: { $0.sha256.lowercased() == pack.sha256.lowercased() })

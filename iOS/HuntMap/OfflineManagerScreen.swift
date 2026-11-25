@@ -5,12 +5,11 @@ struct OfflineManagerScreen: View {
     @ObservedObject var tiles: OfflineTileStore
     @ObservedObject var protomaps: ProtomapsOfflineStore
     @ObservedObject var valhalla: ValhallaRoutingStore
-    let area: [Double]?
     let startupBusy: Bool
-    let onSelectArea: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var filter: Filter = .all
     @State private var query = ""
+    @State private var catalogAddress = ""
     @State private var job: Task<Void, Never>?
     @State private var deletePack: ProtomapsPack?
     private enum Filter: String, CaseIterable { case all = "Все", installed = "Установлено", missing = "Доступно" }
@@ -57,6 +56,7 @@ struct OfflineManagerScreen: View {
             } message: { Text("Удаляется только выбранный PMTiles. Маршруты и метки сохраняются.") }
         }
         .interactiveDismissDisabled(job != nil)
+        .onAppear { catalogAddress = protomaps.catalogAddress }
     }
     private var summary: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -84,6 +84,15 @@ struct OfflineManagerScreen: View {
     }
     private var controls: some View {
         VStack(spacing: 10) {
+            TextField("HTTPS-адрес каталога", text: $catalogAddress)
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
+                .keyboardType(.URL).textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("protomaps_catalog_address")
+            HuntAction(title: "Проверить хостинг и каталог", symbol: "link") {
+                protomaps.setCatalogAddress(catalogAddress)
+                start { await protomaps.refresh() }
+            }.disabled(locked || catalogAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Text(protomaps.diagnostic).font(.caption).foregroundStyle(HuntReference.muted)
             HuntSearchField(text: $query, placeholder: "Поиск пакетов")
             HStack(spacing: 8) {
                 ForEach(Filter.allCases, id: \.self) { item in
@@ -98,7 +107,6 @@ struct OfflineManagerScreen: View {
                 HuntAction(title: "Обновить каталог", symbol: "arrow.clockwise") {
                     start { await hosting.refresh(); if !Task.isCancelled { await protomaps.refresh() } }
                 }.disabled(locked)
-                HuntAction(title: "Сетка карты", symbol: "square.grid.3x3") { onSelectArea() }.disabled(job != nil)
             }
             if startupBusy { Text("Синхронизация при запуске ещё выполняется.").font(.caption).foregroundStyle(.orange) }
         }

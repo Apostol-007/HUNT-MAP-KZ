@@ -84,7 +84,7 @@ def test_protomaps_local_glyphs_and_sprites_are_downloaded():
 
 def test_protomaps_catalog_is_editable_and_diagnosed():
     store = (IOS / "ProtomapsOfflineStore.swift").read_text()
-    ui = (IOS / "OfflineGridDownloadSheet.swift").read_text()
+    ui = (IOS / "OfflineManagerScreen.swift").read_text()
     assert "catalogCandidates(" in store
     assert "setCatalogAddress(" in store
     assert "loadedCatalogURL" in store
@@ -192,6 +192,9 @@ def test_wind_prefetches_on_launch_and_progressively_refines():
     ui = (IOS / "MainView.swift").read_text()
     wind = (IOS / "WeatherGridService.swift").read_text()
     assert 'weatherGrid.load(hourOffset: 0)' in ui
+    assert '.task(id: startupSync.presented)' in ui
+    assert 'guard !startupSync.presented, !didPrefetchWeather' in ui
+    assert 'if tab == .map && !startupSync.presented { mapScreen }' in ui
     assert 'coarse.width = 3' in wind and 'coarse.height = 3' in wind
     assert 'self.fetchGrid(region: coarse' in wind
     assert 'self.fetchGrid(region: detailed' in wind
@@ -249,3 +252,38 @@ def test_ground_labels_offline_and_camera_contract():
     assert 'groundLabels?.configure(zones: zones, selectedID: highlightedGroundID, key: key)' in map_view
     assert 'groundLabels?.cameraChanged(force: true)' in map_view
     assert 'GroundLabelsOverlay(mapView: view, hostView: container)' in map_view
+
+
+def test_no_map_selection_grid_and_gps_follow():
+    ui = (IOS / 'MainView.swift').read_text()
+    native = (IOS / 'OfflineMapView.swift').read_text()
+    manager = (IOS / 'OfflineManagerScreen.swift').read_text()
+    assert 'gridMode' not in ui and 'renderGrid' not in native
+    assert 'Сетка карты' not in manager
+    assert 'routeGuidance || recordedRouteFollowing' in ui
+    assert 'followGPS(view: view, enabled: followsGPS' in native
+
+
+def test_alternate_icons_registered_and_complete():
+    import json, re, struct
+    assets = IOS / "Assets.xcassets"
+    manager = (IOS / "AdaptiveIconManager.swift").read_text()
+    project = (IOS.parent / "project.yml").read_text()
+    names = re.findall(r'\.init\(id: "(\w+)", label:', manager)
+    assert len(names) == 39 and len(set(names)) == 39
+    for name in names:
+        if name == "Original":
+            assert (assets / "AppIcon.appiconset" / "Contents.json").exists()
+            continue
+        icon = "AppIcon" + name
+        assert icon in project
+        folder = assets / (icon + ".appiconset")
+        data = json.loads((folder / "Contents.json").read_text())
+        assert len(data["images"]) == 2
+        for item in data["images"]:
+            raw = (folder / item["filename"]).read_bytes()
+            assert raw[:8] == b'\x89PNG\r\n\x1a\n'
+            size = 60 * int(item["scale"][0])
+            assert struct.unpack(">II", raw[16:24]) == (size, size)
+        assert (assets / (icon + "Preview.imageset") / "preview.png").exists()
+    assert "AdaptiveIconSettings(manager: adaptiveIcons)" in (IOS / "MainView.swift").read_text()

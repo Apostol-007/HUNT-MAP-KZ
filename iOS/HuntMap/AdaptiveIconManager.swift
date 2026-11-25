@@ -74,6 +74,8 @@ import CoreLocation
         let now = Date()
         let choice = resolve(now)
         reason = choice.1
+        if pending != choice.0 { pending = nil }
+        if attempted != choice.0 { attempted = nil }
         guard choice.0 != actual else { pending = nil; error = ""; attempted = nil; return }
         guard Self.entries.contains(where: { $0.id == choice.0 }) else { return }
         guard app.supportsAlternateIcons else { error = "Смена значка недоступна в этой сборке"; return }
@@ -122,7 +124,7 @@ import CoreLocation
             if code == 96 || code == 99 { return ("Hail","Погода") }
             if code == 95 { return ("Thunderstorm","Погода") }
             if [56,57,66,67].contains(code) { return ("Ice","Погода") }
-            if snow && windy { return ("Blizzard","Погода") }
+            if snow && (windy || (actual == "Blizzard" && (wind >= 36 || gust >= 54))) { return ("Blizzard","Погода") }
             if snow { return ("Snow","Погода") }
             if [51,53,55,61,63,65,80,81,82].contains(code) { return ("Rain","Погода") }
             if [45,48].contains(code) { return ("Fog","Погода") }
@@ -197,7 +199,7 @@ struct AdaptiveIconSettings: View {
                     Text("Текущий: " + (AdaptiveIconManager.entries.first { $0.id == manager.actual }?.label ?? manager.actual))
                     Text(manager.reason)
                     if !manager.error.isEmpty { Text(manager.error).foregroundStyle(.red) }
-                    Button("Применить") { manager.evaluate(force:true) }
+                    Button("Применить") { manager.evaluate(force:true) }.accessibilityIdentifier("icon_apply")
                     Text("iOS может показывать системное уведомление при смене значка. Автоматическая смена работает при активном приложении.").font(.caption)
                 }
             }.navigationTitle("Значок приложения").toolbar { ToolbarItem(placement:.confirmationAction) { Button("Готово") { dismiss() } } }

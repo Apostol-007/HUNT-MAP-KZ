@@ -101,16 +101,19 @@ struct TrackProfileScreen: View {
         let point: GeoPoint
         let distance: Double
         let altitude: Double?
+        let segmentStart: Bool
     }
     private var samples: [Sample] {
         var result: [Sample] = []
         var distance = 0.0
         var previous: GeoPoint?
+        var previousTime: Date?
         for fix in track.fixes where fix.point.valid {
-            if let previous { distance += GeoMath.meters(previous,fix.point) }
-            previous=fix.point
+            let split = fix.segmentStart == true || (previousTime.map { fix.timestamp.timeIntervalSince($0)>120 } ?? true)
+            if let previous, !split { distance += GeoMath.meters(previous,fix.point) }
+            previous=fix.point;previousTime=fix.timestamp
             let altitude: Double? = fix.altitude.isFinite && (fix.verticalAccuracy.map { $0 >= 0 && $0 <= 30 } ?? false) ? fix.altitude : nil
-            result.append(Sample(point:fix.point,distance:distance,altitude:altitude))
+            result.append(Sample(point:fix.point,distance:distance,altitude:altitude,segmentStart:split))
         }
         return result
     }
@@ -129,6 +132,7 @@ struct TrackProfileScreen: View {
         return VStack(alignment:.leading,spacing:12) {
             Text(track.name).font(.headline)
             Text(String(format:"%.2f км · %d точек",track.distanceMeters/1000,track.fixes.count)).font(.caption).foregroundStyle(HuntReference.muted)
+            statisticsCard
             if heights.count >= 2, let low=heights.min(), let high=heights.max() {
                 HStack {
                     Text(String(format:"Мин. %.0f м",low))
@@ -147,6 +151,23 @@ struct TrackProfileScreen: View {
             }
         }.huntSurface()
     }
+    private var statisticsCard: some View {
+        let s=track.statistics
+        return VStack(alignment:.leading,spacing:8) {
+            stat("Дистанция",String(format:"%.2f км",s.distance/1000))
+            stat("Движение (оценка)",String(format:"%.0f мин",s.movingSeconds/60))
+            stat("Остановки (оценка)",String(format:"%.0f мин",s.stoppedSeconds/60))
+            stat("Не наблюдалось",String(format:"%.0f мин",s.gapSeconds/60))
+            stat("Средняя в движении",s.averageMovingSpeed.map{String(format:"%.1f км/ч",$0*3.6)} ?? "—")
+            stat("Максимальная скорость",s.maximumSpeed.map{String(format:"%.1f км/ч",$0*3.6)} ?? "—")
+            stat("Набор высоты (оценка)",s.ascent.map{String(format:"%.0f м",$0)} ?? "—")
+            stat("Сброс высоты (оценка)",s.descent.map{String(format:"%.0f м",$0)} ?? "—")
+            Text("Разрывы не включаются в расстояние. Движение и остановки оценены по доступным GPS-замерам.").font(.caption).foregroundStyle(HuntReference.muted)
+        }
+    }
+    private func stat(_ title:String,_ value:String)->some View {
+        HStack {Text(title).foregroundStyle(HuntReference.muted);Spacer();Text(value).monospacedDigit()}.font(.caption)
+    }
     private func graph(_ values:[Sample],low:Double,high:Double)->some View {
         Canvas { context,size in
             let total=max(1,values.last?.distance ?? 1)
@@ -154,6 +175,7 @@ struct TrackProfileScreen: View {
             var path=Path()
             var active=false
             for sample in values {
+                if sample.segmentStart { active=false }
                 guard let height=sample.altitude else { active=false; continue }
                 let p=CGPoint(x:size.width*CGFloat(sample.distance/total),y:size.height*CGFloat(1-(height-low)/span))
                 if active { path.addLine(to:p) } else { path.move(to:p); active=true }

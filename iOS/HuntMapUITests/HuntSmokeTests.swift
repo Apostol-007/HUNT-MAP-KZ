@@ -157,6 +157,28 @@ final class HuntSmokeTests: XCTestCase {
         capture("13-backup", app: app)
     }
 
+    func testIconSettingsNavigation() throws {
+        let app = openApp()
+        app.buttons["tab_Ещё"].tap()
+        let entry = app.buttons["icon_settings_open"]
+        for _ in 0..<5 { if entry.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(entry.isHittable)
+        entry.tap()
+        XCTAssertTrue(app.navigationBars["Значок приложения"].waitForExistence(timeout:15))
+        capture("15-icon-settings", app:app)
+    }
+
+    func testRepeatedColdLaunch() throws {
+        for iteration in 0..<3 {
+            let app = openApp()
+            XCTAssertEqual(app.state, .runningForeground)
+            RunLoop.current.run(until: Date().addingTimeInterval(3))
+            XCTAssertEqual(app.state, .runningForeground, "Cold launch crashed")
+            capture("cold-launch-\(iteration)", app: app)
+            app.terminate()
+        }
+    }
+
     func testLaunchAndPrimaryNavigation() throws {
         let app = openApp()
         let tabs = [("Главная", "01-home"), ("Карта", "02-map"),

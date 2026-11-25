@@ -16,19 +16,19 @@ struct MainView: View {
     @StateObject private var valhalla = ValhallaRoutingStore()
     @State private var importingValhallaTiles = false
     @State private var routeRequestID: UUID?
-    @State private var gridMode = false
     @State private var measurementMode: MeasurementKind?
     @State private var measurementPoints: [GeoPoint] = []
     @State private var measurementMoveIndex: Int?
     @State private var profileTrack: Track?
     @State private var measurementArchive = MeasurementArchive()
-    @State private var gridStep = 0.1
-    @State private var selectedGridCells: Set<String> = []
     @StateObject private var animals = WildlifeStore()
     @StateObject private var connectivity = WeatherConnectivity()
     @StateObject private var weather = WeatherService()
     @StateObject private var observations = ObservationStore()
     @StateObject private var weatherGrid = WeatherGridService()
+    @StateObject private var adaptiveIcons = AdaptiveIconManager()
+    @State private var showIconSettings = false
+    @State private var didPrefetchWeather = false
 
     @AppStorage("hunt.onlineBasemap") private var online = true
     @AppStorage("hunt.map.style") private var mapStyle = MapBasemap.protomaps.rawValue
@@ -51,7 +51,6 @@ struct MainView: View {
     @State private var showWeatherLayers = false
     @State private var showAbout = false
     @State private var showOfflineManager = false
-    @State private var offlineArea: [Double]? = nil
     @State private var showFieldMode = false
     @State private var showEmergency = false
     @State private var showLegalLibrary = false
@@ -129,12 +128,8 @@ struct MainView: View {
 
     private var rootLayout: some View {
         ZStack {
-            // Keep the expensive MapLibre instance alive when switching tabs.
-            // Only controls disappear; the map remains genuinely full-screen.
-            mapScreen
-                .opacity(tab == .map ? 1 : 0)
-                .allowsHitTesting(tab == .map)
-                .accessibilityHidden(tab != .map)
+            // Do not allocate the native map during cold launch.
+            if tab == .map && !startupSync.presented { mapScreen }
             if tab != .map { themedScreen }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -167,17 +162,35 @@ struct MainView: View {
         rootLayout
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
         .onAppear {
-            loadRoutingNetwork()
             startupSync.begin(hosting: hosting, tiles: maps, protomaps: protomaps,
                               model: model, valhalla: valhalla)
-            refreshWeatherOnLaunch()
-            weatherGrid.load(hourOffset: 0)
+        }
+        .task(id: startupSync.presented) {
+            // Keep the startup contract: prefetch only after the launch gate releases.
+            guard !startupSync.presented, !didPrefetchWeather else { return }
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            guard !Task.isCancelled, !startupSync.presented, !didPrefetchWeather else { return }
+            didPrefetchWeather = true
+            if weatherLayer == .none { weatherGrid.load(hourOffset: 0) }
+        }
+        .task(id: startupSync.presented) {
+            guard !startupSync.presented else { return }
+            do { try await Task.sleep(for: .seconds(3)) } catch { return }
+            while !Task.isCancelled {
+                if scenePhase == .active {
+                    adaptiveIcons.update(forecast: weather.forecast, coordinate: model.coordinate)
+                }
+                do { try await Task.sleep(for: .seconds(60)) } catch { return }
+            }
+        }
+        .onChange(of: tab) { _, value in
+            if value == .services { refreshWeatherOnLaunch() }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { refreshWeatherOnLaunch() }
+            if phase == .active && tab == .services { refreshWeatherOnLaunch() }
         }
         .onChange(of: connectivity.connected) { _, connected in
-            if connected { refreshWeatherOnLaunch() }
+            if connected && tab == .services { refreshWeatherOnLaunch() }
         }
         .onChange(of: weatherLayer) { _, value in
             if value != .none { weatherGrid.load(hourOffset: weatherGrid.chosenOffset) }
@@ -189,7 +202,7 @@ struct MainView: View {
     private var guidanceLayout: some View {
         lifecycleLayout
         .onChange(of: model.coordinate) { _, newPoint in
-            if forecastPoint == nil, let point = newPoint {
+            if tab == .services, forecastPoint == nil, let point = newPoint {
                 weather.updateIfNeeded(latitude: point.latitude, longitude: point.longitude)
             }
             if newPoint != nil, navigationKind == "Ожидание GPS", let destination = routeDestination {
@@ -400,7 +413,7 @@ struct MainView: View {
             HuntSettingsScreen(model: model, observations: observations,
                 online: $online, grounds: $showGrounds, markers: $showMarkersOnMap,
                 gps: $showGPSOnMap, track: $showTrackOnMap,
-                onStorage: { showSettings = false; offlineArea = nil; showOfflineManager = true },
+                onStorage: { showSettings = false; showOfflineManager = true },
                 onDiagnostics: { showSettings = false; showDiagnostics = true })
                 .huntModal()
         }
@@ -414,9 +427,11 @@ struct MainView: View {
         }
         .sheet(isPresented: $showOfflineManager) {
             OfflineManagerScreen(hosting: hosting, tiles: maps, protomaps: protomaps, valhalla: valhalla,
-                area: offlineArea, startupBusy: startupSync.presented || startupSync.isDownloading,
-                onSelectArea: { showOfflineManager = false; measurementMode = nil; gridMode = true; tab = .map })
+                startupBusy: startupSync.presented || startupSync.isDownloading)
                 .huntModal()
+        }
+        .sheet(isPresented: $showIconSettings) {
+            AdaptiveIconSettings(manager: adaptiveIcons).huntModal()
         }
         .sheet(isPresented: $showAbout) { AboutHuntView().huntModal() }
         .sheet(isPresented: $showLegalLibrary) { LegalLibraryView().huntModal() }
@@ -576,7 +591,7 @@ struct MainView: View {
             Text("Быстрые действия").font(.headline.bold())
             LazyVGrid(columns: [.init(.flexible()), .init(.flexible())], spacing: 10) {
                 ReferenceActionCard(title: "Карта", subtitle: "Открыть карту", symbol: "map") { tab = .map }
-                ReferenceActionCard(title: "Офлайн-карты", subtitle: "Пакеты и загрузки", symbol: "checkmark.icloud") { offlineArea = nil; showOfflineManager = true }
+                ReferenceActionCard(title: "Офлайн-карты", subtitle: "Пакеты и загрузки", symbol: "checkmark.icloud") { showOfflineManager = true }
                 ReferenceActionCard(title: "Мои маршруты", subtitle: "Треки и GPX", symbol: "mappin.and.ellipse") { dataSection = .routes; tab = .data }
                 ReferenceActionCard(title: "Метки", subtitle: "Сохранённые точки", symbol: "mappin.circle") { dataSection = .markers; tab = .data }
                 ReferenceActionCard(title: "Погода", subtitle: "Прогноз и карта", symbol: "cloud.sun") { serviceSection = .weather; tab = .services }
@@ -609,7 +624,7 @@ struct MainView: View {
     private var mapScreen: some View {
         ZStack {
             OfflineMapView(zones: showGrounds ? model.zones : [],
-                           position: showGPSOnMap ? model.coordinate : nil,
+                           position: (showGPSOnMap || model.recording || routeGuidance || recordedRouteFollowing) ? model.coordinate : nil,
                            markers: showMarkersOnMap ? model.markers : [],
                            track: showTrackOnMap ? (model.tracks.first(where: { $0.id == selectedRecordedTrackID }) ?? model.currentTrack) : nil,
                            navigationPath: navigationPath,
@@ -625,6 +640,8 @@ struct MainView: View {
                            online: online, selectedZone: $zone,
                            weatherGrid: tab == .map && weatherLayer != .none ? weatherGrid.grid : nil,
                            weatherLayer: tab == .map ? weatherLayer : .none,
+                           followsGPS: (model.recording && !model.paused) || routeGuidance || recordedRouteFollowing,
+                           followPosition: model.fieldFixTime.map { Date().timeIntervalSince($0) < 30 && Date().timeIntervalSince($0) >= -5 } == true ? model.coordinate : nil,
                            centerRequest: centerRequest,
                            zoomCommand: zoomCommand,
                            overviewCommand: overviewCommand,
@@ -672,13 +689,6 @@ struct MainView: View {
                                    selectedMapMarker = MapMarkerSelection(id: id)
                                }
                            },
-                           gridEnabled: gridMode,
-                           gridStep: gridStep,
-                           selectedGridCells: selectedGridCells,
-                           onGridTap: { id in
-                               if selectedGridCells.contains(id) { selectedGridCells.remove(id) }
-                               else if selectedGridCells.count < 100 { selectedGridCells.insert(id) }
-                           },
                            onViewportChanged: { bounds in
                                weatherGrid.updateViewport(bounds, active: weatherLayer != .none)
                                if !online {
@@ -721,11 +731,6 @@ struct MainView: View {
                 HStack {
                     Spacer()
                     VStack(spacing: 7) {
-                        circleMapButton(gridMode ? "square.grid.3x3.fill" : "square.grid.3x3", label: "Выбор сетки") {
-                            measurementMode = nil
-                            measurementMoveIndex = nil
-                            gridMode.toggle()
-                        }
                         circleMapButton("cloud.sun.fill", label: "Погода") {
                             if weatherLayer == .none { weatherLayer = .wind }
                             showWeatherLayers = true
@@ -774,11 +779,6 @@ struct MainView: View {
                         onClose: { measurementMode = nil; measurementMoveIndex = nil })
                         .padding(.horizontal, 12).padding(.bottom, 8)
                 }
-                if gridMode {
-                    gridSelectionBar
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 8)
-                }
                 if let movingMarkerID {
                     HStack(spacing: 8) {
                         Image(systemName: "hand.point.up.left.fill")
@@ -793,7 +793,7 @@ struct MainView: View {
                     .padding(.bottom, 8)
                     .accessibilityIdentifier("marker_move_mode")
                 }
-                if measurementMode == nil, routeDestination == nil, recordedRoute == nil, !gridMode, showGrounds, let ground = model.zones.first(where: { $0.id == highlightedGroundID }) {
+                if measurementMode == nil, routeDestination == nil, recordedRoute == nil, showGrounds, let ground = model.zones.first(where: { $0.id == highlightedGroundID }) {
                     selectedGroundBanner(ground)
                         .padding(.horizontal, 12)
                         .padding(.bottom, 8)
@@ -837,7 +837,6 @@ struct MainView: View {
                             Button(kind.rawValue) {
                                 measurementPoints = []
                                 measurementMoveIndex = nil
-                                gridMode = false
                                 movingMarkerID = nil
                                 measurementMode = kind
                             }
@@ -873,45 +872,6 @@ struct MainView: View {
         return ground.distanceToBoundaryMeters(point)
     }
 
-    private var gridSelectionBar: some View {
-        VStack(alignment: .leading, spacing: 9) {
-            HStack {
-                Image(systemName: "square.grid.3x3.fill").foregroundStyle(HuntReference.green)
-                Text("Сетка · \(selectedGridCells.count) ячеек").font(.caption.bold())
-                Spacer()
-                Button("Закрыть") { gridMode = false }.font(.caption)
-            }
-            HStack(spacing: 8) {
-                ForEach([0.05, 0.1, 0.25, 0.5], id: \.self) { step in
-                    Button(String(format: "%.2f°", step)) {
-                        gridStep = step
-                        selectedGridCells.removeAll()
-                    }
-                    .font(.caption2.bold())
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .background(gridStep == step ? HuntReference.green.opacity(0.22) : Color.white.opacity(0.08),
-                                in: Capsule())
-                }
-            }
-            Text("Коснитесь ячеек на карте. Выделено до 100 участков.")
-                .font(.caption2).foregroundStyle(.secondary)
-            HStack {
-                Button("Очистить") { selectedGridCells.removeAll() }
-                    .disabled(selectedGridCells.isEmpty)
-                Spacer()
-                Button("Менеджер пакетов") {
-                    offlineArea = nil
-                    showOfflineManager = true
-                }.disabled(selectedGridCells.isEmpty)
-            }
-            .font(.caption)
-        }
-        .foregroundStyle(.white)
-        .padding(12)
-        .background(HuntReference.card.opacity(0.97), in: RoundedRectangle(cornerRadius: 14))
-    }
-
     // MARK: - In-app offline guidance / routing
     private var routingNetworkURL: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -919,7 +879,9 @@ struct MainView: View {
     }
 
     private func loadRoutingNetwork() {
-        guard let bytes = try? Data(contentsOf: routingNetworkURL),
+        guard let size = try? routingNetworkURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size > 0, size <= 15_000_000,
+              let bytes = try? Data(contentsOf: routingNetworkURL),
               let graph = try? OfflineRouteGraph(geoJSON: bytes, mode: travelMode) else { return }
         routeGraph = graph
         routeGraphCount = graph.count
@@ -933,6 +895,7 @@ struct MainView: View {
     }
     private func planRoute(to destination: GeoPoint, title: String, markerID: UUID? = nil) {
         if recordedRoute != nil { stopRecordedTrack() }
+        if routeGraph == nil && !valhalla.tilesInstalled { loadRoutingNetwork() }
         if !routeGuidance { navigationPath = [] }
         routeDestination = destination
         routeTitle = title
@@ -1536,7 +1499,7 @@ struct MainView: View {
                     Image(systemName: "record.circle.fill").foregroundStyle(.red)
                     VStack(alignment: .leading, spacing: 4) {
                         Text(model.currentTrack?.name ?? "Активная запись").font(.subheadline.bold())
-                        Text(model.paused ? "На паузе" : "Идёт запись").font(.caption).foregroundStyle(HuntReference.muted)
+                        Text(model.recoveredSession ? "Восстановлен · на паузе" : model.paused ? "На паузе" : "Идёт запись").font(.caption).foregroundStyle(HuntReference.muted)
                     }
                     Spacer()
                     Button(model.paused ? "Продолжить" : "Пауза") { model.togglePause() }
@@ -1595,10 +1558,10 @@ struct MainView: View {
                 }
                 Button("Пройти от начала", systemImage: "figure.walk") {
                     showRecordedTrack(track, direction: .forward, follow: true)
-                }
+                }.disabled(track.hasDiscontinuity)
                 Button("Пройти от конца", systemImage: "figure.walk.motion") {
                     showRecordedTrack(track, direction: .backward, follow: true)
-                }
+                }.disabled(track.hasDiscontinuity)
                 if let file = model.exportGPX(track) {
                     ShareLink(item: file) { Label("Поделиться GPX", systemImage: "square.and.arrow.up") }
                 }
@@ -1725,7 +1688,6 @@ struct MainView: View {
                 HuntAction(title: "На карте", symbol: "map") {
                     pointDestination = serviceSection
                     pickingForecastPoint = true
-                    gridMode = false
                     measurementMode = nil
                     movingMarkerID = nil
                     tab = .map
@@ -1875,7 +1837,8 @@ struct MainView: View {
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "location.north.circle", title: "Полевой режим") { showFieldMode = true }
                 ReferenceMenuRow(symbol: "cross.case", title: "Экстренная помощь") { showEmergency = true }
-                ReferenceMenuRow(symbol: "externaldrive", title: "Офлайн-карты") { offlineArea = nil; showOfflineManager = true }
+                ReferenceMenuRow(symbol: "externaldrive", title: "Офлайн-карты") { showOfflineManager = true }
+                ReferenceMenuRow(symbol: "app.badge", title: "Значок приложения") { showIconSettings = true }.accessibilityIdentifier("icon_settings_open")
                 ReferenceMenuRow(symbol: "gearshape", title: "Настройки") { showSettings = true }.accessibilityIdentifier("settings_open")
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "info.circle", title: "О приложении") { showAbout = true }

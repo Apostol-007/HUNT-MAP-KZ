@@ -19,7 +19,7 @@ import Network
     func begin(hosting: HostingOfflineDownloads, tiles: OfflineTileStore,
                protomaps: ProtomapsOfflineStore, model: FieldModel,
                valhalla: ValhallaRoutingStore) {
-        guard startupTask == nil else { return }
+        guard startupTask == nil, !cancelled else { return }
         startupTask = Task {
             await start(hosting: hosting, tiles: tiles, protomaps: protomaps,
                         model: model, valhalla: valhalla)
@@ -53,6 +53,8 @@ import Network
                valhalla: ValhallaRoutingStore) async {
         guard !started else { return }
         started = true
+        defer { isDownloading = false; presented = false }
+        guard !cancelled, !Task.isCancelled else { return }
         guard await internetAvailable() else {
             AppDiagnosticLog.shared.record(severity: "info", subsystem: "Загрузка",
                 operation: "Проверка сети на старте", code: "OFFLINE",
@@ -62,6 +64,7 @@ import Network
             presented = false
             return
         }
+        guard !cancelled, !Task.isCancelled else { return }
         title = "Проверяем обновления"
         detail = "Каталоги карт и навигационных данных"
         // The host can be unavailable despite a live internet connection.
