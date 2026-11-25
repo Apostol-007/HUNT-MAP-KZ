@@ -91,6 +91,8 @@ struct DiagnosticsView: View {
         Map mode: \(onlineMap ? "online OpenFreeMap" : "strict offline")
         Last GPS error: \(model.lastError)
         Last warning: \(model.lastWarning)
+        ---- PERFORMANCE ----
+        \(HuntPerformance.shared.report)
         ---- LOGGED ERRORS AND ROOT CAUSES (last \(diagnostics.events.count)) ----
         \(diagnostics.export())
         NOTE: Diagnostic does NOT include exact coordinates, names, tracks, emails, tokens or personal identifiers.

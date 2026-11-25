@@ -297,3 +297,16 @@ def test_offline_manager_defers_catalog_render_and_storage_probe():
     assert "installedByID" in source
     assert "let hashes = Set(" in source
     assert "switch packageKind" in source
+
+
+def test_heavy_offline_work_is_awaited():
+    worker = (IOS / "HuntBackgroundWork.swift").read_text()
+    hosting = (IOS / "HostingOfflineDownloads.swift").read_text()
+    pmtiles = (IOS / "ProtomapsOfflineStore.swift").read_text()
+    main = (IOS / "MainView.swift").read_text()
+    assert "withTaskCancellationHandler" in worker
+    assert "Task.detached(priority: .utility)" in worker
+    assert "try await HuntBackgroundWork.append" in hosting
+    assert "try await HuntBackgroundWork.digest" in pmtiles
+    assert "try await hosting.graph" in main
+    assert "legacyRouteTask?.cancel()" in main

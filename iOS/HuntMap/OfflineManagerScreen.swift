@@ -69,7 +69,7 @@ struct OfflineManagerScreen: View {
             } message: { Text("Удаляется только выбранный PMTiles. Маршруты и метки сохраняются.") }
         }
         .interactiveDismissDisabled(job != nil)
-        .onAppear { catalogAddress = protomaps.catalogAddress }
+        .onAppear { catalogAddress = protomaps.catalogAddress; HuntPerformance.shared.markOfflineOpened() }
         .task {
             // Let the sheet present before constructing any catalogue rows.
             do { try await Task.sleep(for: .milliseconds(350)) } catch { return }

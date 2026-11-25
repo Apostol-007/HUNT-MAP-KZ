@@ -123,13 +123,13 @@ struct PublishedPack: Codable, Identifiable {
                 message = "Скачано \(Int(progress * 100))% · \(pack.pack_id)"
             }
             try handle.synchronize()
-            guard try Self.sha256(file: partial).lowercased() == pack.sha256.lowercased() else {
+            guard try await Self.sha256(file: partial).lowercased() == pack.sha256.lowercased() else {
                 try? FileManager.default.removeItem(at: partial)
                 throw StoreError.badChecksum
             }
             guard RasterMBTiles.isSupported(partial) else { throw StoreError.unsupportedFormat }
             let staged = folder.appendingPathComponent("staging-\(UUID().uuidString).mbtiles")
-            try FileManager.default.copyItem(at: partial, to: staged)
+            try await HuntBackgroundWork.run { try FileManager.default.copyItem(at: partial, to: staged) }
             let target = path(for: pack)
             if FileManager.default.fileExists(atPath: target.path) {
                 _ = try FileManager.default.replaceItemAt(target, withItemAt: staged)
@@ -158,9 +158,9 @@ struct PublishedPack: Codable, Identifiable {
             if let capacity, Int64(capacity) < size.int64Value + 100_000_000 { throw StoreError.notEnoughStorage }
             let temp = folder.appendingPathComponent("import-\(UUID().uuidString).mbtiles")
             staging = temp
-            try FileManager.default.copyItem(at: incoming, to: temp)
+            try await HuntBackgroundWork.run { try FileManager.default.copyItem(at: incoming, to: temp) }
             guard RasterMBTiles.isSupported(temp) else { throw StoreError.unsupportedFormat }
-            let digest = try Self.sha256(file: temp)
+            let digest = try await Self.sha256(file: temp)
             let id = "local-\(String(digest.prefix(24)))"
             let pack = PublishedPack(pack_id: id, scope: "ground", scope_id: "LOCAL", size_bytes: size.int64Value,
                                      sha256: digest, source_version: "user-import", license: "Не указана: ответственность пользователя",
@@ -186,11 +186,8 @@ struct PublishedPack: Codable, Identifiable {
         do { try persist(); revision += 1; message = "Карта удалена; личные точки и маршруты сохранены" }
         catch { message = "Не удалось обновить реестр: \(error.localizedDescription)" }
     }
-    private static func sha256(file: URL) throws -> String {
-        let handle = try FileHandle(forReadingFrom: file); defer { try? handle.close() }
-        var sha = SHA256()
-        while true { let chunk = try handle.read(upToCount: 1024 * 1024) ?? Data(); if chunk.isEmpty { break }; sha.update(data: chunk) }
-        return sha.finalize().map { String(format: "%02x", $0) }.joined()
+    private static func sha256(file: URL) async throws -> String {
+        try await HuntBackgroundWork.digest(file)
     }
 }
 

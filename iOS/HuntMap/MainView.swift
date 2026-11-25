@@ -104,6 +104,7 @@ struct MainView: View {
     @State private var nextTurnDistance = 0.0
     @State private var routingError: String?
     @State private var importingRoutingNetwork = false
+    @State private var legacyRouteTask: Task<Void, Never>?
     @State private var routeGraph: OfflineRouteGraph?
     @State private var routeGraphCount = 0
     @State private var taxa: [GBIFTaxon] = []
@@ -162,6 +163,7 @@ struct MainView: View {
         rootLayout
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
         .onAppear {
+            HuntPerformance.shared.start()
             startupSync.begin(hosting: hosting, tiles: maps, protomaps: protomaps,
                               model: model, valhalla: valhalla)
         }
@@ -171,6 +173,7 @@ struct MainView: View {
             do { try await Task.sleep(for: .seconds(2)) } catch { return }
             guard !Task.isCancelled, !startupSync.presented, !didPrefetchWeather else { return }
             didPrefetchWeather = true
+            HuntPerformance.shared.markReady()
             if weatherLayer == .none { weatherGrid.load(hourOffset: 0) }
         }
         .task(id: startupSync.presented) {
@@ -187,6 +190,7 @@ struct MainView: View {
             if value == .services { refreshWeatherOnLaunch() }
         }
         .onChange(of: scenePhase) { _, phase in
+            if phase == .active { HuntPerformance.shared.start() } else { HuntPerformance.shared.stop() }
             if phase == .active && tab == .services { refreshWeatherOnLaunch() }
         }
         .onChange(of: connectivity.connected) { _, connected in
@@ -195,7 +199,7 @@ struct MainView: View {
         .onChange(of: weatherLayer) { _, value in
             if value != .none { weatherGrid.load(hourOffset: weatherGrid.chosenOffset) }
         }
-        .onDisappear { playbackTask?.cancel() }
+        .onDisappear { playbackTask?.cancel(); legacyRouteTask?.cancel() }
         .onChange(of: online) { _, enabled in if enabled { offlineRoads.clear() } }
     }
 
@@ -425,6 +429,7 @@ struct MainView: View {
                 centerRequest += 1
             }).huntModal()
         }
+        .onChange(of: showOfflineManager) { _, shown in if shown { HuntPerformance.shared.markOfflineOpening() } }
         .sheet(isPresented: $showOfflineManager) {
             OfflineManagerScreen(hosting: hosting, tiles: maps, protomaps: protomaps, valhalla: valhalla,
                 startupBusy: startupSync.presented || startupSync.isDownloading)
@@ -878,15 +883,6 @@ struct MainView: View {
             .appendingPathComponent("routing/network.geojson")
     }
 
-    private func loadRoutingNetwork() {
-        guard let size = try? routingNetworkURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-              size > 0, size <= 15_000_000,
-              let bytes = try? Data(contentsOf: routingNetworkURL),
-              let graph = try? OfflineRouteGraph(geoJSON: bytes, mode: travelMode) else { return }
-        routeGraph = graph
-        routeGraphCount = graph.count
-    }
-
     private func startNavigation(to id: UUID) {
         guard let marker = model.markers.first(where: { $0.id == id }) else { return }
         if routeGuidance { model.stopRecordedRouteGuidance() }
@@ -894,8 +890,9 @@ struct MainView: View {
         planRoute(to: marker.coordinate, title: marker.title, markerID: id)
     }
     private func planRoute(to destination: GeoPoint, title: String, markerID: UUID? = nil) {
+        legacyRouteTask?.cancel()
+        routeRequestID = nil
         if recordedRoute != nil { stopRecordedTrack() }
-        if routeGraph == nil && !valhalla.tilesInstalled { loadRoutingNetwork() }
         if !routeGuidance { navigationPath = [] }
         routeDestination = destination
         routeTitle = title
@@ -942,27 +939,37 @@ struct MainView: View {
                                       mode: OfflineRouteGraph.TravelMode, valhallaError: String? = nil) {
         valhallaManeuvers = []
         nextTurnText = ""
-        do {
-            let graph: OfflineRouteGraph
-            if let downloaded = try? hosting.graph(start: current, destination: destination, mode: mode) {
-                graph = downloaded
-            } else if let bytes = try? Data(contentsOf: routingNetworkURL) {
-                graph = try OfflineRouteGraph(geoJSON: bytes, mode: mode)
-            } else {
-                graph = try hosting.graph(start: current, destination: destination, mode: mode)
+        navigationKind = "Локальный граф · расчёт…"
+        let requestID = routeRequestID
+        let localURL = routingNetworkURL
+        legacyRouteTask?.cancel()
+        legacyRouteTask = Task {
+            do {
+                let graph: OfflineRouteGraph
+                if let downloaded = try? await hosting.graph(start: current, destination: destination, mode: mode) {
+                    graph = downloaded
+                } else {
+                    try Task.checkCancellation()
+                    graph = try await HuntBackgroundWork.run {
+                        try OfflineRouteGraph(geoJSON: Data(contentsOf: localURL), mode: mode)
+                    }
+                }
+                let route = try await HuntBackgroundWork.run { try graph.path(from: current, to: destination) }
+                guard !Task.isCancelled, routeRequestID == requestID, routeDestination == destination else { return }
+                guard route.count >= 2 else { throw OfflineRouteGraph.RouteError.disconnected }
+                routeGraphCount = graph.count
+                navigationPath = route
+                navigationKind = mode == .foot ? "Локальный граф · пешком" : "Локальный граф · автомобиль"
+                routingError = nil
+            } catch {
+                guard !Task.isCancelled, routeRequestID == requestID, routeDestination == destination else { return }
+                navigationPath = []
+                navigationKind = "Маршрут недоступен"
+                AppDiagnosticLog.shared.recordError(subsystem: "Навигация",
+                    operation: "Резервный локальный граф", error: error,
+                    usedCache: !hosting.installedRoutes.isEmpty)
+                routingError = (valhallaError.map { "Valhalla: \($0). " } ?? "") + error.localizedDescription
             }
-            let route = try graph.path(from: current, to: destination)
-            guard route.count >= 2 else { throw OfflineRouteGraph.RouteError.disconnected }
-            navigationPath = route
-            navigationKind = mode == .foot ? "Локальный граф · пешком" : "Локальный граф · автомобиль"
-            routingError = nil
-        } catch {
-            navigationPath = []
-            navigationKind = "Маршрут недоступен"
-            AppDiagnosticLog.shared.recordError(subsystem: "Навигация",
-                operation: "Резервный локальный граф, \(mode == .foot ? "пешком" : "авто")",
-                error: error, usedCache: routeGraph != nil || !hosting.installedRoutes.isEmpty)
-            routingError = (valhallaError.map { "Valhalla: \($0). " } ?? "") + error.localizedDescription
         }
     }
 
@@ -987,6 +994,7 @@ struct MainView: View {
     }
 
     private func stopNavigation() {
+        legacyRouteTask?.cancel()
         valhallaManeuvers = []
         nextTurnText = ""
         routeRequestID = nil

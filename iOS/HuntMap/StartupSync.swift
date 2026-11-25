@@ -75,8 +75,16 @@ import Network
         let maps = hosting.maps.filter { pack in
             !tiles.installed.contains { $0.sha256.lowercased() == pack.sha256.lowercased() }
         }
-        let roads = hosting.routes.filter { hosting.needsRouteUpdate($0) }
-        let zones = hosting.zones.filter { hosting.needsZoneUpdate($0) }
+        var roads: [HostingRoutingPack] = []
+        var zones: [HostingZonePack] = []
+        for pack in hosting.routes {
+            guard !cancelled, !Task.isCancelled else { return }
+            if await hosting.needsRouteUpdate(pack) { roads.append(pack) }
+        }
+        for pack in hosting.zones {
+            guard !cancelled, !Task.isCancelled else { return }
+            if await hosting.needsZoneUpdate(pack) { zones.append(pack) }
+        }
         let protos = protomaps.available.filter { pack in
             !protomaps.installed.contains { $0.id == pack.id && $0.sha256.lowercased() == pack.sha256.lowercased() }
         }
@@ -105,7 +113,7 @@ import Network
             title = "Загружаем дороги и тропы"
             detail = pack.name
             await hosting.installRoute(pack)
-            if hosting.needsRouteUpdate(pack) { errors.append("Маршрутная сеть «\(pack.name)»: \(hosting.status)") }
+            if await hosting.needsRouteUpdate(pack) { errors.append("Маршрутная сеть «\(pack.name)»: \(hosting.status)") }
             tick()
         }
         for pack in zones {
@@ -113,7 +121,7 @@ import Network
             title = "Загружаем охотугодья"
             detail = pack.name
             await hosting.installZones(pack, model: model)
-            if hosting.needsZoneUpdate(pack) { errors.append("Границы «\(pack.name)»: \(hosting.status)") }
+            if await hosting.needsZoneUpdate(pack) { errors.append("Границы «\(pack.name)»: \(hosting.status)") }
             tick()
         }
         if !protos.isEmpty {
