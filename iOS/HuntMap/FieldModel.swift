@@ -400,6 +400,25 @@ struct LocalData: Codable {
         gpsAuthorization = String(describing: manager.authorizationStatus.rawValue)
         if manager.authorizationStatus == .denied {status="Нет разрешения геолокации"; lastError=status}
     }
+    func backupSnapshot() -> LocalData {
+        LocalData(markers:markers,tracks:tracks,pendingTrack:currentTrack,zones:zones,
+                  groundRevisions:groundRevisions,deletedGroundIDs:deletedGroundIDs)
+    }
+    func validateBackupTarget() throws {
+        if recording || currentTrack != nil || navigatingRecordedTrack || monitoredGroundID != nil {
+            throw NSError(domain:"HuntBackup",code:1,userInfo:[NSLocalizedDescriptionKey:"Завершите запись, навигацию и контроль границ перед восстановлением"])
+        }
+        if FileManager.default.fileExists(atPath:documentURL.path) {
+            _ = try JSONDecoder().decode(LocalData.self,from:Data(contentsOf:documentURL))
+        }
+    }
+    func installBackupSnapshot(_ data: LocalData) throws {
+        try validateBackupTarget()
+        let encoded=try JSONEncoder().encode(data)
+        try encoded.write(to:documentURL,options:[.atomic,.completeFileProtectionUnlessOpen])
+        markers=data.markers;tracks=data.tracks;zones=data.zones
+        groundRevisions=data.groundRevisions ?? [];deletedGroundIDs=data.deletedGroundIDs ?? []
+    }
     private func load() {
         guard let bytes=try? Data(contentsOf:documentURL),let obj=try? JSONDecoder().decode(LocalData.self,from:bytes) else {return}
         markers=obj.markers;tracks=obj.tracks;zones=obj.zones

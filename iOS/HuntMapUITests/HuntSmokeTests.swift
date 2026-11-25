@@ -111,6 +111,21 @@ final class HuntSmokeTests: XCTestCase {
         app.buttons["observation_cancel"].tap()
     }
 
+    func testSettingsNavigation() throws {
+        let app = openApp()
+        app.buttons["tab_Ещё"].tap()
+        let settings = app.buttons["settings_open"]
+        for _ in 0..<4 { if settings.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(settings.isHittable)
+        settings.tap()
+        XCTAssertTrue(app.navigationBars["Настройки"].waitForExistence(timeout: 15))
+        capture("12-settings", app: app)
+        let backup = app.buttons["backup_create"]
+        for _ in 0..<6 { if backup.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(backup.isHittable)
+        capture("13-backup", app: app)
+    }
+
     func testLaunchAndPrimaryNavigation() throws {
         let app = openApp()
         let tabs = [("Главная", "01-home"), ("Карта", "02-map"),

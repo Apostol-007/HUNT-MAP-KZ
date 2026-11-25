@@ -20,6 +20,13 @@ import HuntCore
         if let i=next.firstIndex(where:{$0.id==value.id}) {next[i]=value} else {next.append(value)}
         try write(next)
     }
+    func installBackupEntries(_ values:[WildlifeObservation]) throws {
+        guard values.allSatisfy({$0.valid}) else {throw CocoaError(.fileReadCorruptFile)}
+        try write(values)
+    }
+    func validateBackupTarget() throws {
+        guard readable else {throw CocoaError(.fileReadCorruptFile)}
+    }
     func delete(_ id:UUID) throws {try write(entries.filter{$0.id != id})}
     private func write(_ next:[WildlifeObservation]) throws {
         guard readable else {throw NSError(domain:"Observation",code:2,userInfo:[NSLocalizedDescriptionKey:error])}

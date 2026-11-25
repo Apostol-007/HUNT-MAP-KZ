@@ -46,6 +46,7 @@ struct MainView: View {
     @State private var highlightedGroundID: String?
     @State private var groundFitRequest = 0
     @State private var showLayers = false
+    @State private var showSettings = false
     @State private var showWeather = false
     @State private var showWeatherLayers = false
     @State private var showAbout = false
@@ -395,6 +396,14 @@ struct MainView: View {
 
     private var featurePresentation: some View {
         servicePresentation
+        .sheet(isPresented: $showSettings) {
+            HuntSettingsScreen(model: model, observations: observations,
+                online: $online, grounds: $showGrounds, markers: $showMarkersOnMap,
+                gps: $showGPSOnMap, track: $showTrackOnMap,
+                onStorage: { showSettings = false; offlineArea = nil; showOfflineManager = true },
+                onDiagnostics: { showSettings = false; showDiagnostics = true })
+                .huntModal()
+        }
         .sheet(item: $profileTrack) { track in
             TrackProfileScreen(track: track, onMap: { point in
                 profileTrack = nil
@@ -1867,7 +1876,7 @@ struct MainView: View {
                 ReferenceMenuRow(symbol: "location.north.circle", title: "Полевой режим") { showFieldMode = true }
                 ReferenceMenuRow(symbol: "cross.case", title: "Экстренная помощь") { showEmergency = true }
                 ReferenceMenuRow(symbol: "externaldrive", title: "Офлайн-карты") { offlineArea = nil; showOfflineManager = true }
-                ReferenceMenuRow(symbol: "gearshape", title: "Настройки") { showLayers = true }
+                ReferenceMenuRow(symbol: "gearshape", title: "Настройки") { showSettings = true }.accessibilityIdentifier("settings_open")
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "info.circle", title: "О приложении") { showAbout = true }
             }
