@@ -45,66 +45,33 @@ private struct SkyMotion: View {
     let scene: WeatherScene
     let night: Bool
     let windy: Bool
+    var precipitation: Double? = nil
+    var windSpeed: Double? = nil
+    var windDirection: Double? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var phase
+
     var body: some View {
         ZStack {
             LinearGradient(colors: scene.colors(night), startPoint: .top, endPoint: .bottom)
-            TimelineView(.animation(minimumInterval: 1.0 / 24, paused: reduceMotion || phase != .active)) { timeline in
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion || phase != .active)) { timeline in
                 Canvas { context, size in
-                    let t = reduceMotion ? 0.0 : timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 3600)
-                    let w = Double(size.width)
-                    let h = Double(size.height)
-                    guard w > 0, h > 0 else { return }
-                    if scene == .sun {
-                        let r = w * (0.24 + 0.015 * sin(t))
-                        let point = CGPoint(x: w * 0.77, y: h * 0.12)
-                        let glow = Path(ellipseIn: CGRect(x: point.x - r, y: point.y - r, width: r * 2, height: r * 2))
-                        context.fill(glow, with: .radialGradient(Gradient(colors: [night ? Color.white.opacity(0.5) : HuntReference.mint.opacity(0.35), .clear]), center: point, startRadius: 0, endRadius: r))
-                        if night {
-                            for i in 0..<35 {
-                                let x = Double((i * 137 + 19) % 997) / 997 * w
-                                let y = Double((i * 91 + 43) % 997) / 997 * h
-                                let opacity = 0.2 + 0.4 * (1 + sin(t + Double(i))) / 2
-                                context.fill(Path(ellipseIn: CGRect(x: x, y: y, width: 2, height: 2)), with: .color(.white.opacity(opacity)))
-                            }
-                        }
-                    } else if scene != .unknown {
-                        for i in 0..<10 {
-                            let x = (Double(i) * w / 4 + t * 6).truncatingRemainder(dividingBy: w * 2) - w * 0.45
-                            let y = Double(i % 5) * h / 5
-                            let r = w * 0.7
-                            let cloud = Path(ellipseIn: CGRect(x: x-r, y: y-r*0.5, width: r*2, height: r))
-                            context.fill(cloud, with: .radialGradient(Gradient(colors: [.white.opacity(scene == .fog ? 0.23 : 0.12), .clear]), center: CGPoint(x: x, y: y), startRadius: 0, endRadius: r))
-                        }
+                    let time = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
+                    let painter = NaturalWeatherPainter(size: size, time: time, night: night,
+                        rainRate: precipitation ?? 0, windSpeed: windSpeed ?? 0,
+                        windDirection: windDirection ?? 0, motion: !reduceMotion)
+                    if scene == .sun { painter.celestial(context) }
+                    if scene == .cloud || scene == .rain || scene == .snow || scene == .storm || scene == .fog {
+                        painter.clouds(context, fog: scene == .fog, storm: scene == .storm)
                     }
-                    let snow = scene == .snow
-                    let wet = scene == .rain || scene == .storm
-                    if wet || snow || windy {
-                        let count = snow ? 80 : (wet ? 130 : 32)
-                        for i in 0..<count {
-                            let seed = Double((i * 173 + 31) % 997) / 997
-                            let offset = Double((i * 71 + 17) % 991) / 991
-                            let speed = snow ? 20 + seed * 25 : 150 + seed * 180
-                            let y = (offset * h + t * speed).truncatingRemainder(dividingBy: h + 24) - 12
-                            let x = (seed * w + t * (windy ? 28 : 8)).truncatingRemainder(dividingBy: w)
-                            if snow {
-                                let r = 1 + seed * 2
-                                context.fill(Path(ellipseIn: CGRect(x: x, y: y, width: r*2, height: r*2)), with: .color(.white.opacity(0.48)))
-                            } else {
-                                var line = Path()
-                                line.move(to: CGPoint(x: x, y: y))
-                                line.addLine(to: CGPoint(x: x - (wet ? 4 : 18), y: y + (wet ? 10 + seed*15 : 2)))
-                                context.stroke(line, with: .color(.white.opacity(0.12 + seed*0.17)), lineWidth: 1)
-                            }
-                        }
-                    }
-                    if scene == .storm && !reduceMotion {
-                        let flash = max(0, 1 - abs(t.truncatingRemainder(dividingBy: 14) - 1.5) / 0.8) * 0.08
-                        context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white.opacity(flash)))
-                    }
+                    if scene == .rain || scene == .storm { painter.rain(context) }
+                    if scene == .snow { painter.snow(context) }
+                    if windy && scene != .rain && scene != .storm && scene != .snow { painter.wind(context) }
+                    if scene == .storm { painter.lightning(context) }
                 }
             }
+            // Maintain readable foreground text without changing the application's palette.
+            LinearGradient(colors: [.black.opacity(0.25), .black.opacity(0.05)], startPoint: .leading, endPoint: .trailing)
         }.allowsHitTesting(false).accessibilityHidden(true)
     }
 }
@@ -246,7 +213,10 @@ struct AnimatedWeatherDashboard: View {
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background {
-            SkyMotion(scene: scene, night: nighttime, windy: windy)
+            SkyMotion(scene: scene, night: nighttime, windy: windy,
+                      precipitation: weather.current.precipitationMm,
+                      windSpeed: weather.current.windSpeedKmh,
+                      windDirection: weather.current.windDirectionToDegrees)
                 .clipShape(RoundedRectangle(cornerRadius: 22))
         }
     }
