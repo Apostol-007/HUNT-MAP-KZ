@@ -29,6 +29,7 @@ struct MainView: View {
     @StateObject private var weather = WeatherService()
     @StateObject private var observations = ObservationStore()
     @StateObject private var weatherGrid = WeatherGridService()
+    @State private var didPrefetchWeather = false
 
     @AppStorage("hunt.onlineBasemap") private var online = true
     @AppStorage("hunt.map.style") private var mapStyle = MapBasemap.protomaps.rawValue
@@ -129,8 +130,7 @@ struct MainView: View {
 
     private var rootLayout: some View {
         ZStack {
-            // Keep the expensive MapLibre instance alive when switching tabs.
-            // Only controls disappear; the map remains genuinely full-screen.
+            // Do not allocate the native map during cold launch.
             if tab == .map && !startupSync.presented { mapScreen }
             if tab != .map { themedScreen }
         }
@@ -166,6 +166,14 @@ struct MainView: View {
         .onAppear {
             startupSync.begin(hosting: hosting, tiles: maps, protomaps: protomaps,
                               model: model, valhalla: valhalla)
+        }
+        .task(id: startupSync.presented) {
+            // Keep the startup contract: prefetch only after the launch gate releases.
+            guard !startupSync.presented, !didPrefetchWeather else { return }
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            guard !Task.isCancelled, !startupSync.presented, !didPrefetchWeather else { return }
+            didPrefetchWeather = true
+            if weatherLayer == .none { weatherGrid.load(hourOffset: 0) }
         }
         .onChange(of: tab) { _, value in
             if value == .services { refreshWeatherOnLaunch() }

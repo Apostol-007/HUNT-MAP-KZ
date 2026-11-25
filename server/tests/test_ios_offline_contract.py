@@ -192,6 +192,9 @@ def test_wind_prefetches_on_launch_and_progressively_refines():
     ui = (IOS / "MainView.swift").read_text()
     wind = (IOS / "WeatherGridService.swift").read_text()
     assert 'weatherGrid.load(hourOffset: 0)' in ui
+    assert '.task(id: startupSync.presented)' in ui
+    assert 'guard !startupSync.presented, !didPrefetchWeather' in ui
+    assert 'if tab == .map && !startupSync.presented { mapScreen }' in ui
     assert 'coarse.width = 3' in wind and 'coarse.height = 3' in wind
     assert 'self.fetchGrid(region: coarse' in wind
     assert 'self.fetchGrid(region: detailed' in wind
