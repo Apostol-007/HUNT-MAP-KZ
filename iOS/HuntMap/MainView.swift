@@ -17,6 +17,11 @@ struct MainView: View {
     @State private var importingValhallaTiles = false
     @State private var routeRequestID: UUID?
     @State private var gridMode = false
+    @State private var measurementMode: MeasurementKind?
+    @State private var measurementPoints: [GeoPoint] = []
+    @State private var measurementMoveIndex: Int?
+    @State private var profileTrack: Track?
+    @State private var measurementArchive = MeasurementArchive()
     @State private var gridStep = 0.1
     @State private var selectedGridCells: Set<String> = []
     @StateObject private var animals = WildlifeStore()
@@ -341,6 +346,14 @@ struct MainView: View {
                             protomapsStatus: protomaps.status,
                             valhallaStatus: valhalla.status).huntModal()
         }
+        .sheet(item: $profileTrack) { track in
+            TrackProfileScreen(track: track, onMap: { point in
+                profileTrack = nil
+                showRecordedTrack(track, direction: .forward, follow: false)
+                mapFocus = point
+                centerRequest += 1
+            }).huntModal()
+        }
         .sheet(isPresented: $showFieldMode) {
             FieldModeScreen(model: model, onReturn: { track in
                 beginFieldReturn(track)
@@ -550,7 +563,19 @@ struct MainView: View {
                            focusCoordinate: mapFocus,
                            highlightedGroundID: highlightedGroundID,
                            groundFitRequest: groundFitRequest,
+                           measurementPoints: measurementMode == nil ? [] : measurementPoints,
+                           measurementClosed: measurementMode == .area,
+                           measurementActive: measurementMode != nil,
                            onMapTap: { point in
+                               if measurementMode != nil {
+                                   if let index = measurementMoveIndex, measurementPoints.indices.contains(index) {
+                                       measurementPoints[index] = point
+                                       measurementMoveIndex = nil
+                                   } else if measurementPoints.count < 500 {
+                                       measurementPoints.append(point)
+                                   }
+                                   return
+                               }
                                if let id = movingMarkerID {
                                    if var marker = model.markers.first(where: { $0.id == id }) {
                                        marker.coordinate = point
@@ -625,6 +650,8 @@ struct MainView: View {
                     Spacer()
                     VStack(spacing: 7) {
                         circleMapButton(gridMode ? "square.grid.3x3.fill" : "square.grid.3x3", label: "Выбор сетки") {
+                            measurementMode = nil
+                            measurementMoveIndex = nil
                             gridMode.toggle()
                         }
                         circleMapButton("cloud.sun.fill", label: "Погода") {
@@ -662,6 +689,12 @@ struct MainView: View {
                     .padding(.horizontal, 12)
                     .padding(.bottom, 6)
                 }
+                if let kind = measurementMode {
+                    MeasurementPanel(kind: kind, points: $measurementPoints, moveIndex: $measurementMoveIndex,
+                        archive: measurementArchive, boundaryDistance: measurementBoundaryDistance,
+                        onClose: { measurementMode = nil; measurementMoveIndex = nil })
+                        .padding(.horizontal, 12).padding(.bottom, 8)
+                }
                 if gridMode {
                     gridSelectionBar
                         .padding(.horizontal, 12)
@@ -681,12 +714,12 @@ struct MainView: View {
                     .padding(.bottom, 8)
                     .accessibilityIdentifier("marker_move_mode")
                 }
-                if routeDestination == nil, recordedRoute == nil, !gridMode, showGrounds, let ground = model.zones.first(where: { $0.id == highlightedGroundID }) {
+                if measurementMode == nil, routeDestination == nil, recordedRoute == nil, !gridMode, showGrounds, let ground = model.zones.first(where: { $0.id == highlightedGroundID }) {
                     selectedGroundBanner(ground)
                         .padding(.horizontal, 12)
                         .padding(.bottom, 8)
                 }
-                if routeDestination == nil, recordedRoute == nil, weatherLayer != .none {
+                if measurementMode == nil, routeDestination == nil, recordedRoute == nil, weatherLayer != .none {
                     Button { showWeatherLayers = true } label: {
                         Label("\(weatherLayer.rawValue) · \(weatherGrid.forecastLabel)", systemImage: "cloud.fill")
                             .font(.caption.bold())
@@ -720,6 +753,22 @@ struct MainView: View {
                     .padding(.bottom, 8)
                 }
                 HStack(spacing: 10) {
+                    Menu {
+                        ForEach(MeasurementKind.allCases, id: \.self) { kind in
+                            Button(kind.rawValue) {
+                                measurementPoints = []
+                                measurementMoveIndex = nil
+                                gridMode = false
+                                movingMarkerID = nil
+                                measurementMode = kind
+                            }
+                        }
+                    } label: {
+                        Label("Измерить", systemImage: "ruler").font(.caption.bold())
+                            .foregroundStyle(HuntReference.green)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .background(HuntReference.card, in: RoundedRectangle(cornerRadius: 12))
+                    }.accessibilityIdentifier("map_measure")
                     miniMapAction("location.north.fill", title: "GPS") { mapFocus = nil; model.requestGPS(); centerRequest += 1 }
                     miniMapAction("mappin.circle.fill", title: "Метка") {
                         if let point = mapFocus ?? model.coordinate {
@@ -737,6 +786,12 @@ struct MainView: View {
                 .padding(.bottom, 12)
             }
         }
+    }
+
+    private var measurementBoundaryDistance: Double? {
+        guard let point = measurementPoints.last ?? model.coordinate,
+              let ground = model.zones.first(where: { $0.id == highlightedGroundID }) else { return nil }
+        return ground.distanceToBoundaryMeters(point)
     }
 
     private var gridSelectionBar: some View {
@@ -1444,6 +1499,7 @@ struct MainView: View {
             }
             Spacer(minLength: 2)
             Menu {
+                Button("Профиль высот", systemImage: "chart.xyaxis.line") { profileTrack = track }
                 Button("Показать на карте", systemImage: "map") {
                     showRecordedTrack(track, direction: .forward, follow: false)
                 }

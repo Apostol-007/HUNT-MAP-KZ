@@ -35,6 +35,9 @@ struct OfflineMapView: UIViewRepresentable {
     var focusCoordinate: GeoPoint? = nil
     var highlightedGroundID: String? = nil
     var groundFitRequest: Int = 0
+    var measurementPoints: [GeoPoint] = []
+    var measurementClosed = false
+    var measurementActive = false
     var onMapTap: (GeoPoint) -> Void = { _ in }
     var onMarkerTap: (UUID) -> Void = { _ in }
     var gridEnabled = false
@@ -67,6 +70,8 @@ struct OfflineMapView: UIViewRepresentable {
         view.delegate = context.coordinator
         context.coordinator.zones = zones
         context.coordinator.onMapTap = onMapTap
+        context.coordinator.measurementActive = measurementActive
+        context.coordinator.updateMeasurement(view, points: measurementPoints, closed: measurementClosed)
         context.coordinator.onMarkerTap = onMarkerTap
         context.coordinator.gridEnabled = gridEnabled
         context.coordinator.gridStep = gridStep
@@ -122,6 +127,8 @@ struct OfflineMapView: UIViewRepresentable {
         }
         context.coordinator.zones = zones
         context.coordinator.onMapTap = onMapTap
+        context.coordinator.measurementActive = measurementActive
+        context.coordinator.updateMeasurement(view, points: measurementPoints, closed: measurementClosed)
         context.coordinator.onMarkerTap = onMarkerTap
         let changedGrid = context.coordinator.gridEnabled != gridEnabled ||
                           context.coordinator.gridStep != gridStep ||
@@ -182,6 +189,36 @@ struct OfflineMapView: UIViewRepresentable {
         var fieldOverlay: WeatherFieldOverlay?
         var groundLabels: GroundLabelsOverlay?
         var zones: [GeoZone] = []
+        var measurementActive = false
+        private var measurementAnnotations: [MLNAnnotation] = []
+        private var lastMeasurementPoints: [GeoPoint] = []
+        private var lastMeasurementClosed = false
+        func updateMeasurement(_ view: MLNMapView, points: [GeoPoint], closed: Bool) {
+            guard points != lastMeasurementPoints || closed != lastMeasurementClosed else { return }
+            lastMeasurementPoints = points
+            lastMeasurementClosed = closed
+            if !measurementAnnotations.isEmpty { view.removeAnnotations(measurementAnnotations) }
+            measurementAnnotations.removeAll()
+            for (index, point) in points.enumerated() {
+                let pin = MLNPointAnnotation()
+                pin.coordinate = CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude)
+                pin.title = "MEASURE|\(index + 1)"
+                measurementAnnotations.append(pin)
+            }
+            if points.count >= 2 {
+                var coords = points.map { CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude) }
+                if closed && coords.count >= 3 {
+                    let polygon = MLNPolygon(coordinates: &coords, count: UInt(coords.count))
+                    polygon.title = "MEASURE_AREA"
+                    measurementAnnotations.append(polygon)
+                    coords.append(coords[0])
+                }
+                let line = MLNPolyline(coordinates: &coords, count: UInt(coords.count))
+                line.title = "MEASURE_LINE"
+                measurementAnnotations.append(line)
+            }
+            if !measurementAnnotations.isEmpty { view.addAnnotations(measurementAnnotations) }
+        }
         var onMapTap: (GeoPoint) -> Void = { _ in }
         var onMarkerTap: (UUID) -> Void = { _ in }
         var gridEnabled = false
@@ -268,6 +305,12 @@ struct OfflineMapView: UIViewRepresentable {
         @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
             guard recognizer.state == .ended, let map else { return }
             let screenPoint = recognizer.location(in: map)
+            if measurementActive {
+                let coordinate = map.convert(screenPoint, toCoordinateFrom: map)
+                let point = GeoPoint(coordinate.latitude, coordinate.longitude)
+                if point.valid { onMapTap(point) }
+                return
+            }
             if gridEnabled {
                 let coordinate = map.convert(screenPoint, toCoordinateFrom: map)
                 if let cell = OfflineGridCell(latitude: coordinate.latitude, longitude: coordinate.longitude, step: gridStep) {
@@ -295,6 +338,20 @@ struct OfflineMapView: UIViewRepresentable {
         }
 
         func mapView(_ mapView: MLNMapView, imageFor annotation: MLNAnnotation) -> MLNAnnotationImage? {
+            if annotation.title?.hasPrefix("MEASURE|") == true {
+                let id = annotation.title ?? "MEASURE|"
+                if let cached = mapView.dequeueReusableAnnotationImage(withIdentifier: id) { return cached }
+                let image = UIGraphicsImageRenderer(size: CGSize(width: 28, height: 28)).image { _ in
+                    UIColor(red: 0.16, green: 0.85, blue: 0.40, alpha: 1).setFill()
+                    UIBezierPath(ovalIn: CGRect(x: 2, y: 2, width: 24, height: 24)).fill()
+                    let label = String(id.split(separator: "|").last ?? "")
+                    let attrs: [NSAttributedString.Key: Any] = [.font: UIFont.boldSystemFont(ofSize: 11), .foregroundColor: UIColor.black]
+                    let text = label as NSString
+                    let size = text.size(withAttributes: attrs)
+                    text.draw(at: CGPoint(x: (28-size.width)/2, y: (28-size.height)/2), withAttributes: attrs)
+                }
+                return MLNAnnotationImage(image: image, reuseIdentifier: id)
+            }
             // GPS beacon only: saved markers retain their own icons and colors.
             if annotation.title == "GPS · текущая позиция" {
                 let reuse = "hunt-gps-beacon-v1"
@@ -592,12 +649,14 @@ struct OfflineMapView: UIViewRepresentable {
         }
 
         func mapView(_ mapView: MLNMapView, alphaForShapeAnnotation annotation: MLNShape) -> CGFloat {
+            if annotation.title == "MEASURE_AREA" { return 0.18 }
             if annotation.title?.hasPrefix("GROUND_SELECTED|") == true { return 0.46 }
             if annotation.title?.hasPrefix("GROUND|") == true { return 0.25 }
             if annotation.title == "GROUND_BORDER" || annotation.title == "GROUND_SELECTED_BORDER" { return 1 }
             return annotation.title?.hasPrefix("WX|") == true ? 0.40 : 0.95
         }
         func mapView(_ mapView: MLNMapView, fillColorForPolygonAnnotation annotation: MLNPolygon) -> UIColor {
+            if annotation.title == "MEASURE_AREA" { return .systemGreen }
             if annotation.title?.hasPrefix("GROUND_SELECTED|") == true { return UIColor(red: 0.18, green: 1, blue: 0.26, alpha: 1) }
             if annotation.title?.hasPrefix("GROUND|") == true { return .systemGreen }
             guard let title = annotation.title, title.hasPrefix("WX|") else { return .clear }
@@ -614,6 +673,7 @@ struct OfflineMapView: UIViewRepresentable {
             }
         }
         func mapView(_ mapView: MLNMapView, strokeColorForShapeAnnotation annotation: MLNShape) -> UIColor {
+            if annotation.title == "MEASURE_LINE" || annotation.title == "MEASURE_AREA" { return .white }
             if annotation.title == "GROUND_SELECTED_BORDER" || annotation.title?.hasPrefix("GROUND_SELECTED|") == true { return UIColor(red: 0.48, green: 1, blue: 0.36, alpha: 1) }
             if annotation.title == "GROUND_BORDER" || annotation.title?.hasPrefix("GROUND|") == true { return UIColor(red: 0.12, green: 0.89, blue: 0.22, alpha: 1) }
             if annotation.title == "GRID|SELECTED" { return .systemGreen }
@@ -627,6 +687,7 @@ struct OfflineMapView: UIViewRepresentable {
             return annotation.title?.hasPrefix("НЕ ПРОВЕРЕНО") == true ? .systemYellow : .systemOrange
         }
         func mapView(_ mapView: MLNMapView, lineWidthForPolylineAnnotation annotation: MLNPolyline) -> CGFloat {
+            if annotation.title == "MEASURE_LINE" { return 2 }
             if annotation.title == "GROUND_SELECTED_BORDER" { return 6 }
             if annotation.title == "GROUND_BORDER" { return 3.5 }
             if annotation.title == "GRID|SELECTED" { return 3 }

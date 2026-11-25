@@ -20,6 +20,7 @@ struct TrackFix: Codable {
     var timestamp: Date
     var accuracy: Double
     var altitude: Double
+    var verticalAccuracy: Double? = nil
 }
 struct Track: Identifiable, Codable {
     var id: UUID = UUID()
@@ -318,7 +319,7 @@ struct LocalData: Codable { var markers:[Marker]=[]; var tracks:[Track]=[]; var 
                 let dt=fix.timestamp.timeIntervalSince(last.timestamp)
                 if dt>0 && GeoMath.meters(GeoPoint(last.coordinate.latitude,last.coordinate.longitude),p)/dt>80 {return}
             }
-            currentTrack?.fixes.append(TrackFix(point:p,timestamp:fix.timestamp,accuracy:fix.horizontalAccuracy,altitude:fix.altitude))
+            currentTrack?.fixes.append(TrackFix(point:p,timestamp:fix.timestamp,accuracy:fix.horizontalAccuracy,altitude:fix.altitude,verticalAccuracy:fix.verticalAccuracy))
             persist() // Atomic write of current track after each accepted fix.
         }
         lastFix=fix
