@@ -392,12 +392,12 @@ struct MainView: View {
                 onSelectArea: { showOfflineManager = false; measurementMode = nil; gridMode = true; tab = .map })
                 .huntModal()
         }
-        .sheet(isPresented: $showFieldMode) {
+        .fullScreenCover(isPresented: $showFieldMode) {
             FieldModeScreen(model: model, onReturn: { track in
                 beginFieldReturn(track)
             }).huntModal()
         }
-        .sheet(isPresented: $showEmergency) {
+        .fullScreenCover(isPresented: $showEmergency) {
             EmergencyScreen(model: model).huntModal()
         }
         .sheet(isPresented: $showAbout) { AboutHuntView().huntModal() }
@@ -516,7 +516,7 @@ struct MainView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Button { showFieldMode = true } label: {
                     HuntRow(title: "Полевой режим", subtitle: model.recording ? "Запись маршрута активна" : "Компас · GPS · Маршрут", symbol: "location.north.circle")
-                }.buttonStyle(.plain).accessibilityIdentifier("field_mode_home")
+                }.buttonStyle(.plain).contentShape(Rectangle()).accessibilityIdentifier("field_mode_home")
                 HuntAction(title: "Экстренная помощь", symbol: "cross.case") { showEmergency = true }
                     .accessibilityIdentifier("sos_home")
             }

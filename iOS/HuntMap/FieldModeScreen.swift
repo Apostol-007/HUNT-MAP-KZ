@@ -16,6 +16,7 @@ struct FieldModeScreen: View {
             TimelineView(.periodic(from: .now, by: 1)) { clock in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
+                        Text("Полевой режим").font(.headline).accessibilityIdentifier("field_screen_ready")
                         gpsStatus(at: clock.date)
                         FieldCompass(heading: model.fieldHeading, trueNorth: model.fieldHeadingIsTrue)
                             .huntSurface()
@@ -190,6 +191,7 @@ struct EmergencyScreen: View {
             TimelineView(.periodic(from: .now, by: 1)) { clock in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
+                        Text("Экстренная помощь").font(.headline).accessibilityIdentifier("sos_screen_ready")
                         locationCard(now: clock.date)
                         if let point = model.coordinate {
                             let message = locationMessage(point)

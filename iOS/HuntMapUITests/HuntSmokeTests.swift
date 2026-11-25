@@ -37,7 +37,13 @@ final class HuntSmokeTests: XCTestCase {
         }
         XCTAssertTrue(field.isHittable)
         field.tap()
-        XCTAssertTrue(app.buttons["field_close"].waitForExistence(timeout: 15))
+        let ready = app.staticTexts["field_screen_ready"]
+        if !ready.waitForExistence(timeout: 15) {
+            capture("failure-field-open", app: app)
+            XCTFail("Field screen did not open: " + app.debugDescription)
+            return
+        }
+        XCTAssertTrue(app.buttons["field_close"].waitForExistence(timeout: 10), "Field close control missing")
         capture("07-field-mode", app: app)
         let backtrack = app.buttons["field_return"]
         for _ in 0..<4 {
@@ -53,6 +59,7 @@ final class HuntSmokeTests: XCTestCase {
         }
         XCTAssertTrue(sos.isHittable)
         sos.tap()
+        XCTAssertTrue(app.staticTexts["sos_screen_ready"].waitForExistence(timeout: 15), "SOS screen did not open")
         XCTAssertTrue(app.buttons["sos_call"].waitForExistence(timeout: 15))
         capture("08-emergency", app: app)
         app.buttons["sos_close"].tap()
