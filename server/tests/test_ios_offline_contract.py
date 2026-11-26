@@ -340,8 +340,11 @@ def test_startup_releases_ui_and_gps_preserves_active_sessions():
     assert "var presented = false" in startup
     assert "presented = true" not in startup
     assert "Task.sleep(for: .seconds(3))" in startup
-    assert "await state.loadAtStartup()" in app
+    assert "await model.loadAtStartup(seedGrounds: !recoveryMode)" in app
     assert "enter && state.startupLoaded" in app
+    assert "if showMain, let state" in app
+    assert "Безопасный режим" in app
+    assert "hunt.launch.stage" in app
     assert "Task.detached(priority: .utility)" in field
     assert "hunt.startup.autoDownloadPackages" in startup
     assert startup.index("hunt.startup.autoDownloadPackages") < startup.index("await protomaps.downloadAllAvailable()")
