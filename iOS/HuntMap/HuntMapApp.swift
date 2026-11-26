@@ -12,11 +12,12 @@ private struct StartupRecoveryView: View {
     @State private var enter = false
     @State private var recovery = UserDefaults.standard.bool(forKey: "hunt.launch.initializing")
     @State private var stage = "Ожидание"
+    @State private var failedStage = UserDefaults.standard.string(forKey: "hunt.launch.stage") ?? "неизвестно"
     @State private var recoveryMode = false
     @State private var showMain = false
     private let key = "hunt.launch.initializing"
     private let stageKey = "hunt.launch.stage"
-    private var previousStage: String { UserDefaults.standard.string(forKey: stageKey) ?? "неизвестно" }
+    private var previousStage: String { failedStage }
 
     var body: some View {
         Group {
@@ -67,7 +68,7 @@ private struct StartupRecoveryView: View {
             let model = FieldModel()
             state = model
             checkpoint("Чтение field.json и журнала маршрутов")
-            await model.loadAtStartup()
+            await model.loadAtStartup(seedGrounds: !recoveryMode)
             checkpoint("Локальные данные прочитаны")
             if !recoveryMode {
                 checkpoint("Создание MainView")
