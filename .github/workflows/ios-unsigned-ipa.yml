@@ -2,6 +2,17 @@ name: HUNT MAP KZ - unsigned iOS IPA
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'IPA only or full verification'
+        type: choice
+        options: [ipa, full]
+        default: ipa
+      runner:
+        description: 'macOS runner architecture'
+        type: choice
+        options: [macos-15-intel, macos-15, macos-26-intel, macos-26]
+        default: macos-15-intel
   pull_request:
     paths:
       - 'iOS/**'
@@ -20,7 +31,7 @@ on:
       - '.github/workflows/ios-unsigned-ipa.yml'
 
 concurrency:
-  group: hunt-ios-${{ github.event.pull_request.number || github.ref }}
+  group: hunt-ios-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'full' }}
   cancel-in-progress: true
 
 permissions:
@@ -29,6 +40,7 @@ permissions:
 jobs:
   verify:
     name: Swift Core and server tests
+    if: github.event_name != 'workflow_dispatch' || inputs.mode == 'full'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -49,7 +61,7 @@ jobs:
 
   ios:
     name: Compile iOS and package unsigned IPA
-    runs-on: macos-15
+    runs-on: ${{ inputs.runner || 'macos-15-intel' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
@@ -141,7 +153,8 @@ jobs:
 
   simulator:
     name: iOS simulator smoke tests
-    runs-on: macos-15
+    if: github.event_name != 'workflow_dispatch' || inputs.mode == 'full'
+    runs-on: ${{ inputs.runner || 'macos-15-intel' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
