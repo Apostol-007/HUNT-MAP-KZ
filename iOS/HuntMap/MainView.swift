@@ -63,6 +63,9 @@ struct MainView: View {
     @State private var showGBIF = false
     @State private var showSearch = false
     @State private var searchText = ""
+    @State private var addressOrigin: AddressHit?
+    @State private var addressDestination: AddressHit?
+    @State private var plannedOrigin: GeoPoint?
     @State private var addressResults: [AddressHit] = []
     @State private var addressRequest: UUID?
     @State private var addressLoading = false
@@ -968,7 +971,8 @@ struct MainView: View {
         routeGuidance = false
         planRoute(to: marker.coordinate, title: marker.title, markerID: id)
     }
-    private func planRoute(to destination: GeoPoint, title: String, markerID: UUID? = nil) {
+    private func planRoute(to destination: GeoPoint, title: String, markerID: UUID? = nil, origin: GeoPoint? = nil) {
+        plannedOrigin = origin
         azimuthMode = false
         legacyRouteTask?.cancel()
         routeRequestID = nil
@@ -985,7 +989,7 @@ struct MainView: View {
         valhallaManeuvers = []
         nextTurnText = ""
         tab = .map
-        guard let current = model.coordinate else {
+        guard let current = origin ?? model.coordinate else {
             navigationPath = []
             navigationKind = "Ожидание GPS"
             model.requestGPS()
@@ -1004,7 +1008,7 @@ struct MainView: View {
                     navigationPath = result.path
                     valhallaManeuvers = result.maneuvers
                     prepareRouteEstimate(path: result.path, duration: result.durationSeconds)
-                    refreshNextTurn(at: model.coordinate ?? current)
+                    refreshNextTurn(at: plannedOrigin ?? model.coordinate ?? current)
                     navigationKind = chosenMode == .foot ? "Valhalla · пешком" : "Valhalla · автомобиль"
                     routingError = nil
                 } catch {
@@ -1049,7 +1053,7 @@ struct MainView: View {
                 routeGraphCount = graph.count
                 navigationPath = route
                 prepareRouteEstimate(path: route, duration: nil)
-                refreshNextTurn(at: model.coordinate ?? current)
+                refreshNextTurn(at: plannedOrigin ?? model.coordinate ?? current)
                 navigationKind = mode == .foot ? "Локальный граф · пешком" : "Локальный граф · автомобиль"
                 routingError = nil
             } catch {
@@ -1159,6 +1163,7 @@ struct MainView: View {
     }
 
     private func stopNavigation() {
+        plannedOrigin = nil
         azimuthMode = false
         legacyRouteTask?.cancel()
         valhallaManeuvers = []
@@ -1438,8 +1443,9 @@ struct MainView: View {
                 HStack(spacing: 9) {
                     Button {
                         travelMode = .car
+                        if routeGuidance { model.stopRecordedRouteGuidance() }
                         routeGuidance = false
-                        planRoute(to: destination, title: routeTitle, markerID: navigationTargetID)
+                        planRoute(to: destination, title: routeTitle, markerID: navigationTargetID, origin: plannedOrigin)
                     } label: {
                         Label("Авто", systemImage: "car.fill")
                             .frame(maxWidth: .infinity).padding(.vertical, 10)
@@ -1448,8 +1454,9 @@ struct MainView: View {
                     }.accessibilityIdentifier("route_drive")
                     Button {
                         travelMode = .foot
+                        if routeGuidance { model.stopRecordedRouteGuidance() }
                         routeGuidance = false
-                        planRoute(to: destination, title: routeTitle, markerID: navigationTargetID)
+                        planRoute(to: destination, title: routeTitle, markerID: navigationTargetID, origin: plannedOrigin)
                     } label: {
                         Label("Пешком", systemImage: "figure.walk")
                             .frame(maxWidth: .infinity).padding(.vertical, 10)
@@ -1459,7 +1466,7 @@ struct MainView: View {
                 }.buttonStyle(.plain).font(.caption.bold())
                 Text(navigationKind).font(.caption)
                     .foregroundStyle(navigationPath.isEmpty ? Color.orange : Color.gray)
-                if let current = model.coordinate {
+                if let current = plannedOrigin ?? model.coordinate {
                     let distance = GeoMath.meters(current, destination)
                     Text(String(format: "По прямой: %.0f м · Азимут %d°",
                                 distance, bearing(to: destination, from: current)))
@@ -1478,7 +1485,14 @@ struct MainView: View {
                     }
                     Button("Завершить") { stopNavigation() }.buttonStyle(.bordered)
                 } else {
+                    if plannedOrigin != nil {
+                        Text("Предварительный маршрут между адресами. Для ведения пересчитайте от GPS.").font(.caption)
+                    }
                     Button {
+                        if plannedOrigin != nil {
+                            planRoute(to: destination, title: routeTitle, markerID: navigationTargetID)
+                            return
+                        }
                         routeGuidance = true
                         rerouteTime = Date()
                         model.startRecordedRouteGuidance()
@@ -1487,7 +1501,7 @@ struct MainView: View {
                             model.speakRouteInstruction(valhallaManeuvers.first?.instruction ?? "Следуйте по линии маршрута.")
                         }
                     } label: {
-                        Label("В путь", systemImage: "location.north.line.fill")
+                        Label(plannedOrigin == nil ? "В путь" : "Маршрут от GPS", systemImage: "location.north.line.fill")
                             .font(.headline.bold()).frame(maxWidth: .infinity).frame(minHeight: 46)
                     }
                     .buttonStyle(.borderedProminent).tint(HuntReference.green)
@@ -1606,21 +1620,68 @@ struct MainView: View {
                     centerRequest += 1
                 }
                 Spacer()
-                Button("Маршрут") {
+                Button("Отсюда") {
                     rememberAddresses([hit])
-                    showSearch = false
-                    if routeGuidance { model.stopRecordedRouteGuidance() }
-                    routeGuidance = false
-                    planRoute(to: hit.point, title: hit.address)
+                    addressOrigin = hit
+                    searchText = ""
+                }.buttonStyle(.bordered)
+                Button("Сюда") {
+                    rememberAddresses([hit])
+                    addressDestination = hit
                 }.buttonStyle(.borderedProminent)
             }.padding(.horizontal, 8)
         }
+    }
+
+    private var addressRoutePlanner: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Маршрут А → Б").font(.headline)
+            HStack {
+                Label(addressOrigin?.address ?? "Моя GPS-позиция", systemImage: "a.circle")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if addressOrigin != nil {
+                    Button("GPS") { addressOrigin = nil }.buttonStyle(.bordered)
+                }
+            }
+            HStack {
+                Label(addressDestination?.address ?? "Выберите адрес назначения", systemImage: "b.circle")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    let old = addressOrigin
+                    addressOrigin = addressDestination
+                    addressDestination = old
+                } label: { Image(systemName: "arrow.up.arrow.down") }
+                .disabled(addressOrigin == nil || addressDestination == nil)
+            }
+            Picker("Способ передвижения", selection: $travelMode) {
+                Text("Пешком").tag(OfflineRouteGraph.TravelMode.foot)
+                Text("Авто").tag(OfflineRouteGraph.TravelMode.car)
+            }.pickerStyle(.segmented)
+            Button {
+                guard let destination = addressDestination else { return }
+                if routeGuidance { model.stopRecordedRouteGuidance() }
+                routeGuidance = false
+                showSearch = false
+                if let origin = addressOrigin {
+                    mapFocus = origin.point
+                    centerRequest += 1
+                }
+                planRoute(to: destination.point, title: destination.address, origin: addressOrigin?.point)
+            } label: {
+                Label("Построить маршрут", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                    .frame(maxWidth: .infinity)
+            }.buttonStyle(.borderedProminent)
+            .disabled(addressDestination == nil || addressOrigin?.id == addressDestination?.id)
+            Text("Найдите адрес и нажмите «Отсюда» или «Сюда».")
+                .font(.caption).foregroundStyle(HuntReference.muted)
+        }.padding(12).background(HuntReference.card, in: RoundedRectangle(cornerRadius: 16))
     }
 
     private var mapSearchSheet: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
+                    addressRoutePlanner
                     HuntSearchField(text: $searchText, placeholder: "Город, улица, дом, место")
                     Button { addressRequest = UUID() } label: {
                         Label("Найти адрес", systemImage: "magnifyingglass")
