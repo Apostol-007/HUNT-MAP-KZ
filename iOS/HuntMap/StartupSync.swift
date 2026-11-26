@@ -27,6 +27,7 @@ import Network
             presented = false
         }
         startupTask = Task {
+            do { try await Task.sleep(for: .seconds(2)) } catch { isDownloading = false; return }
             await start(hosting: hosting, tiles: tiles, protomaps: protomaps,
                         model: model, valhalla: valhalla)
         }

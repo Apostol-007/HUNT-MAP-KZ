@@ -139,17 +139,26 @@ struct MainView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .safeAreaInset(edge: .bottom, spacing: 0) { navigation }
-        .accessibilityHidden(startupSync.presented || showFieldMode || showEmergency)
-        .allowsHitTesting(!startupSync.presented && !showFieldMode && !showEmergency)
+        .accessibilityHidden(startupSync.presented || model.fieldLoading || showFieldMode || showEmergency)
+        .allowsHitTesting(!startupSync.presented && !model.fieldLoading && !showFieldMode && !showEmergency)
         .overlay {
-            if startupSync.presented {
+            if model.fieldLoading {
+                VStack(spacing: 16) {
+                    Image(systemName: "map.fill").font(.system(size: 48)).foregroundStyle(HuntReference.green)
+                    Text("QAZ TRAIL").font(.title.bold())
+                    ProgressView("Восстанавливаем локальные данные")
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(HuntReference.background.ignoresSafeArea())
+                .accessibilityAddTraits(.isModal)
+            } else if startupSync.presented {
                 StartupSyncScreen(sync: startupSync, hosting: hosting, protomaps: protomaps)
                     .transition(.opacity)
                     .accessibilityAddTraits(.isModal)
             }
         }
         .overlay {
-            if !startupSync.presented && (showFieldMode || showEmergency) {
+            if !startupSync.presented && !model.fieldLoading && (showFieldMode || showEmergency) {
                 fieldFeatureOverlay
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(HuntReference.background.ignoresSafeArea())
@@ -169,6 +178,10 @@ struct MainView: View {
         .onAppear {
             HuntPerformance.shared.start()
             model.setForegroundGPS(scenePhase == .active)
+        }
+        .task {
+            await model.restoreAtLaunch()
+            guard !Task.isCancelled else { return }
             startupSync.begin(hosting: hosting, tiles: maps, protomaps: protomaps,
                               model: model, valhalla: valhalla)
         }

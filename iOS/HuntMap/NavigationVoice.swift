@@ -5,13 +5,13 @@ import UserNotifications
 import HuntCore
 
 @MainActor final class NavigationVoice {
-    private let synthesizer = AVSpeechSynthesizer()
+    private var synthesizer: AVSpeechSynthesizer?
     private var lastStatus: TrackReturnTracker.Status?
     private var lastWarningAt: Date?
     private var lastTimestamp: Date?
     private var lastDistanceBucket: Int?
     func reset() {
-        synthesizer.stopSpeaking(at: .immediate)
+        synthesizer?.stopSpeaking(at: .immediate)
         lastStatus = nil
         lastWarningAt = nil
         lastTimestamp = nil
@@ -53,11 +53,13 @@ import HuntCore
             if result.status == .offTrack || result.status == .arrived { notify(message) }
             return
         }
-        synthesizer.stopSpeaking(at: .immediate)
+        let speaker = synthesizer ?? AVSpeechSynthesizer()
+        synthesizer = speaker
+        speaker.stopSpeaking(at: .immediate)
         let utterance = AVSpeechUtterance(string: message)
         utterance.voice = voice
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
-        synthesizer.speak(utterance)
+        speaker.speak(utterance)
     }
     private func notify(_ message: String) {
         let content = UNMutableNotificationContent()

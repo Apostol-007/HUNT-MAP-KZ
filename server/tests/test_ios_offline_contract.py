@@ -399,3 +399,17 @@ def test_track_editor_creates_copies_atomically():
     save = field[field.index("func saveEditedTracks"):field.index("func deleteTrack")]
     assert save.index("try writeSnapshot(snapshot)") < save.index("tracks = snapshot.tracks")
     assert "Редактировать копию" in (IOS / "MainView.swift").read_text()
+
+
+def test_launch_restores_field_off_main_and_defers_speech():
+    field = (IOS / "FieldModel.swift").read_text()
+    main = (IOS / "MainView.swift").read_text()
+    voice = (IOS / "NavigationVoice.swift").read_text()
+    assert "func restoreAtLaunch() async" in field
+    assert "Task.detached(priority: .utility)" in field
+    assert "Self.readStartupSnapshot(url)" in field
+    assert "private var fieldStorageReadable = false" in field
+    assert "await model.restoreAtLaunch()" in main
+    assert "Восстанавливаем локальные данные" in main
+    assert "private var synthesizer: AVSpeechSynthesizer?" in voice
+    assert "synthesizer ?? AVSpeechSynthesizer()" in voice

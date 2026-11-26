@@ -95,7 +95,7 @@ struct LocalData: Codable {
     @Published private(set) var navigatingRecordedTrack = false
     @Published private(set) var recordedGuidanceResult: TrackReturnTracker.Result?
     private var recordedTracker: TrackReturnTracker?
-    private let navigationVoice = NavigationVoice()
+    private lazy var navigationVoice = NavigationVoice()
     @discardableResult
     func beginRecordedGuidance(points: [GeoPoint]) -> Bool {
         guard let tracker = TrackReturnTracker(points: points) else { return false }
@@ -125,7 +125,9 @@ struct LocalData: Codable {
     private(set) var groundGeometryRevision: Int = 0
     @Published private(set) var groundRevisions: [GroundRevision] = []
     private var deletedGroundIDs: Set<String> = []
-    private var fieldStorageReadable = true
+    private var fieldStorageReadable = false
+    @Published private(set) var fieldLoading = true
+    private var didStartFieldLoad = false
     @Published var strictOffline = true
     @Published var gpsAuthorization = "не определено"
     @Published var lastError = ""
@@ -167,8 +169,69 @@ struct LocalData: Codable {
         manager.delegate=self
         manager.desiredAccuracy=kCLLocationAccuracyBest
         manager.distanceFilter=5
-        load()
+    }
+
+    private struct StartupFieldSnapshot {
+        let data: LocalData
+        let recovered: Track?
+        let journalError: String?
+    }
+
+    func restoreAtLaunch() async {
+        guard !didStartFieldLoad else { return }
+        didStartFieldLoad = true
+        let url = documentURL
+        do {
+            let restored = try await Task.detached(priority: .utility) {
+                try Self.readStartupSnapshot(url)
+            }.value
+            let obj = restored.data
+            markers = obj.markers
+            tracks = obj.tracks
+            zones = obj.zones
+            groundRevisions = obj.groundRevisions ?? []
+            deletedGroundIDs = obj.deletedGroundIDs ?? []
+            fieldStorageReadable = restored.journalError == nil
+            if let error = restored.journalError { lastError = error }
+            if let pending = restored.recovered {
+                currentTrack = pending
+                recording = true
+                paused = true
+                recoveredSession = true
+                newSegment = true
+                lastWarning = "Незавершённая запись восстановлена на паузе. Продолжите или завершите маршрут."
+            }
+        } catch {
+            fieldStorageReadable = false
+            lastError = "Не удалось прочитать field.json. Исходный файл защищён от перезаписи: " + error.localizedDescription
+        }
+        fieldLoading = false
         loadBundledGrounds()
+    }
+
+    nonisolated private static func readStartupSnapshot(_ url: URL) throws -> StartupFieldSnapshot {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return StartupFieldSnapshot(data: LocalData(), recovered: nil, journalError: nil)
+        }
+        var obj = try JSONDecoder().decode(LocalData.self, from: Data(contentsOf: url, options: .mappedIfSafe))
+        for index in obj.tracks.indices {
+            obj.tracks[index].cacheStatistics()
+        }
+        var recovered: Track?
+        var journalError: String?
+        if var pending = obj.pendingTrack, !obj.tracks.contains(where: { $0.id == pending.id }) {
+            let directory = url.deletingLastPathComponent().appendingPathComponent("TrackJournal", isDirectory: true)
+                .appendingPathComponent(pending.id.uuidString, isDirectory: true)
+            do {
+                let extra = try TrackPointJournal.recover(TrackFix.self, after: pending.fixes.count, directory: directory)
+                pending.fixes.append(contentsOf: extra)
+            } catch {
+                journalError = "Журнал маршрута повреждён; исходные файлы сохранены: " + error.localizedDescription
+            }
+            pending.cacheStatistics()
+            recovered = pending
+        }
+        return StartupFieldSnapshot(data: obj, recovered: recovered, journalError: journalError)
     }
     private func loadBundledGrounds() {
         guard fieldStorageReadable else { return }
@@ -311,31 +374,42 @@ struct LocalData: Codable {
         reconcileGPS()
     }
     func addMarker(kind:String="Точка") {
+        guard !fieldLoading else { return }
+        
         guard let coordinate else { status="Сначала получите GPS-позицию"; return }
         markers.insert(Marker(title:"\(kind) \(markers.count+1)",kind:kind,coordinate:coordinate),at:0)
         persist()
     }
     @discardableResult
     func addMarker(at point: GeoPoint, kind: String = "Точка") -> Marker? {
+        guard !fieldLoading else { return nil }
         guard point.valid else { status = "Недопустимые координаты метки"; return nil }
         let marker = Marker(title: "\(kind) \(markers.count + 1)", kind: kind, coordinate: point)
         markers.insert(marker, at: 0)
         persist()
         return marker
     }
-    func removeMarkers(at offsets:IndexSet) {markers.remove(atOffsets:offsets);persist()}
+    func removeMarkers(at offsets:IndexSet) {
+        guard !fieldLoading else { return }
+        markers.remove(atOffsets:offsets);persist()}
     func insertMarker(_ marker: Marker) {
+        guard !fieldLoading else { return }
+        
         guard marker.coordinate.valid else { status = "Недопустимые координаты метки"; return }
         guard !markers.contains(where: { $0.id == marker.id }) else { return }
         markers.insert(marker, at: 0)
         persist()
     }
     func saveMarker(_ changed: Marker) {
+        guard !fieldLoading else { return }
+        
         guard let index = markers.firstIndex(where: { $0.id == changed.id }) else { return }
         markers[index] = changed
         persist()
     }
     func deleteMarker(id: UUID) {
+        guard !fieldLoading else { return }
+        
         markers.removeAll { $0.id == id }
         persist()
     }
@@ -352,10 +426,14 @@ struct LocalData: Codable {
         tracks = snapshot.tracks
     }
     func deleteTrack(id: UUID) {
+        guard !fieldLoading else { return }
+        
         tracks.removeAll { $0.id == id }
         persist()
     }
     func setImportedZones(_ imported:[GeoZone]) {
+        guard !fieldLoading else { return }
+        
         let existing = Dictionary(zones.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var merged = existing
         for ground in imported where existing[ground.id] == nil && !deletedGroundIDs.contains(ground.id) { merged[ground.id] = ground }
@@ -455,6 +533,8 @@ struct LocalData: Codable {
         } else { groundMonitorStatus = "Вне угодья: " + ground.name }
     }
     func loadDemoZones() {
+        guard !fieldLoading else { return }
+        
         // Illustrative polygon only: NOT an actual hunting ground or legal boundary.
         let polygon=GeoPolygon(rings:[[GeoPoint(43.245,76.88),GeoPoint(43.245,76.92),GeoPoint(43.275,76.92),GeoPoint(43.275,76.88)]])
         zones=[GeoZone(id:"DEMO-NOT-LEGAL",name:"Демо-территория (не охотугодье)",kind:.huntingGround,verified:false,source:"Синтетический тестовый полигон",polygons:[polygon])]
@@ -528,6 +608,7 @@ struct LocalData: Codable {
                   groundRevisions:groundRevisions,deletedGroundIDs:deletedGroundIDs)
     }
     func validateBackupTarget() throws {
+        guard !fieldLoading, fieldStorageReadable else { throw CocoaError(.fileReadCorruptFile) }
         if recording || currentTrack != nil || navigatingRecordedTrack || monitoredGroundID != nil {
             throw NSError(domain:"HuntBackup",code:1,userInfo:[NSLocalizedDescriptionKey:"Завершите запись, навигацию и контроль границ перед восстановлением"])
         }
@@ -541,38 +622,6 @@ struct LocalData: Codable {
         try encoded.write(to:documentURL,options:[.atomic,.completeFileProtectionUnlessOpen])
         markers=data.markers;tracks=data.tracks.map { track in var item = track; item.cacheStatistics(); return item };zones=data.zones
         groundRevisions=data.groundRevisions ?? [];deletedGroundIDs=data.deletedGroundIDs ?? []
-    }
-    private func load() {
-        guard FileManager.default.fileExists(atPath:documentURL.path) else { return }
-        let obj: LocalData
-        do { obj = try JSONDecoder().decode(LocalData.self,from:Data(contentsOf:documentURL)) }
-        catch { fieldStorageReadable = false; lastError = "Не удалось прочитать field.json. Исходный файл защищён от перезаписи."; return }
-        markers=obj.markers;tracks=obj.tracks.map { track in var item = track; item.cacheStatistics(); return item };zones=obj.zones
-        groundRevisions = obj.groundRevisions ?? []
-        deletedGroundIDs = obj.deletedGroundIDs ?? []
-        // Resume explicitly: never record a straight line over a process interruption.
-        if let pending=obj.pendingTrack {
-            if tracks.contains(where:{$0.id==pending.id}) {
-                persist()
-                return
-            }
-            var recovered = pending
-            do {
-                let extra = try TrackPointJournal.recover(TrackFix.self, after: pending.fixes.count, directory: journalDirectory(pending.id))
-                recovered.fixes.append(contentsOf: extra)
-            } catch {
-                // Never overwrite a damaged journal or silently archive an incomplete track.
-                fieldStorageReadable = false
-                lastError = "Журнал маршрута повреждён; исходные файлы сохранены: " + error.localizedDescription
-            }
-            recovered.cacheStatistics()
-            currentTrack=recovered
-            recording=true
-            paused=true
-            recoveredSession=true
-            newSegment=true
-            lastWarning="Незавершённая запись восстановлена на паузе. Продолжите или завершите маршрут."
-        }
     }
     private func writeSnapshot(_ data: LocalData) throws {
         guard fieldStorageReadable else { throw CocoaError(.fileReadCorruptFile) }
