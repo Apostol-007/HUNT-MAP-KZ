@@ -363,3 +363,16 @@ def test_camera_freshness_and_power_aware_animation():
     assert "followFixTime: model.fieldFixTime" in main
     assert "constrained ? 1.0 / 15.0 : 1.0 / 30.0" in weather
     assert "TrackExportCleanup.removeExpired" in main
+
+
+def test_recorded_navigation_updates_from_gps_not_view():
+    model = (IOS / "FieldModel.swift").read_text()
+    ui = (IOS / "MainView.swift").read_text()
+    voice = (IOS / "NavigationVoice.swift").read_text()
+    assert "updateRecordedGuidance(fix, position: p)" in model
+    assert "tracker.update(position: position, accuracy: fix.horizontalAccuracy" in model
+    assert "model.$recordedGuidanceResult" in ui
+    assert "AVSpeechSynthesizer()" in voice
+    assert "timestamp.timeIntervalSince($0) >= 120" in voice
+    assert "UNUserNotificationCenter.current()" in voice
+    assert "hunt.navigation.voice" in (IOS / "HuntSettingsScreen.swift").read_text()

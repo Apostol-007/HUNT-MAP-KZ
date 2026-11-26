@@ -94,7 +94,7 @@ struct MainView: View {
     @State private var recordedRouteProgress = 0
     @State private var recordedRouteRemaining = 0.0
     @State private var recordedRouteDeviation = 0.0
-    @State private var returnTracker: TrackReturnTracker?
+    @State private var trackedRecordedGuidance = false
     @State private var returnStatus = ""
     @State private var returnArrived = false
     @State private var travelMode: OfflineRouteGraph.TravelMode = .foot
@@ -226,38 +226,21 @@ struct MainView: View {
                     }
                 }
             }
-            if let position = newPoint, let route = recordedRoute, recordedRouteFollowing, returnTracker == nil {
-                let p = route.progress(from: position, after: recordedRouteProgress)
-                recordedRouteProgress = max(recordedRouteProgress, p.index)
-                recordedRouteRemaining = p.remaining
-                recordedRouteDeviation = p.deviation
-                if recordedRouteProgress >= route.points.count - 1 &&
-                   p.deviation < max(25, model.accuracy ?? 25) {
-                    recordedRouteFollowing = false
-                    model.stopRecordedRouteGuidance()
-                    navigationKind = "Маршрут завершён"
-                }
-            }
         }
-        .onChange(of: model.fieldFixTime) { _, timestamp in
-            guard let timestamp, let position = model.coordinate,
-                  let accuracy = model.accuracy, recordedRouteFollowing,
-                  var tracker = returnTracker else { return }
-            let result = tracker.update(position: position, accuracy: accuracy, timestamp: timestamp)
-            returnTracker = tracker
+        .onReceive(model.$recordedGuidanceResult) { result in
+            guard let result, recordedRouteFollowing, trackedRecordedGuidance else { return }
             recordedRouteRemaining = result.remaining
             recordedRouteDeviation = result.deviation ?? 0
             returnStatus = result.status.rawValue
             if result.arrived {
                 returnArrived = true
                 recordedRouteFollowing = false
-                model.stopRecordedRouteGuidance()
-                navigationKind = "Исходная точка достигнута"
+                navigationKind = "Конечная точка достигнута"
             }
         }
     }
 
-    private var importLayout: some View {
+        private var importLayout: some View {
         guidanceLayout
         .fileImporter(isPresented: $importingValhallaTiles,
                       allowedContentTypes: [UTType(filenameExtension: "tar") ?? .data],
@@ -1010,20 +993,21 @@ struct MainView: View {
     }
 
     private func beginFieldReturn(_ track: Track) {
-        guard let tracker = TrackReturnTracker(points: track.fixes.map(\.point).reversed().map { $0 }) else {
-            routingError = "Недостаточно валидных точек для возвращения"
+        guard !track.hasDiscontinuity, TrackReturnTracker(points: Array(track.fixes.map(\.point).reversed())) != nil else {
+            routingError = "Маршрут содержит разрывы или недостаточно валидных точек"
             return
         }
         showRecordedTrack(track, direction: .backward, follow: true)
-        returnTracker = tracker
-        returnStatus = "Ожидание свежей GPS-позиции"
-        returnArrived = false
-        navigationKind = "Возвращение по записанному треку"
+        if trackedRecordedGuidance { navigationKind = "Возвращение по записанному треку" }
     }
 
     private func showRecordedTrack(_ track: Track, direction: RecordedRouteDirection, follow: Bool) {
         guard let route = RecordedTrackFollow(track: track, direction: direction) else {
             routingError = "В записи меньше двух GPS-точек. Маршрут нельзя воспроизвести."
+            return
+        }
+        if follow && (track.hasDiscontinuity || TrackReturnTracker(points: route.points) == nil) {
+            routingError = "Маршрут с разрывами или недостаточной длиной нельзя использовать для ведения"
             return
         }
         playbackTask?.cancel()
@@ -1033,7 +1017,7 @@ struct MainView: View {
         navigationTargetID = nil
         routeDestination = nil
         routeGuidance = false
-        returnTracker = nil
+        trackedRecordedGuidance = false
         returnStatus = ""
         returnArrived = false
         selectedRecordedTrackID = track.id
@@ -1048,11 +1032,15 @@ struct MainView: View {
         tab = .map
         mapFocus = route.points[0]
         centerRequest += 1
-        if follow { model.startRecordedRouteGuidance() }
+        if follow {
+            trackedRecordedGuidance = model.beginRecordedGuidance(points: route.points)
+            recordedRouteFollowing = trackedRecordedGuidance
+            returnStatus = "Ожидание свежей GPS-позиции"
+        }
     }
 
     private func stopRecordedTrack() {
-        returnTracker = nil
+        trackedRecordedGuidance = false
         returnStatus = ""
         returnArrived = false
         model.stopRecordedRouteGuidance()
@@ -1103,7 +1091,7 @@ struct MainView: View {
                 if returnArrived {
                     Text("Возвращение завершено. Запись маршрута можно завершить отдельно.")
                         .font(.caption).foregroundStyle(HuntReference.green)
-                } else if returnTracker != nil && recordedRouteFollowing {
+                } else if trackedRecordedGuidance && recordedRouteFollowing {
                     TimelineView(.periodic(from: .now, by: 1)) { clock in
                         let stale = model.fieldFixTime.map { clock.date.timeIntervalSince($0) >= 30 } ?? true
                         VStack(alignment: .leading, spacing: 6) {
@@ -1144,9 +1132,17 @@ struct MainView: View {
                         Button("Пройти") {
                             recordedRoutePlay = false
                             playbackTask?.cancel()
-                            recordedRouteFollowing = true
+                            guard let track = ([model.currentTrack].compactMap { $0 } + model.tracks).first(where: { $0.id == route.trackID }),
+                                  !track.hasDiscontinuity else {
+                                routingError = "Маршрут содержит разрывы или недоступен"
+                                return
+                            }
+                            trackedRecordedGuidance = model.beginRecordedGuidance(points: route.points)
+                            recordedRouteFollowing = trackedRecordedGuidance
                             recordedRouteProgress = 0
-                            model.startRecordedRouteGuidance()
+                            returnArrived = false
+                            returnStatus = "Ожидание свежей GPS-позиции"
+                            if !trackedRecordedGuidance { routingError = "Недостаточная длина маршрута"; return }
                             navigationKind = "Повторное прохождение · \(route.direction.rawValue)"
                         }.accessibilityIdentifier("recorded_track_follow")
                     }

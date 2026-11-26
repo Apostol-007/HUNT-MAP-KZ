@@ -76,6 +76,7 @@ struct HuntSettingsScreen:View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("hunt.map.style") private var style="protomaps"
     @AppStorage("hunt.weather.windMS") private var windMS=false
+    @AppStorage("hunt.navigation.voice") private var voiceGuidance=true
     @AppStorage("hunt.weather.pressureMMHG") private var pressureMMHG=false
     @State private var importing=false
     @State private var pending:BackupContents?
@@ -95,6 +96,8 @@ struct HuntSettingsScreen:View {
                     Toggle("Треки на карте",isOn:$track)
                 }
                 Section("GPS и навигация") {
+                    Toggle("Голосовое сопровождение маршрута", isOn: $voiceGuidance)
+                    Text("На экране используется установленный русский голос iOS. В фоне — звуковые уведомления при отклонении и прибытии, если разрешены.").font(.caption)
                     Text(model.status)
                     Text(model.gpsAuthorization).font(.caption)
                     Button("Запросить GPS") {model.requestGPS()}

@@ -93,6 +93,31 @@ struct LocalData: Codable {
     @Published var currentTrack: Track?
     @Published var recording = false
     @Published private(set) var navigatingRecordedTrack = false
+    @Published private(set) var recordedGuidanceResult: TrackReturnTracker.Result?
+    private var recordedTracker: TrackReturnTracker?
+    private let navigationVoice = NavigationVoice()
+    @discardableResult
+    func beginRecordedGuidance(points: [GeoPoint]) -> Bool {
+        guard let tracker = TrackReturnTracker(points: points) else { return false }
+        recordedTracker = tracker
+        recordedGuidanceResult = nil
+        navigationVoice.reset()
+        startRecordedRouteGuidance()
+        return true
+    }
+    private func updateRecordedGuidance(_ fix: CLLocation, position: GeoPoint) {
+        guard navigatingRecordedTrack, var tracker = recordedTracker else { return }
+        guard fix.horizontalAccuracy <= 50 else { return }
+        let result = tracker.update(position: position, accuracy: fix.horizontalAccuracy, timestamp: fix.timestamp)
+        recordedTracker = tracker
+        recordedGuidanceResult = result
+        navigationVoice.update(result, timestamp: fix.timestamp)
+        if result.arrived {
+            recordedTracker = nil
+            navigatingRecordedTrack = false
+            reconcileGPS()
+        }
+    }
     @Published var paused = false
     @Published var status = "GPS не запущен"
     @Published var lastWarning = "Границы не загружены"
@@ -210,6 +235,9 @@ struct LocalData: Codable {
 
     func stopRecordedRouteGuidance() {
         navigatingRecordedTrack = false
+        recordedTracker = nil
+        recordedGuidanceResult = nil
+        navigationVoice.reset()
         reconcileGPS()
     }
 
@@ -435,6 +463,7 @@ struct LocalData: Codable {
         fieldCourse = fix.course >= 0 && fix.course.isFinite ? fix.course : nil
         status="GPS ±\(Int(fix.horizontalAccuracy)) м"
         checkSelectedGround(fix, point: p)
+        updateRecordedGuidance(fix, position: p)
         if recording && !paused && fieldStorageReadable {
             if !newSegment, let last=lastFix, fix.timestamp.timeIntervalSince(last.timestamp)<1 {return}
             if !newSegment, let last=lastFix {
