@@ -1,5 +1,6 @@
 import Foundation
 import SQLite3
+import CryptoKit
 
 /// The database is opened read-only, on a separate actor, only when searched.
 actor OfflineAddressIndex {
@@ -56,6 +57,65 @@ actor OfflineAddressIndex {
         if isInstalled() {
             _ = try FileManager.default.replaceItemAt(file, withItemAt: temp)
         } else { try FileManager.default.moveItem(at: temp, to: file) }
+    }
+
+    private struct Catalog: Decodable {
+        let schema: String
+        let file: Entry
+        struct Entry: Decodable {
+            let url: URL
+            let bytes: Int64
+            let sha256: String
+        }
+    }
+    private var downloading = false
+    func downloadFromHosting() async throws {
+        guard !downloading else { throw failure("Загрузка уже выполняется") }
+        downloading = true
+        defer { downloading = false }
+        let catalogURL = URL(string: "https://create.web-works.kz/maps/addresses/catalog.json")!
+        var request = URLRequest(url: catalogURL)
+        request.timeoutInterval = 30
+        request.cachePolicy = .reloadIgnoringLocalCacheData
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200, data.count <= 65536 else {
+            throw failure("Каталог адресов недоступен")
+        }
+        let catalog = try JSONDecoder().decode(Catalog.self, from: data)
+        let entry = catalog.file
+        guard catalog.schema == "qaz-address-catalog-v1",
+              entry.url.scheme == "https", entry.url.host == catalogURL.host,
+              entry.url.path.hasPrefix("/maps/addresses/"),
+              entry.url.lastPathComponent == "kazakhstan-addresses.sqlite",
+              entry.bytes > 0, entry.bytes <= 2_147_483_648,
+              entry.sha256.count == 64, entry.sha256.allSatisfy({ $0.isHexDigit }) else {
+            throw failure("Некорректный каталог адресной базы")
+        }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        if let free = try? folder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage,
+           free < entry.bytes * 2 + 64_000_000 {
+            throw failure("Недостаточно свободного места для обновления адресов")
+        }
+        var download = URLRequest(url: entry.url)
+        download.timeoutInterval = 120
+        let (temporary, reply) = try await URLSession.shared.download(for: download)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        guard (reply as? HTTPURLResponse)?.statusCode == 200,
+              reply.url?.scheme == "https", reply.url?.host == catalogURL.host,
+              Int64(try temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? -1) == entry.bytes else {
+            throw failure("Размер загруженной адресной базы не совпадает")
+        }
+        let handle = try FileHandle(forReadingFrom: temporary)
+        defer { try? handle.close() }
+        var hash = SHA256()
+        while let chunk = try handle.read(upToCount: 1_048_576), !chunk.isEmpty {
+            try Task.checkCancellation()
+            hash.update(data: chunk)
+        }
+        let actual = hash.finalize().map { String(format: "%02x", $0) }.joined()
+        guard actual == entry.sha256.lowercased() else { throw failure("SHA-256 адресной базы не совпадает") }
+        try Task.checkCancellation()
+        try install(temporary)
     }
 
     func search(words: [String], house: String?) throws -> [Hit] {

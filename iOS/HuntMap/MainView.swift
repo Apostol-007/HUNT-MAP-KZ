@@ -71,6 +71,7 @@ struct MainView: View {
     @State private var importingAddressIndex = false
     @State private var addressIndexReady = false
     @State private var addressIndexStatus = ""
+    @State private var addressIndexDownloading = false
     @State private var addressRequest: UUID?
     @State private var addressLoading = false
     @State private var addressMessage = ""
@@ -1737,7 +1738,23 @@ struct MainView: View {
         VStack(alignment: .leading, spacing: 6) {
             Label(addressIndexReady ? "Офлайн-адреса установлены" : "Офлайн-адреса не загружены", systemImage: addressIndexReady ? "checkmark.circle" : "arrow.down.circle")
                 .font(.caption)
+            Button(addressIndexReady ? "Обновить базу Казахстана" : "Скачать базу Казахстана") {
+                guard !addressIndexDownloading else { return }
+                addressIndexDownloading = true
+                addressIndexStatus = "Загрузка и проверка адресной базы…"
+                Task {
+                    defer { addressIndexDownloading = false }
+                    do {
+                        try await addressIndex.downloadFromHosting()
+                        addressIndexReady = true
+                        addressIndexStatus = "Адресная база установлена"
+                    } catch { addressIndexStatus = error.localizedDescription }
+                }
+            }.buttonStyle(.borderedProminent)
+            .disabled(addressIndexDownloading || !connectivity.connected)
+            if addressIndexDownloading { ProgressView() }
             Button("Импорт базы адресов SQLite") { importingAddressIndex = true }
+                .disabled(addressIndexDownloading)
                 .font(.caption).buttonStyle(.bordered)
             if !addressIndexStatus.isEmpty { Text(addressIndexStatus).font(.caption) }
             Text("Данные адресов: © OpenStreetMap contributors, ODbL").font(.caption2)

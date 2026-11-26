@@ -7,6 +7,8 @@ Data © OpenStreetMap contributors, ODbL 1.0. Building way coordinates are repre
 points, not surveyed entrances. Only explicitly tagged addresses are exported.
 """
 import argparse
+import hashlib
+import json
 import math
 import sqlite3
 from pathlib import Path
@@ -81,3 +83,13 @@ if __name__ == "__main__":
     parser.add_argument("output", type=Path)
     args = parser.parse_args()
     build(args.pbf, args.output)
+    digest = hashlib.sha256()
+    with args.output.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    if args.output.name != "kazakhstan-addresses.sqlite":
+        raise SystemExit("Use output filename kazakhstan-addresses.sqlite for hosting")
+    catalog = {"schema": "qaz-address-catalog-v1", "file": {
+        "url": "https://create.web-works.kz/maps/addresses/kazakhstan-addresses.sqlite",
+        "bytes": args.output.stat().st_size, "sha256": digest.hexdigest()}}
+    args.output.with_name("catalog.json").write_text(json.dumps(catalog, indent=2), encoding="utf-8")
