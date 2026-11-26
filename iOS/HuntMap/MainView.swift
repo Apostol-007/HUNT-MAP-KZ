@@ -241,7 +241,7 @@ struct MainView: View {
                     navigationKind = "Вы достигли точки назначения"
                     routeGuidance = false
                     model.stopRecordedRouteGuidance()
-                    model.speakRouteInstruction("Вы достигли точки назначения.")
+                    model.speakRouteInstruction("Вы прибыли.")
                     return
                 }
                 refreshNextTurn(at: position)
@@ -1158,8 +1158,14 @@ struct MainView: View {
         let stage = nextTurnDistance <= near ? 2 : (nextTurnDistance <= far ? 1 : 0)
         guard stage > announcedStage else { return }
         announcedStage = stage
-        let prefix = nextTurnDistance <= 10 ? "" : "Через \(Int(nextTurnDistance.rounded())) метров. "
-        model.speakRouteInstruction(prefix + upcoming.instruction)
+        if upcoming.isDestination {
+            if stage == 1 { model.speakRouteInstruction("Вы приближаетесь к точке назначения") }
+            return
+        }
+        let meters = max(10, Int((nextTurnDistance / 10).rounded()) * 10)
+        let prefix = stage == 2 ? "" : "Через \(meters) метров, "
+        let command = stage == 2 ? upcoming.instruction : upcoming.instruction.prefix(1).lowercased() + upcoming.instruction.dropFirst()
+        model.speakRouteInstruction(prefix + command)
     }
 
     private func stopNavigation() {
