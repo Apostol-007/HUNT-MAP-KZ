@@ -1,4 +1,5 @@
 import SwiftUI
+import MapKit
 import HuntCore
 import UniformTypeIdentifiers
 
@@ -62,6 +63,11 @@ struct MainView: View {
     @State private var showGBIF = false
     @State private var showSearch = false
     @State private var searchText = ""
+    @State private var addressResults: [AddressHit] = []
+    @State private var addressRequest: UUID?
+    @State private var addressLoading = false
+    @State private var addressMessage = ""
+    @AppStorage("hunt.address.history.v1") private var addressHistoryJSON = "[]"
     @State private var selectedRouteFilter = "Все"
     @State private var selectedMarkerFilter = "Все"
     @State private var selectedWildlifeMode = "По угодьям"
@@ -721,7 +727,7 @@ struct MainView: View {
                     Button { showSearch = true } label: {
                         HStack(spacing: 9) {
                             Image(systemName: "magnifyingglass")
-                            Text("Поиск мест, охотугодий, точек")
+                            Text("Поиск адресов, мест и точек")
                                 .lineLimit(1).minimumScaleFactor(0.72)
                             Spacer(minLength: 0)
                         }
@@ -1525,11 +1531,119 @@ struct MainView: View {
         .buttonStyle(.plain)
     }
 
+    private struct AddressHit: Codable, Identifiable {
+        let title: String
+        let address: String
+        let latitude: Double
+        let longitude: Double
+        var id: String { "\(latitude),\(longitude),\(title)" }
+        var point: GeoPoint { GeoPoint(latitude, longitude) }
+    }
+
+    private var addressHistory: [AddressHit] {
+        (try? JSONDecoder().decode([AddressHit].self, from: Data(addressHistoryJSON.utf8))) ?? []
+    }
+
+    private var cachedAddressMatches: [AddressHit] {
+        let words = searchText.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        return Array(addressHistory.filter { hit in
+            words.allSatisfy { (hit.title + " " + hit.address).localizedCaseInsensitiveContains($0) }
+        }.prefix(20))
+    }
+
+    private func rememberAddresses(_ hits: [AddressHit]) {
+        var seen = Set<String>()
+        let unique = Array((hits + addressHistory).filter { seen.insert($0.id).inserted }.prefix(100))
+        if let data = try? JSONEncoder().encode(unique),
+           let json = String(data: data, encoding: .utf8) { addressHistoryJSON = json }
+    }
+
+    @MainActor
+    private func findAddresses(_ query: String, requestID: UUID) async {
+        addressLoading = true
+        addressResults = []
+        addressMessage = ""
+        defer { if addressRequest == requestID { addressLoading = false } }
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = query + ", Казахстан"
+        request.resultTypes = [.address, .pointOfInterest]
+        request.region = MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 48, longitude: 67),
+                                            span: MKCoordinateSpan(latitudeDelta: 16, longitudeDelta: 44))
+        let search = MKLocalSearch(request: request)
+        do {
+            let response = try await withTaskCancellationHandler(operation: {
+                try await search.start()
+            }, onCancel: { search.cancel() })
+            guard !Task.isCancelled, addressRequest == requestID else { return }
+            var seen = Set<String>()
+            addressResults = response.mapItems.compactMap { item -> AddressHit? in
+                let p = item.placemark
+                if let country = p.isoCountryCode, country != "KZ" { return nil }
+                let coordinate = p.coordinate
+                guard CLLocationCoordinate2DIsValid(coordinate) else { return nil }
+                let address = p.title ?? item.name ?? query
+                let hit = AddressHit(title: item.name ?? address, address: address,
+                                     latitude: coordinate.latitude, longitude: coordinate.longitude)
+                return seen.insert(hit.id).inserted ? hit : nil
+            }
+            rememberAddresses(addressResults)
+            if addressResults.isEmpty { addressMessage = "Адрес не найден. Уточните город, улицу и номер дома." }
+        } catch {
+            guard !Task.isCancelled, addressRequest == requestID else { return }
+            addressMessage = "Не удалось получить адреса. Проверьте интернет или уточните запрос."
+        }
+    }
+
+    private func addressRow(_ hit: AddressHit) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HuntRow(title: hit.title, subtitle: hit.address, symbol: "mappin.and.ellipse")
+            HStack {
+                Button("На карте") {
+                    rememberAddresses([hit])
+                    showSearch = false
+                    tab = .map
+                    mapFocus = hit.point
+                    centerRequest += 1
+                }
+                Spacer()
+                Button("Маршрут") {
+                    rememberAddresses([hit])
+                    showSearch = false
+                    if routeGuidance { model.stopRecordedRouteGuidance() }
+                    routeGuidance = false
+                    planRoute(to: hit.point, title: hit.address)
+                }.buttonStyle(.borderedProminent)
+            }.padding(.horizontal, 8)
+        }
+    }
+
     private var mapSearchSheet: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
-                    HuntSearchField(text: $searchText, placeholder: "Название угодья или метки")
+                    HuntSearchField(text: $searchText, placeholder: "Город, улица, дом, место")
+                    Button { addressRequest = UUID() } label: {
+                        Label("Найти адрес", systemImage: "magnifyingglass")
+                            .frame(maxWidth: .infinity)
+                    }.buttonStyle(.borderedProminent)
+                    .disabled(searchText.trimmingCharacters(in: .whitespacesAndNewlines).count < 3 || !connectivity.connected || addressLoading)
+                    if !connectivity.connected {
+                        Text("Без интернета доступны ранее найденные адреса, метки и угодья.")
+                            .font(.caption).foregroundStyle(HuntReference.muted)
+                    }
+                    if addressLoading { ProgressView("Поиск адресов…") }
+                    if !addressMessage.isEmpty {
+                        Text(addressMessage).font(.caption).foregroundStyle(HuntReference.muted)
+                    }
+                    if !addressResults.isEmpty {
+                        Text("Адреса и места · \(addressResults.count)").font(.subheadline.bold())
+                        ForEach(addressResults) { hit in addressRow(hit) }
+                    }
+                    let cached = cachedAddressMatches.filter { hit in !addressResults.contains(where: { $0.id == hit.id }) }
+                    if !cached.isEmpty {
+                        Text("Сохранённые адреса · \(cached.count)").font(.subheadline.bold())
+                        ForEach(cached) { hit in addressRow(hit) }
+                    }
                     let grounds = model.zones.filter { searchText.isEmpty || $0.name.localizedCaseInsensitiveContains(searchText) }
                     let marks = model.markers.filter { searchText.isEmpty || $0.title.localizedCaseInsensitiveContains(searchText) }
                     Text("Охотугодья · \(grounds.count)").font(.subheadline.bold()).foregroundStyle(HuntReference.muted)
@@ -1546,12 +1660,27 @@ struct MainView: View {
                             HuntRow(title: marker.title, subtitle: String(format: "%.4f, %.4f", marker.coordinate.latitude, marker.coordinate.longitude), symbol: "mappin.circle")
                         }.buttonStyle(.plain)
                     }
-                    if grounds.isEmpty && marks.isEmpty {
+                    if grounds.isEmpty && marks.isEmpty && cached.isEmpty && addressResults.isEmpty && !addressLoading {
                         ReferenceEmptyCard(title: "Ничего не найдено", detail: "Измените поисковый запрос", symbol: "magnifyingglass")
                     }
                 }.padding(16)
             }
             .background(HuntReference.background)
+            .task(id: addressRequest) {
+                if let id = addressRequest {
+                    await findAddresses(searchText.trimmingCharacters(in: .whitespacesAndNewlines), requestID: id)
+                }
+            }
+            .onChange(of: searchText) { _, _ in
+                addressRequest = nil
+                addressLoading = false
+                addressResults = []
+                addressMessage = ""
+            }
+            .onDisappear {
+                addressRequest = nil
+                addressLoading = false
+            }
             .navigationTitle("Поиск на карте")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Закрыть") { showSearch = false } } }
