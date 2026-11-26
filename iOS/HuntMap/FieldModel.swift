@@ -516,6 +516,10 @@ struct LocalData: Codable {
         }
     }
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        if (error as NSError).domain == "kCLErrorDomain" && (error as NSError).code == 0 {
+            if coordinate == nil { status = "Ожидание GPS-сигнала" }
+            return
+        }
         status = "Ошибка GPS: \(error.localizedDescription)"
         lastError = status
         AppDiagnosticLog.shared.recordError(subsystem: "GPS",
@@ -575,6 +579,9 @@ struct LocalData: Codable {
             }.value
             guard let obj = result.0 else { return }
             markers = obj.markers; tracks = obj.tracks; zones = obj.zones
+            if !zones.isEmpty && lastWarning == "Границы не загружены" {
+                lastWarning = "Загружено контуров: \(zones.count); юридические границы не подтверждены"
+            }
             groundRevisions = obj.groundRevisions ?? []
             deletedGroundIDs = obj.deletedGroundIDs ?? []
             if let warning = result.2 {

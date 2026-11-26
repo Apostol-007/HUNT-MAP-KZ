@@ -1005,6 +1005,9 @@ struct MainView: View {
                     graph = downloaded
                 } else {
                     try Task.checkCancellation()
+                    guard FileManager.default.fileExists(atPath: localURL.path) else {
+                        throw NSError(domain: "HuntRouting", code: 260, userInfo: [NSLocalizedDescriptionKey: "Резервный граф дорог не установлен или не покрывает маршрут. Загрузите дорожные пакеты в менеджере офлайн-карт."])
+                    }
                     graph = try await HuntBackgroundWork.run {
                         try OfflineRouteGraph(geoJSON: Data(contentsOf: localURL), mode: mode)
                     }

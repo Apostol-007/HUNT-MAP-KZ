@@ -299,6 +299,11 @@ struct ForecastGrid: Codable {
             grid = detailedCache
             cached = true
             status = "Кеш подробного прогноза · обновляем в сети"
+            if allowNetwork, let modified = try? cachePath(region: detailed, date: date).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+               Date().timeIntervalSince(modified) < 3600 {
+                status = "Кеш подробного прогноза · актуален"
+                return
+            }
         } else if let coarseCache = cachedGrid(region: coarse, date: date) {
             grid = coarseCache
             cached = true
@@ -326,6 +331,8 @@ struct ForecastGrid: Codable {
             guard let self else { return }
             defer { if self.requestGeneration == generation { self.loading = false } }
             do {
+                try await Task.sleep(for: .milliseconds(500))
+                try Task.checkCancellation()
                 // Show a low-cost grid first, then refine without blanking the map.
                 if self.grid == nil {
                     let value = try await self.fetchGrid(region: coarse, at: date)

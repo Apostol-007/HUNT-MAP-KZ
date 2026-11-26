@@ -21,14 +21,12 @@ import CoreLocation
     /// New forecasts replace the persisted snapshot only after a fully decoded response.
     /// Repeated GPS fixes never trigger a network storm.
     func updateIfNeeded(latitude: Double, longitude: Double, force: Bool = false) {
-        let point = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
         if !force, let at = lastRequest, let previous = lastCoordinate,
            Date().timeIntervalSince(at) < 1800,
            CLLocation(latitude: previous.latitude, longitude: previous.longitude)
                 .distance(from: CLLocation(latitude: latitude, longitude: longitude)) < 10_000 { return }
         lastRequest = Date()
-        lastCoordinate = point
-        refresh(latitude: latitude, longitude: longitude, strictOffline: false)
+        refresh(latitude: latitude, longitude: longitude, strictOffline: false, force: force)
     }
 
     init() {
@@ -46,7 +44,15 @@ import CoreLocation
         message = "Кэш прогноза · получен \(saved.retrievedAt.formatted(date: .abbreviated, time: .shortened))"
     }
 
-    func refresh(latitude: Double, longitude: Double, strictOffline: Bool) {
+    func refresh(latitude: Double, longitude: Double, strictOffline: Bool, force: Bool = false) {
+        let target = CLLocation(latitude: latitude, longitude: longitude)
+        if !strictOffline && !force {
+            if busy, let previous = lastCoordinate,
+               target.distance(from: CLLocation(latitude: previous.latitude, longitude: previous.longitude)) < 5_000 { return }
+            if let saved = forecast, Date().timeIntervalSince(saved.retrievedAt) < 1800,
+               target.distance(from: CLLocation(latitude: saved.latitude, longitude: saved.longitude)) < 5_000 { return }
+        }
+        lastCoordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
         task?.cancel()
         requestGeneration = UUID()
         let generation = requestGeneration
@@ -65,9 +71,9 @@ import CoreLocation
             forecast = nil
             isCached = false
         }
+        busy = true
         task = Task { [weak self] in
             guard let self else { return }
-            self.busy = true
             defer { if self.requestGeneration == generation { self.busy = false } }
             do {
                 var url = URLComponents(string: "https://api.open-meteo.com/v1/forecast")!
