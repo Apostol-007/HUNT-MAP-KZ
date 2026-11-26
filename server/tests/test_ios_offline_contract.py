@@ -187,7 +187,10 @@ def test_user_can_plan_and_follow_without_manual_download_buttons():
     ui = (IOS / "MainView.swift").read_text()
     startup = (IOS / "StartupSync.swift").read_text()
     assert 'Button("Построить маршрут")' in ui
-    assert 'Label("В путь"' in ui
+    assert 'Label(plannedOrigin == nil ? "В путь" : "Маршрут от GPS"' in ui
+    assert '.accessibilityIdentifier("route_start_guidance")' in ui
+    assert "if plannedOrigin != nil" in ui
+    assert "routeGuidance = true" in ui
     assert 'Label("Авто"' in ui and 'Label("Пешком"' in ui
     assert 'Скачать Valhalla' not in ui
     assert 'Загрузить карты' not in ui
