@@ -4,7 +4,7 @@ import Network
 
 /// The launch gate never deletes installed content when the network or a manifest fails.
 @MainActor final class StartupSync: ObservableObject {
-    @Published private(set) var presented = true
+    @Published private(set) var presented = false
     @Published private(set) var title = "Проверяем подключение"
     @Published private(set) var detail = "Локальные карты уже доступны"
     @Published private(set) var progress = 0.0
@@ -22,10 +22,6 @@ import Network
                valhalla: ValhallaRoutingStore) {
         guard startupTask == nil, !started, !cancelled else { return }
         isDownloading = true
-        releaseTask = Task {
-            do { try await Task.sleep(for: .milliseconds(700)) } catch { return }
-            presented = false
-        }
         startupTask = Task {
             do { try await Task.sleep(for: .seconds(3)) } catch { return }
             await start(hosting: hosting, tiles: tiles, protomaps: protomaps,
