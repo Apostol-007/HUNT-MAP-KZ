@@ -108,6 +108,8 @@ struct OfflineMapView: UIViewRepresentable {
 
     static func dismantleUIView(_ container: UIView, coordinator: Coordinator) {
         coordinator.windOverlay?.configure(grid: nil, enabled: false)
+        coordinator.fieldOverlay?.configure(grid: nil, layer: .none)
+        if let observer = coordinator.tilesReadyObserver { NotificationCenter.default.removeObserver(observer); coordinator.tilesReadyObserver = nil }
         coordinator.map?.delegate = nil
     }
 

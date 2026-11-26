@@ -334,3 +334,16 @@ def test_map_annotation_groups_and_track_stats_are_incremental():
     assert "fix.segmentStart == true" in native
     assert "currentTrack?.appendFix(" in field
     assert "cachedStatistics = nil" in field
+
+
+def test_startup_releases_ui_and_gps_preserves_active_sessions():
+    startup = (IOS / "StartupSync.swift").read_text()
+    field = (IOS / "FieldModel.swift").read_text()
+    main = (IOS / "MainView.swift").read_text()
+    assert "Task.sleep(for: .milliseconds(700))" in startup
+    assert "releaseTask?.cancel()" in startup
+    assert "(recording && !paused) || navigatingRecordedTrack || monitoredGroundID != nil" in field
+    assert "foregroundGPS || background" in field
+    assert "manager.stopUpdatingLocation()" in field
+    assert "model.setForegroundGPS(phase == .active)" in main
+    assert "onCancelStartup: { startupSync.skip() }" in main

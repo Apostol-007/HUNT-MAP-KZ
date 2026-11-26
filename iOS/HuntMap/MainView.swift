@@ -164,16 +164,17 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
         .onAppear {
             HuntPerformance.shared.start()
+            model.setForegroundGPS(scenePhase == .active)
             startupSync.begin(hosting: hosting, tiles: maps, protomaps: protomaps,
                               model: model, valhalla: valhalla)
         }
         .task(id: startupSync.presented) {
             // Keep the startup contract: prefetch only after the launch gate releases.
             guard !startupSync.presented, !didPrefetchWeather else { return }
+            HuntPerformance.shared.markReady()
             do { try await Task.sleep(for: .seconds(2)) } catch { return }
             guard !Task.isCancelled, !startupSync.presented, !didPrefetchWeather else { return }
             didPrefetchWeather = true
-            HuntPerformance.shared.markReady()
             if weatherLayer == .none { weatherGrid.load(hourOffset: 0) }
         }
         .task(id: startupSync.presented) {
@@ -191,6 +192,7 @@ struct MainView: View {
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { HuntPerformance.shared.start() } else { HuntPerformance.shared.stop() }
+            model.setForegroundGPS(phase == .active)
             if phase == .active && tab == .services { refreshWeatherOnLaunch() }
         }
         .onChange(of: connectivity.connected) { _, connected in
@@ -432,7 +434,7 @@ struct MainView: View {
         .onChange(of: showOfflineManager) { _, shown in if shown { HuntPerformance.shared.markOfflineOpening() } }
         .sheet(isPresented: $showOfflineManager) {
             OfflineManagerScreen(hosting: hosting, tiles: maps, protomaps: protomaps, valhalla: valhalla,
-                startupBusy: startupSync.presented || startupSync.isDownloading)
+                startupBusy: startupSync.presented || startupSync.isDownloading, onCancelStartup: { startupSync.skip() })
                 .huntModal()
         }
         .sheet(isPresented: $showIconSettings) {
