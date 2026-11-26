@@ -343,3 +343,12 @@ def test_startup_releases_ui_and_gps_preserves_active_sessions():
     assert "manager.stopUpdatingLocation()" in field
     assert "model.setForegroundGPS(phase == .active)" in main
     assert "onCancelStartup: { startupSync.skip() }" in main
+
+
+def test_active_track_journal_is_committed_before_publish():
+    field = (IOS / "FieldModel.swift").read_text()
+    assert "try TrackPointJournal.append(point, index: track.fixes.count" in field
+    assert field.index("try TrackPointJournal.append(point") < field.index("currentTrack?.appendFix(point)")
+    assert "TrackPointJournal.recover(TrackFix.self" in field
+    assert "try writeSnapshot(snapshot)" in field
+    assert field.index("try writeSnapshot(snapshot)", field.index("func stopTrack()")) < field.index("try TrackPointJournal.remove")

@@ -133,6 +133,10 @@ struct LocalData: Codable {
         try? FileManager.default.createDirectory(at:dir,withIntermediateDirectories:true)
         return dir.appendingPathComponent("field.json")
     }
+    private func journalDirectory(_ id: UUID) -> URL {
+        documentURL.deletingLastPathComponent().appendingPathComponent("TrackJournal", isDirectory: true)
+            .appendingPathComponent(id.uuidString, isDirectory: true)
+    }
     override init() {
         super.init()
         manager.delegate=self
@@ -222,7 +226,17 @@ struct LocalData: Codable {
         }
         newSegment=true; recoveredSession=false
         lastFix=nil // Do not reuse the last fix from a previous recording session.
-        currentTrack=Track(name:"Маршрут \(Date.now.formatted(date:.numeric,time:.shortened))")
+        let track = Track(name:"Маршрут \(Date.now.formatted(date:.numeric,time:.shortened))")
+        // Commit session metadata before the first point can be accepted.
+        do {
+            var snapshot = backupSnapshot()
+            snapshot.pendingTrack = track
+            try writeSnapshot(snapshot)
+        } catch {
+            lastError = "Не удалось начать запись: " + error.localizedDescription
+            return
+        }
+        currentTrack=track
         recording=true;paused=false
         // Background updates are enabled ONLY after Always authorization; foreground-only
         // recording must never terminate the app because the user denied Always access.
@@ -232,10 +246,9 @@ struct LocalData: Codable {
         }
         manager.startUpdatingLocation()
         status = manager.authorizationStatus == .authorizedAlways ? "Запись: фон разрешён" : "Запись: только на экране; для фона разрешите «Всегда»"
-        persist()
     }
     func togglePause() {
-        guard recording else { return }
+        guard recording, fieldStorageReadable else { return }
         paused.toggle()
         newSegment=true
         if !paused { recoveredSession=false }
@@ -246,13 +259,28 @@ struct LocalData: Codable {
     }
     func stopTrack() {
         guard recording else {return}
-        if var track=currentTrack, !track.fixes.isEmpty {track.sessionEnd=Date(); tracks.insert(track,at:0)}
+        guard let pending = currentTrack, fieldStorageReadable else { return }
+        var snapshot = backupSnapshot()
+        snapshot.pendingTrack = nil
+        if !pending.fixes.isEmpty {
+            var finished = pending
+            finished.sessionEnd = Date()
+            snapshot.tracks.insert(finished, at: 0)
+        }
+        // Commit archive first. On failure leave the current recording recoverable.
+        do { try writeSnapshot(snapshot) }
+        catch {
+            lastError = "Не удалось завершить запись: " + error.localizedDescription
+            return
+        }
+        tracks = snapshot.tracks
+        do { try TrackPointJournal.remove(directory: journalDirectory(pending.id)) }
+        catch { lastError = "Маршрут сохранён; журнал не удалён: " + error.localizedDescription }
         recoveredSession=false;newSegment=true
         currentTrack=nil;recording=false;paused=false
         lastFix=nil
         if manager.allowsBackgroundLocationUpdates && !navigatingRecordedTrack && monitoredGroundID == nil { manager.allowsBackgroundLocationUpdates=false }
         reconcileGPS()
-        persist()
     }
     func addMarker(kind:String="Точка") {
         guard let coordinate else { status="Сначала получите GPS-позицию"; return }
@@ -407,16 +435,26 @@ struct LocalData: Codable {
         fieldCourse = fix.course >= 0 && fix.course.isFinite ? fix.course : nil
         status="GPS ±\(Int(fix.horizontalAccuracy)) м"
         checkSelectedGround(fix, point: p)
-        if recording && !paused {
+        if recording && !paused && fieldStorageReadable {
             if !newSegment, let last=lastFix, fix.timestamp.timeIntervalSince(last.timestamp)<1 {return}
             if !newSegment, let last=lastFix {
                 let dt=fix.timestamp.timeIntervalSince(last.timestamp)
                 if dt>120 { newSegment=true }
                 if !newSegment && dt>0 && GeoMath.meters(GeoPoint(last.coordinate.latitude,last.coordinate.longitude),p)/dt>80 {return}
             }
-            currentTrack?.appendFix(TrackFix(point:p,timestamp:fix.timestamp,accuracy:fix.horizontalAccuracy,altitude:fix.altitude.isFinite ? fix.altitude : 0,verticalAccuracy:fix.altitude.isFinite ? fix.verticalAccuracy : nil,segmentStart:newSegment,speedMetersPerSecond:fix.speed.isFinite && fix.speed >= 0 ? fix.speed:nil))
+            guard let track = currentTrack else { return }
+            let point = TrackFix(point:p,timestamp:fix.timestamp,accuracy:fix.horizontalAccuracy,altitude:fix.altitude.isFinite ? fix.altitude : 0,verticalAccuracy:fix.altitude.isFinite ? fix.verticalAccuracy : nil,segmentStart:newSegment,speedMetersPerSecond:fix.speed.isFinite && fix.speed >= 0 ? fix.speed:nil)
+            do {
+                try TrackPointJournal.append(point, index: track.fixes.count, directory: journalDirectory(track.id))
+            } catch {
+                lastError = "Ошибка записи GPS-точки: " + error.localizedDescription
+                paused = true
+                newSegment = true
+                reconcileGPS()
+                return
+            }
+            currentTrack?.appendFix(point)
             newSegment=false
-            persist() // Atomic write of current track after each accepted fix.
         }
         lastFix=fix
         for event in engine.process(GPSFix(position:p,accuracyMeters:fix.horizontalAccuracy,timestamp:fix.timestamp),zones:zones.filter { $0.kind == .protectedArea }) {
@@ -473,8 +511,19 @@ struct LocalData: Codable {
         deletedGroundIDs = obj.deletedGroundIDs ?? []
         // Resume explicitly: never record a straight line over a process interruption.
         if let pending=obj.pendingTrack {
-            if tracks.contains(where:{$0.id==pending.id}) { persist(); return }
+            if tracks.contains(where:{$0.id==pending.id}) {
+                persist()
+                return
+            }
             var recovered = pending
+            do {
+                let extra = try TrackPointJournal.recover(TrackFix.self, after: pending.fixes.count, directory: journalDirectory(pending.id))
+                recovered.fixes.append(contentsOf: extra)
+            } catch {
+                // Never overwrite a damaged journal or silently archive an incomplete track.
+                fieldStorageReadable = false
+                lastError = "Журнал маршрута повреждён; исходные файлы сохранены: " + error.localizedDescription
+            }
             recovered.cacheStatistics()
             currentTrack=recovered
             recording=true
@@ -484,10 +533,13 @@ struct LocalData: Codable {
             lastWarning="Незавершённая запись восстановлена на паузе. Продолжите или завершите маршрут."
         }
     }
+    private func writeSnapshot(_ data: LocalData) throws {
+        guard fieldStorageReadable else { throw CocoaError(.fileReadCorruptFile) }
+        try JSONEncoder().encode(data).write(to:documentURL, options:[.atomic,.completeFileProtectionUnlessOpen])
+    }
     private func persist() {
         guard fieldStorageReadable else { return }
-        guard let encoded=try? JSONEncoder().encode(LocalData(markers:markers,tracks:tracks,pendingTrack:currentTrack,zones:zones,groundRevisions:groundRevisions,deletedGroundIDs:deletedGroundIDs)) else {return}
-        do { try encoded.write(to:documentURL,options:[.atomic,.completeFileProtectionUnlessOpen]) }
+        do { try writeSnapshot(backupSnapshot()) }
         catch { lastError = "Ошибка сохранения полевых данных: " + error.localizedDescription }
     }
     func exportGPX(_ track:Track)->URL? {
