@@ -113,7 +113,13 @@ final class WindParticlesOverlay: UIView {
     }
 
     @objc private func tick(_ link: CADisplayLink) {
-        guard let mapView, forecast != nil, window != nil else { return }
+        guard let mapView, forecast != nil, window != nil,
+              UIApplication.shared.applicationState == .active,
+              !UIAccessibility.isReduceMotionEnabled else { return }
+        let info = ProcessInfo.processInfo
+        let constrained = info.isLowPowerModeEnabled || info.thermalState == .serious || info.thermalState == .critical
+        let preferred = constrained ? 8 : 15
+        if link.preferredFramesPerSecond != preferred { link.preferredFramesPerSecond = preferred }
         if link.timestamp - previousFrame < 0.064 { return }
         previousFrame = link.timestamp
         for index in particles.indices {

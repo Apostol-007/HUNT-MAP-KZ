@@ -1,5 +1,6 @@
 import SwiftUI
 import HuntCore
+import Foundation
 
 private enum WeatherScene: Equatable {
     case unknown, sun, cloud, fog, rain, snow, storm
@@ -50,11 +51,17 @@ private struct SkyMotion: View {
     var windDirection: Double? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var phase
+    @State private var constrained = ProcessInfo.processInfo.isLowPowerModeEnabled || ProcessInfo.processInfo.thermalState == .serious || ProcessInfo.processInfo.thermalState == .critical
+    private var frameInterval: Double { constrained ? 1.0 / 15.0 : 1.0 / 30.0 }
+    private func updatePowerState() {
+        let info = ProcessInfo.processInfo
+        constrained = info.isLowPowerModeEnabled || info.thermalState == .serious || info.thermalState == .critical
+    }
 
     var body: some View {
         ZStack {
             LinearGradient(colors: scene.colors(night), startPoint: .top, endPoint: .bottom)
-            TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion || phase != .active)) { timeline in
+            TimelineView(.animation(minimumInterval: frameInterval, paused: reduceMotion || phase != .active)) { timeline in
                 Canvas { context, size in
                     let time = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
                     let painter = NaturalWeatherPainter(size: size, time: time, night: night,
@@ -73,6 +80,9 @@ private struct SkyMotion: View {
             // Maintain readable foreground text without changing the application's palette.
             LinearGradient(colors: [.black.opacity(0.25), .black.opacity(0.05)], startPoint: .leading, endPoint: .trailing)
         }.allowsHitTesting(false).accessibilityHidden(true)
+        .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in updatePowerState() }
+        .onReceive(NotificationCenter.default.publisher(for: ProcessInfo.thermalStateDidChangeNotification)) { _ in updatePowerState() }
+        .onChange(of: phase) { _, _ in updatePowerState() }
     }
 }
 

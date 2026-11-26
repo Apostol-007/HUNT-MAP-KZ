@@ -352,3 +352,14 @@ def test_active_track_journal_is_committed_before_publish():
     assert "TrackPointJournal.recover(TrackFix.self" in field
     assert "try writeSnapshot(snapshot)" in field
     assert field.index("try writeSnapshot(snapshot)", field.index("func stopTrack()")) < field.index("try TrackPointJournal.remove")
+
+
+def test_camera_freshness_and_power_aware_animation():
+    native = (IOS / "OfflineMapView.swift").read_text()
+    weather = (IOS / "AnimatedWeatherDashboard.swift").read_text()
+    main = (IOS / "MainView.swift").read_text()
+    assert "followValidUntil = fixTime.addingTimeInterval(30)" in native
+    assert "restoreFollowCenterIfNeeded(mapView)" in native
+    assert "followFixTime: model.fieldFixTime" in main
+    assert "constrained ? 1.0 / 15.0 : 1.0 / 30.0" in weather
+    assert "TrackExportCleanup.removeExpired" in main

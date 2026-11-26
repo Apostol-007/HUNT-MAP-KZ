@@ -32,6 +32,7 @@ struct OfflineMapView: UIViewRepresentable {
     let weatherLayer: WeatherMapLayer
     var followsGPS = false
     var followPosition: GeoPoint? = nil
+    var followFixTime: Date? = nil
     var centerRequest: Int = 0
     var zoomCommand: Int = 0
     var overviewCommand: Int = 0
@@ -168,7 +169,7 @@ struct OfflineMapView: UIViewRepresentable {
                                                 centerRequest: centerRequest, zoomCommand: zoomCommand)
         context.coordinator.fitCountryIfNeeded(view: view, command: overviewCommand)
         context.coordinator.fitGroundIfNeeded(view: view, command: groundFitRequest, ground: zones.first(where: { $0.id == highlightedGroundID }))
-        context.coordinator.followGPS(view: view, enabled: followsGPS, position: followPosition)
+        context.coordinator.followGPS(view: view, enabled: followsGPS, position: followPosition, fixTime: followFixTime)
     }
 
     final class Coordinator: NSObject, MLNMapViewDelegate, UIGestureRecognizerDelegate {
@@ -401,6 +402,8 @@ struct OfflineMapView: UIViewRepresentable {
         private var centeredOnGPS = false
         private var lastFollowPoint: GeoPoint?
         private var followingGPS = false
+        private var followValidUntil = Date.distantPast
+        private var recentering = false
         private var appliedCenterRequest = 0
         private var appliedZoomCommand = 0
         private var appliedOverviewCommand = 0
@@ -424,18 +427,21 @@ struct OfflineMapView: UIViewRepresentable {
                            zoomLevel: 3.25, animated: true)
         }
 
-        func followGPS(view: MLNMapView, enabled: Bool, position: GeoPoint?) {
-            guard enabled, let position, position.valid else {
+        func followGPS(view: MLNMapView, enabled: Bool, position: GeoPoint?, fixTime: Date?) {
+            guard enabled, let position, position.valid, let fixTime,
+                  Date().timeIntervalSince(fixTime) >= -5, Date().timeIntervalSince(fixTime) < 30 else {
                 followingGPS = false
                 lastFollowPoint = nil
+                followValidUntil = .distantPast
                 return
             }
             let initial = !followingGPS
             followingGPS = true
+            followValidUntil = fixTime.addingTimeInterval(30)
             guard initial || lastFollowPoint != position else { return }
             lastFollowPoint = position
             let center = CLLocationCoordinate2D(latitude: position.latitude, longitude: position.longitude)
-            view.setCenter(center, zoomLevel: initial ? max(14, view.zoomLevel) : view.zoomLevel, animated: !initial)
+            view.setCenter(center, zoomLevel: initial ? max(14, view.zoomLevel) : view.zoomLevel, animated: !initial && !UIAccessibility.isReduceMotionEnabled)
         }
 
         func applyCameraCommands(view: MLNMapView, position: GeoPoint?, centerRequest: Int, zoomCommand: Int) {
@@ -518,6 +524,18 @@ struct OfflineMapView: UIViewRepresentable {
             groundLabels?.cameraChanged(force: true)
             fieldOverlay?.setNeedsDisplay()
             reportViewport(in: mapView)
+            restoreFollowCenterIfNeeded(mapView)
+        }
+
+        private func restoreFollowCenterIfNeeded(_ view: MLNMapView) {
+            guard followingGPS, !recentering, Date() <= followValidUntil, let point = lastFollowPoint,
+                  view.bounds.width > 1, view.bounds.height > 1 else { return }
+            let target = CLLocationCoordinate2D(latitude: point.latitude, longitude: point.longitude)
+            let pixel = view.convert(target, toPointTo: view)
+            guard hypot(pixel.x - view.bounds.midX, pixel.y - view.bounds.midY) > 16 else { return }
+            recentering = true
+            view.setCenter(target, zoomLevel: view.zoomLevel, animated: false)
+            recentering = false
         }
 
         func reportViewport(in view: MLNMapView) {

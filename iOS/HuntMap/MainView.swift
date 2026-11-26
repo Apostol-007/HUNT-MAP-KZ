@@ -27,6 +27,7 @@ struct MainView: View {
     @StateObject private var observations = ObservationStore()
     @StateObject private var weatherGrid = WeatherGridService()
     @State private var didPrefetchWeather = false
+    @State private var didCleanExports = false
 
     @AppStorage("hunt.onlineBasemap") private var online = true
     @AppStorage("hunt.map.style") private var mapStyle = MapBasemap.protomaps.rawValue
@@ -174,6 +175,13 @@ struct MainView: View {
             guard !Task.isCancelled, !startupSync.presented, !didPrefetchWeather else { return }
             didPrefetchWeather = true
             if weatherLayer == .none { weatherGrid.load(hourOffset: 0) }
+            if !didCleanExports {
+                didCleanExports = true
+                let directory = FileManager.default.temporaryDirectory
+                do { _ = try await HuntBackgroundWork.run { try TrackExportCleanup.removeExpired(in: directory) } }
+                catch is CancellationError { }
+                catch { AppDiagnosticLog.shared.recordError(subsystem: "Хранилище", operation: "Очистка старых GPX", error: error) }
+            }
         }
         .onChange(of: tab) { _, value in
             if value == .services { refreshWeatherOnLaunch() }
@@ -635,6 +643,7 @@ struct MainView: View {
                            weatherLayer: tab == .map ? weatherLayer : .none,
                            followsGPS: (model.recording && !model.paused) || routeGuidance || recordedRouteFollowing,
                            followPosition: model.fieldFixTime.map { Date().timeIntervalSince($0) < 30 && Date().timeIntervalSince($0) >= -5 } == true ? model.coordinate : nil,
+                           followFixTime: model.fieldFixTime,
                            centerRequest: centerRequest,
                            zoomCommand: zoomCommand,
                            overviewCommand: overviewCommand,
