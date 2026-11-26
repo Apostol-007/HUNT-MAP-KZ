@@ -166,7 +166,7 @@ struct MainView: View {
     }
 
     private var lifecycleLayout: some View {
-        rootLayout
+        AnyView(rootLayout)
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
         .onAppear {
             HuntPerformance.shared.start()
@@ -210,7 +210,7 @@ struct MainView: View {
     }
 
     private var guidanceLayout: some View {
-        lifecycleLayout
+        AnyView(lifecycleLayout)
         .onChange(of: model.coordinate) { _, newPoint in
             if tab == .services, forecastPoint == nil, let point = newPoint {
                 weather.updateIfNeeded(latitude: point.latitude, longitude: point.longitude)
@@ -249,7 +249,7 @@ struct MainView: View {
     }
 
         private var importLayout: some View {
-        guidanceLayout
+        AnyView(guidanceLayout)
         .fileImporter(isPresented: $importingValhallaTiles,
                       allowedContentTypes: [UTType(filenameExtension: "tar") ?? .data],
                       allowsMultipleSelection: false) { result in
@@ -279,7 +279,7 @@ struct MainView: View {
     }
 
     private var mapPresentation: some View {
-        importLayout
+        AnyView(importLayout)
         .sheet(isPresented: $showLayers) { layerSheet.huntModal() }
         .sheet(isPresented: $showReturnPoints) { returnPointsSheet.huntModal() }
         .sheet(isPresented: $showSearch) { mapSearchSheet.huntModal() }
@@ -334,7 +334,7 @@ struct MainView: View {
     }
 
     private var editingPresentation: some View {
-        mapPresentation
+        AnyView(mapPresentation)
         .sheet(item: $creatingMapMarker) { marker in
             MarkerEditor(marker: marker, isNew: true,
                          onSave: { changed in
@@ -369,7 +369,7 @@ struct MainView: View {
     }
 
     private var servicePresentation: some View {
-        editingPresentation
+        AnyView(editingPresentation)
         .sheet(isPresented: $showWeather) {
             WeatherPanel(service: weather, coordinate: forecastPoint ?? model.coordinate, online: connectivity.connected)
                 .huntModal()
@@ -402,7 +402,7 @@ struct MainView: View {
     }
 
     private var featurePresentation: some View {
-        servicePresentation
+        AnyView(servicePresentation)
         .sheet(isPresented: $showSettings) {
             HuntSettingsScreen(model: model, observations: observations,
                 online: $online, grounds: $showGrounds, markers: $showMarkersOnMap,
