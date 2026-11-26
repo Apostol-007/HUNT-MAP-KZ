@@ -35,7 +35,7 @@ import CoreLocation
                     .localizedDescription ?? "Ошибка скачивания тайлов"
             }
         }
-        restore()
+        // Native offline storage is opened only when the map is requested.
     }
 
     /// Must point to a licensed tile host with permission for persistent offline storage.
