@@ -19,6 +19,7 @@ import HuntCore
         lastWarningAt = nil
         lastTimestamp = nil
         lastDistanceBucket = nil
+        selectedVoice = nil
         lastSpoken = nil
         lastSpokenAt = nil
     }
@@ -69,9 +70,11 @@ import HuntCore
         let now = Date()
         if lastSpoken == message, let lastSpokenAt, now.timeIntervalSince(lastSpokenAt) < 8 { return }
         if selectedVoice == nil {
-            selectedVoice = AVSpeechSynthesisVoice.speechVoices()
-                .filter { $0.language.hasPrefix("ru") }
-                .sorted { $0.quality.rawValue > $1.quality.rawValue }.first
+            let voices = AVSpeechSynthesisVoice.speechVoices().filter { $0.language.hasPrefix("ru") }
+            selectedVoice = voices.first { $0.quality == .premium && $0.language == "ru-RU" }
+                ?? voices.first { $0.quality == .premium }
+                ?? voices.first { $0.quality == .enhanced && $0.language == "ru-RU" }
+                ?? voices.first { $0.quality == .enhanced }
                 ?? AVSpeechSynthesisVoice(language: "ru-RU")
         }
         guard let voice = selectedVoice else { return }
