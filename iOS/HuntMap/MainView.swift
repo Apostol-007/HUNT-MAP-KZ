@@ -226,7 +226,9 @@ struct MainView: View {
                 planRoute(to: destination, title: routeTitle, markerID: navigationTargetID)
             }
             if let position = newPoint, routeGuidance, let destination = routeDestination {
-                if GeoMath.meters(position, destination) <= max(20, model.accuracy ?? 20) {
+                if !navigationPath.isEmpty, routeRemainingMeters <= 50,
+                   (model.accuracy ?? 100) <= 50,
+                   GeoMath.meters(position, destination) <= max(20, model.accuracy ?? 20) {
                     navigationKind = "Вы достигли точки назначения"
                     routeGuidance = false
                     model.stopRecordedRouteGuidance()
@@ -891,7 +893,7 @@ struct MainView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(recordedRouteFollowing ? "По записанному треку" : (nextTurnText.isEmpty ? "Следуйте маршруту" : nextTurnText))
                         .font(.headline).lineLimit(2)
-                    if !recordedRouteFollowing && !nextTurnText.isEmpty {
+                    if !recordedRouteFollowing && !valhallaManeuvers.isEmpty && !nextTurnText.isEmpty {
                         Text(String(format: "Манёвр через %.0f м", nextTurnDistance)).font(.caption.monospacedDigit())
                     }
                 }
@@ -1463,8 +1465,10 @@ struct MainView: View {
                         .font(.caption.bold()).foregroundStyle(HuntReference.green)
                     if !nextTurnText.isEmpty {
                         Text(nextTurnText).font(.subheadline.bold())
-                        Text(String(format: "Следующий манёвр через %.0f м", nextTurnDistance))
-                            .font(.caption.monospacedDigit())
+                        if !valhallaManeuvers.isEmpty {
+                            Text(String(format: "Следующий манёвр через %.0f м", nextTurnDistance))
+                                .font(.caption.monospacedDigit())
+                        }
                     }
                     Button("Завершить") { stopNavigation() }.buttonStyle(.bordered)
                 } else {
