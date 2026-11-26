@@ -131,6 +131,8 @@ struct MainView: View {
 
     var body: some View { featurePresentation }
 
+    private var immersiveNavigation: Bool { tab == .map && (routeGuidance || recordedRouteFollowing) }
+
     private var rootLayout: some View {
         ZStack {
             // Do not allocate the native map during cold launch.
@@ -138,7 +140,7 @@ struct MainView: View {
             if tab != .map { themedScreen }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .safeAreaInset(edge: .bottom, spacing: 0) { navigation }
+        .safeAreaInset(edge: .bottom, spacing: 0) { if !immersiveNavigation { navigation } }
         .accessibilityHidden(startupSync.presented || showFieldMode || showEmergency)
         .allowsHitTesting(!startupSync.presented && !showFieldMode && !showEmergency)
         .overlay {
@@ -648,6 +650,7 @@ struct MainView: View {
                            measurementClosed: measurementMode == .area,
                            measurementActive: measurementMode != nil,
                            onMapTap: { point in
+                               guard !immersiveNavigation else { return }
                                if pickingForecastPoint {
                                    selectForecastPoint(point, title: "Точка на карте", destination: pointDestination)
                                    return
@@ -681,6 +684,7 @@ struct MainView: View {
                                }
                            },
                            onMarkerTap: { id in
+                               guard !immersiveNavigation else { return }
                                if movingMarkerID == nil {
                                    selectedMapMarker = MapMarkerSelection(id: id)
                                }
@@ -698,6 +702,9 @@ struct MainView: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
 
+            if immersiveNavigation {
+                immersiveGuidanceOverlay
+            } else {
             VStack(spacing: 0) {
                 HStack(spacing: 9) {
                     Button { showSearch = true } label: {
@@ -863,7 +870,58 @@ struct MainView: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 12)
             }
+            }
         }
+    }
+
+    private var immersiveGuidanceOverlay: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: recordedRouteFollowing ? "figure.walk.motion" : "location.north.line.fill")
+                    .font(.title2).foregroundStyle(HuntReference.green)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(recordedRouteFollowing ? "По записанному треку" : (nextTurnText.isEmpty ? "Следуйте маршруту" : nextTurnText))
+                        .font(.headline).lineLimit(2)
+                    if !recordedRouteFollowing && !nextTurnText.isEmpty {
+                        Text(String(format: "Манёвр через %.0f м", nextTurnDistance)).font(.caption.monospacedDigit())
+                    }
+                }
+                Spacer(minLength: 0)
+            }.padding(12).background(HuntReference.card.opacity(0.97), in: RoundedRectangle(cornerRadius: 14))
+            HStack {
+                Spacer()
+                VStack(spacing: 8) {
+                    circleMapButton("location.fill", label: "Моё местоположение") { mapFocus = nil; model.requestGPS(); centerRequest += 1 }
+                    circleMapButton(courseUp ? "location.north.line.fill" : "location.north", label: "Ориентация карты") { courseUp.toggle() }
+                    circleMapButton("plus", label: "Приблизить") { zoomCommand += 1 }
+                    circleMapButton("minus", label: "Отдалить") { zoomCommand -= 1 }
+                }
+            }
+            Spacer(minLength: 0)
+            TimelineView(.periodic(from: .now, by: 1)) { clock in
+                let fresh = model.fieldFixTime.map { clock.date.timeIntervalSince($0) >= -5 && clock.date.timeIntervalSince($0) < 30 } ?? false
+                VStack(alignment: .leading, spacing: 6) {
+                    if !fresh { Text("Ожидание свежей GPS-позиции").foregroundStyle(.orange).font(.caption.bold()) }
+                    if recordedRouteFollowing {
+                        Text(returnStatus).font(.caption.bold()).foregroundStyle(.orange)
+                        Text(String(format: "По треку: %.2f км", recordedRouteRemaining / 1000)).font(.headline.monospacedDigit())
+                    } else { Text(routeTitle).font(.headline).lineLimit(1) }
+                    HStack {
+                        if fresh, let speed = model.fieldSpeed, speed.isFinite, speed >= 0 {
+                            Text(String(format: "%.0f км/ч", speed * 3.6)).font(.caption.monospacedDigit())
+                        }
+                        Spacer()
+                        if model.recording {
+                            Button { model.togglePause() } label: { Label(model.paused ? "Продолжить" : "Пауза", systemImage: model.paused ? "play.fill" : "record.circle.fill") }.font(.caption.bold())
+                        }
+                        Button("Завершить") {
+                            if recordedRouteFollowing { stopRecordedTrack() } else { stopNavigation() }
+                        }.buttonStyle(.bordered).accessibilityIdentifier(recordedRouteFollowing ? "recorded_track_stop" : "route_stop_guidance")
+                    }
+                }.padding(12).background(HuntReference.card.opacity(0.97), in: RoundedRectangle(cornerRadius: 14))
+            }
+        }.foregroundStyle(.white).padding(.horizontal, 12).padding(.vertical, 8)
+        .accessibilityIdentifier("immersive_guidance")
     }
 
     private var measurementBoundaryDistance: Double? {
