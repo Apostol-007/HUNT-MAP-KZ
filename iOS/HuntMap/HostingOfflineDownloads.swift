@@ -374,7 +374,18 @@ struct HostingZonePack: Decodable, Identifiable {
         let directory = folder
         let urls = matching.map { directory.appendingPathComponent($0.id + ".geojson") }
         return try await HuntBackgroundWork.run {
-            let parts = try urls.map { try Task.checkCancellation(); return try Data(contentsOf: $0) }
+            // Bound input memory before decoding. Never silently omit missing road packs.
+            var totalBytes: Int64 = 0
+            for url in urls {
+                try Task.checkCancellation()
+                let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                totalBytes += Int64(size)
+                guard totalBytes <= 32 * 1024 * 1024 else { throw OfflineRouteGraph.RouteError.tooLarge }
+            }
+            let parts = try urls.map {
+                try Task.checkCancellation()
+                return try Data(contentsOf: $0, options: .mappedIfSafe)
+            }
             return try OfflineRouteGraph(geoJSONParts: parts, mode: mode)
         }
     }
