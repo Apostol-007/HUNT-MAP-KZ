@@ -24,6 +24,7 @@ struct ValhallaManeuver {
 struct ValhallaRouteResult {
     let path: [GeoPoint]
     let maneuvers: [ValhallaManeuver]
+    let durationSeconds: Double?
 }
 
 /// The Valhalla C++ actor is cached inside a Swift actor, never invoked on the main thread.
@@ -123,7 +124,9 @@ actor ValhallaLocalEngine {
             }
         }
         guard output.count >= 2 else { throw ValhallaRoutingError.emptyRoute }
-        return ValhallaRouteResult(path: output, maneuvers: maneuvers)
+        let seconds = (trip["summary"] as? [String: Any])?["time"] as? Double
+        return ValhallaRouteResult(path: output, maneuvers: maneuvers,
+                                  durationSeconds: seconds.flatMap { $0.isFinite && $0 > 0 ? $0 : nil })
     }
 }
 
