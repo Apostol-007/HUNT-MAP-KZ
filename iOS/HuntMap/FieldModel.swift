@@ -40,7 +40,10 @@ struct Track: Identifiable, Codable {
             speed:fix.speedMetersPerSecond,segmentStart:fix.segmentStart ?? false)
     }
     var statistics: TrackStatistics {
-        cachedStatistics ?? TrackStatistics.calculate(fixes.map(Self.sample))
+        if let cachedStatistics { return cachedStatistics }
+        var result = TrackStatistics()
+        for (a, b) in zip(fixes, fixes.dropFirst()) { result.append(from: Self.sample(a), to: Self.sample(b)) }
+        return result
     }
     mutating func cacheStatistics() { cachedStatistics = statistics }
     mutating func appendFix(_ fix: TrackFix) {
@@ -544,10 +547,10 @@ struct LocalData: Codable {
     }
     /// Decode and rebuild track caches away from the UI thread. Do not expose
     /// editing controls until the existing snapshot and journal are restored.
-    func loadAtStartup() async {
+    func loadAtStartup(seedGrounds: Bool = true) async {
         guard !startupLoaded else { return }
         let url = documentURL
-        defer { startupLoaded = true; loadBundledGrounds() }
+        defer { startupLoaded = true; if seedGrounds { loadBundledGrounds() } }
         do {
             let result = try await Task.detached(priority: .utility) { () -> (LocalData?, Bool, String?) in
                 guard FileManager.default.fileExists(atPath: url.path) else { return (nil, false, nil) }
