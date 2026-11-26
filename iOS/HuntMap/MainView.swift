@@ -1001,12 +1001,12 @@ struct MainView: View {
         legacyRouteTask = Task {
             do {
                 let graph: OfflineRouteGraph
-                if let downloaded = try? await hosting.graph(start: current, destination: destination, mode: mode) {
-                    graph = downloaded
-                } else {
+                do {
+                    graph = try await hosting.graph(start: current, destination: destination, mode: mode)
+                } catch {
                     try Task.checkCancellation()
                     guard FileManager.default.fileExists(atPath: localURL.path) else {
-                        throw NSError(domain: "HuntRouting", code: 260, userInfo: [NSLocalizedDescriptionKey: "Резервный граф дорог не установлен или не покрывает маршрут. Загрузите дорожные пакеты в менеджере офлайн-карт."])
+                        throw error
                     }
                     graph = try await HuntBackgroundWork.run {
                         try OfflineRouteGraph(geoJSON: Data(contentsOf: localURL), mode: mode)
