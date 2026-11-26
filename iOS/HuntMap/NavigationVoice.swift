@@ -59,6 +59,18 @@ import HuntCore
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         synthesizer.speak(utterance)
     }
+    func speakRoute(_ message: String) {
+        guard UserDefaults.standard.object(forKey: "hunt.navigation.voice") as? Bool ?? true else { return }
+        guard UIApplication.shared.applicationState == .active else {
+            notify(message)
+            return
+        }
+        let utterance = AVSpeechUtterance(string: message)
+        utterance.voice = AVSpeechSynthesisVoice(language: "ru-RU")
+        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        synthesizer.stopSpeaking(at: .immediate)
+        synthesizer.speak(utterance)
+    }
     private func notify(_ message: String) {
         let content = UNMutableNotificationContent()
         content.title = "QAZ TRAIL"
