@@ -82,6 +82,9 @@ if __name__ == "__main__":
     parser.add_argument("pbf", type=Path)
     parser.add_argument("output", type=Path)
     args = parser.parse_args()
+    if args.output.name != "kazakhstan-addresses.sqlite":
+        parser.error("Use output filename kazakhstan-addresses.sqlite")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     build(args.pbf, args.output)
     digest = hashlib.sha256()
     with args.output.open("rb") as handle:

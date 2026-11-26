@@ -1,0 +1,59 @@
+name: QAZ TRAIL - Kazakhstan address database
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '35 2 1 * *'
+  pull_request:
+    paths:
+      - 'tools/build_address_index.py'
+      - '.github/workflows/address-index.yml'
+permissions:
+  contents: read
+concurrency:
+  group: qaz-address-index-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install OSM parser
+        run: python -m pip install osmium
+      - name: Download Kazakhstan OSM extract
+        run: |
+          curl --fail --location --retry 5 --retry-delay 3 --connect-timeout 30 --max-time 1200 https://download.geofabrik.de/asia/kazakhstan-latest.osm.pbf -o "$RUNNER_TEMP/kazakhstan.osm.pbf"
+      - name: Build address package
+        run: python tools/build_address_index.py "$RUNNER_TEMP/kazakhstan.osm.pbf" "$RUNNER_TEMP/addresses/kazakhstan-addresses.sqlite"
+      - name: Validate actual database and manifest
+        run: |
+          python - "$RUNNER_TEMP/addresses" <<'PY'
+          import hashlib,json,sqlite3,sys
+          from pathlib import Path
+          folder=Path(sys.argv[1])
+          file=folder/'kazakhstan-addresses.sqlite'
+          manifest=json.loads((folder/'catalog.json').read_text())
+          assert manifest['schema']=='qaz-address-catalog-v1'
+          assert manifest['file']['bytes']==file.stat().st_size
+          with file.open('rb') as f:
+              assert hashlib.file_digest(f,'sha256').hexdigest()==manifest['file']['sha256']
+          with sqlite3.connect(file) as db:
+              assert db.execute('PRAGMA quick_check').fetchone()[0]=='ok'
+              assert db.execute("SELECT value FROM metadata WHERE key='schema'").fetchone()[0]=='qaz-address-v1'
+              count=db.execute('SELECT count(*) FROM addresses').fetchone()[0]
+              assert count>0
+              house=db.execute("SELECT house FROM addresses WHERE house != '' LIMIT 1").fetchone()[0]
+              query='house : "'+house.replace('"','""')+'"'
+              assert db.execute('SELECT count(*) FROM addresses WHERE addresses MATCH ? AND house=?',(query,house)).fetchone()[0]>0
+              print(f'Validated {count:,} address records; {file.stat().st_size:,} bytes')
+          PY
+      - name: Upload hosting package
+        uses: actions/upload-artifact@v4
+        with:
+          name: qaz-kazakhstan-addresses
+          path: ${{ runner.temp }}/addresses/
+          if-no-files-found: error
+          retention-days: 30
