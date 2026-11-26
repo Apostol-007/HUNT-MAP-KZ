@@ -271,29 +271,25 @@ def test_no_map_selection_grid_and_gps_follow():
     assert 'followGPS(view: view, enabled: followsGPS' in native
 
 
-def test_alternate_icons_registered_and_complete():
-    import json, re, struct
+def test_single_primary_icon_and_brand():
+    import json, struct
     assets = IOS / "Assets.xcassets"
-    manager = (IOS / "AdaptiveIconManager.swift").read_text()
-    project = (IOS.parent / "project.yml").read_text()
-    names = re.findall(r'\.init\(id: "(\w+)", label:', manager)
-    assert len(names) == 39 and len(set(names)) == 39
-    for name in names:
-        if name == "Original":
-            assert (assets / "AppIcon.appiconset" / "Contents.json").exists()
-            continue
-        icon = "AppIcon" + name
-        assert icon in project
-        folder = assets / (icon + ".appiconset")
-        data = json.loads((folder / "Contents.json").read_text())
-        assert len(data["images"]) == 2
-        for item in data["images"]:
-            raw = (folder / item["filename"]).read_bytes()
+    primary = assets / "AppIcon.appiconset"
+    assert sorted(p.name for p in assets.glob("*.appiconset")) == ["AppIcon.appiconset"]
+    assert not list(assets.glob("AppIcon*Preview.imageset"))
+    config = json.loads((primary / "Contents.json").read_text())
+    for entry in config["images"]:
+        if "filename" in entry:
+            raw = (primary / entry["filename"]).read_bytes()
             assert raw[:8] == b'\x89PNG\r\n\x1a\n'
-            size = 60 * int(item["scale"][0])
-            assert struct.unpack(">II", raw[16:24]) == (size, size)
-        assert (assets / (icon + "Preview.imageset") / "preview.png").exists()
-    assert "AdaptiveIconSettings(manager: adaptiveIcons)" in (IOS / "MainView.swift").read_text()
+            width, height = struct.unpack(">II", raw[16:24])
+            assert width == height == 1024
+    project = (IOS.parent / "project.yml").read_text()
+    assert 'CFBundleDisplayName: "QAZ TRAIL"' in project
+    assert "PRODUCT_BUNDLE_IDENTIFIER: kz.huntmap.field" in project
+    assert "ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES" not in project
+    assert not (IOS / "AdaptiveIconManager.swift").exists()
+    assert "AdaptiveIconSettings" not in (IOS / "MainView.swift").read_text()
 
 
 def test_offline_manager_defers_catalog_render_and_storage_probe():
@@ -334,3 +330,16 @@ def test_map_annotation_groups_and_track_stats_are_incremental():
     assert "fix.segmentStart == true" in native
     assert "currentTrack?.appendFix(" in field
     assert "cachedStatistics = nil" in field
+
+
+def test_startup_releases_ui_and_gps_preserves_active_sessions():
+    startup = (IOS / "StartupSync.swift").read_text()
+    field = (IOS / "FieldModel.swift").read_text()
+    main = (IOS / "MainView.swift").read_text()
+    assert "Task.sleep(for: .milliseconds(700))" in startup
+    assert "releaseTask?.cancel()" in startup
+    assert "(recording && !paused) || navigatingRecordedTrack || monitoredGroundID != nil" in field
+    assert "foregroundGPS || background" in field
+    assert "manager.stopUpdatingLocation()" in field
+    assert "model.setForegroundGPS(phase == .active)" in main
+    assert "onCancelStartup: { startupSync.skip() }" in main

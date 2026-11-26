@@ -112,12 +112,11 @@ jobs:
           import plistlib, sys, pathlib, re
           with open(sys.argv[1], "rb") as f:
               info = plistlib.load(f)
-          source = pathlib.Path("iOS/HuntMap/AdaptiveIconManager.swift").read_text()
-          expected = {"AppIcon"+name for name in re.findall(r'\.init\(id: "(\w+)", label:', source) if name != "Original"}
-          actual = set(info.get("CFBundleIcons", {}).get("CFBundleAlternateIcons", {}))
-          assert len(expected) == 38 and expected == actual, (expected-actual, actual-expected)
-          assert info["CFBundleIcons"].get("CFBundlePrimaryIcon")
-          print("PASS: original icon and 38 registered alternate icons")
+          icons = info.get("CFBundleIcons", {})
+          assert not icons.get("CFBundleAlternateIcons"), "Unexpected alternate icons"
+          assert icons.get("CFBundlePrimaryIcon")
+          assert info.get("CFBundleDisplayName") == "QAZ TRAIL"
+          print("PASS: QAZ TRAIL, single primary icon")
           PY
           /usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Info.plist"
           OUT="$RUNNER_TEMP/unsigned-output"

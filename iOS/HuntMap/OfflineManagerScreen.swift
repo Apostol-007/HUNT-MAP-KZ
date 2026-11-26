@@ -6,6 +6,7 @@ struct OfflineManagerScreen: View {
     @ObservedObject var protomaps: ProtomapsOfflineStore
     @ObservedObject var valhalla: ValhallaRoutingStore
     let startupBusy: Bool
+    var onCancelStartup: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
     @State private var filter: Filter = .all
     @State private var query = ""
@@ -132,7 +133,10 @@ struct OfflineManagerScreen: View {
                     start { await hosting.refresh(); if !Task.isCancelled { await protomaps.refresh() } }
                 }.disabled(locked)
             }
-            if startupBusy { Text("Синхронизация при запуске ещё выполняется.").font(.caption).foregroundStyle(.orange) }
+            if startupBusy {
+                Text("Синхронизация выполняется в фоне.").font(.caption).foregroundStyle(.orange)
+                HuntAction(title: "Остановить синхронизацию", symbol: "stop.circle") { onCancelStartup() }
+            }
         }
     }
     private var progress: some View {

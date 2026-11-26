@@ -173,15 +173,11 @@ final class HuntSmokeTests: XCTestCase {
         }
     }
 
-    func testIconSettingsNavigation() throws {
+    func testSingleIconMenu() throws {
         let app = openApp()
         app.buttons["tab_Ещё"].tap()
-        let entry = app.buttons["icon_settings_open"]
-        for _ in 0..<5 { if entry.isHittable { break }; app.swipeUp() }
-        XCTAssertTrue(entry.isHittable)
-        entry.tap()
-        XCTAssertTrue(app.navigationBars["Значок приложения"].waitForExistence(timeout:15))
-        capture("15-icon-settings", app:app)
+        XCTAssertFalse(app.buttons["icon_settings_open"].exists)
+        XCTAssertFalse(app.buttons["Значок приложения"].exists)
     }
 
     func testRepeatedColdLaunch() throws {

@@ -58,7 +58,7 @@ struct DiagnosticsView: View {
             ? "GPS approximate: \(String(format: "%.2f", model.coordinate!.latitude)), \(String(format: "%.2f", model.coordinate!.longitude))"
             : "GPS coordinates: REDACTED"
         return """
-        HUNT MAP KZ — diagnostic report
+        QAZ TRAIL — diagnostic report
         Build: \(releaseVersion)
         \(screenGeometry)
         Captured UTC: \(ISO8601DateFormatter().string(from: Date()))
@@ -150,7 +150,7 @@ struct DiagnosticsView: View {
                     Text(report).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
                 }
                 Section {
-                    ShareLink(item: report, subject: Text("HUNT MAP KZ · диагностика"), message: Text("Отчёт для анализа ошибки")) {
+                    ShareLink(item: report, subject: Text("QAZ TRAIL · диагностика"), message: Text("Отчёт для анализа ошибки")) {
                         Label("Поделиться отчётом / ChatGPT", systemImage: "square.and.arrow.up")
                     }
                     Button {
@@ -178,7 +178,7 @@ struct AboutHuntView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("HUNT MAP KZ") {
+                Section("QAZ TRAIL") {
                     Text("Версия приложения: \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "неизвестна") · Offline First")
                     Text("Навигатор для маршрутов, пользовательских меток и проверки геозон Казахстана. Данные о границах и животных не являются юридическим разрешением на охоту.")
                 }

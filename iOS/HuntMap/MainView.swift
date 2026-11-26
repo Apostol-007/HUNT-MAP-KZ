@@ -26,8 +26,6 @@ struct MainView: View {
     @StateObject private var weather = WeatherService()
     @StateObject private var observations = ObservationStore()
     @StateObject private var weatherGrid = WeatherGridService()
-    @StateObject private var adaptiveIcons = AdaptiveIconManager()
-    @State private var showIconSettings = false
     @State private var didPrefetchWeather = false
 
     @AppStorage("hunt.onlineBasemap") private var online = true
@@ -164,33 +162,25 @@ struct MainView: View {
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
         .onAppear {
             HuntPerformance.shared.start()
+            model.setForegroundGPS(scenePhase == .active)
             startupSync.begin(hosting: hosting, tiles: maps, protomaps: protomaps,
                               model: model, valhalla: valhalla)
         }
         .task(id: startupSync.presented) {
             // Keep the startup contract: prefetch only after the launch gate releases.
             guard !startupSync.presented, !didPrefetchWeather else { return }
+            HuntPerformance.shared.markReady()
             do { try await Task.sleep(for: .seconds(2)) } catch { return }
             guard !Task.isCancelled, !startupSync.presented, !didPrefetchWeather else { return }
             didPrefetchWeather = true
-            HuntPerformance.shared.markReady()
             if weatherLayer == .none { weatherGrid.load(hourOffset: 0) }
-        }
-        .task(id: startupSync.presented) {
-            guard !startupSync.presented else { return }
-            do { try await Task.sleep(for: .seconds(3)) } catch { return }
-            while !Task.isCancelled {
-                if scenePhase == .active {
-                    adaptiveIcons.update(forecast: weather.forecast, coordinate: model.coordinate)
-                }
-                do { try await Task.sleep(for: .seconds(60)) } catch { return }
-            }
         }
         .onChange(of: tab) { _, value in
             if value == .services { refreshWeatherOnLaunch() }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { HuntPerformance.shared.start() } else { HuntPerformance.shared.stop() }
+            model.setForegroundGPS(phase == .active)
             if phase == .active && tab == .services { refreshWeatherOnLaunch() }
         }
         .onChange(of: connectivity.connected) { _, connected in
@@ -432,11 +422,8 @@ struct MainView: View {
         .onChange(of: showOfflineManager) { _, shown in if shown { HuntPerformance.shared.markOfflineOpening() } }
         .sheet(isPresented: $showOfflineManager) {
             OfflineManagerScreen(hosting: hosting, tiles: maps, protomaps: protomaps, valhalla: valhalla,
-                startupBusy: startupSync.presented || startupSync.isDownloading)
+                startupBusy: startupSync.presented || startupSync.isDownloading, onCancelStartup: { startupSync.skip() })
                 .huntModal()
-        }
-        .sheet(isPresented: $showIconSettings) {
-            AdaptiveIconSettings(manager: adaptiveIcons).huntModal()
         }
         .sheet(isPresented: $showAbout) { AboutHuntView().huntModal() }
         .sheet(isPresented: $showLegalLibrary) { LegalLibraryView().huntModal() }
@@ -501,7 +488,7 @@ struct MainView: View {
                     .font(.system(size: 31, weight: .bold))
                     .foregroundStyle(HuntReference.green)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("HUNT MAP KZ").font(.system(size: 19, weight: .bold))
+                    Text("QAZ TRAIL").font(.system(size: 19, weight: .bold))
                     Text("Охота · Карты · Навигация")
                         .font(.system(size: 11))
                         .foregroundStyle(HuntReference.muted)
@@ -1847,7 +1834,6 @@ struct MainView: View {
                 ReferenceMenuRow(symbol: "location.north.circle", title: "Полевой режим") { showFieldMode = true }
                 ReferenceMenuRow(symbol: "cross.case", title: "Экстренная помощь") { showEmergency = true }
                 ReferenceMenuRow(symbol: "externaldrive", title: "Офлайн-карты") { showOfflineManager = true }.accessibilityIdentifier("offline_manager_open")
-                ReferenceMenuRow(symbol: "app.badge", title: "Значок приложения") { showIconSettings = true }.accessibilityIdentifier("icon_settings_open")
                 ReferenceMenuRow(symbol: "gearshape", title: "Настройки") { showSettings = true }.accessibilityIdentifier("settings_open")
                 Divider().overlay(HuntReference.separator)
                 ReferenceMenuRow(symbol: "info.circle", title: "О приложении") { showAbout = true }
@@ -1857,7 +1843,7 @@ struct MainView: View {
                 Image(systemName: "shield.lefthalf.filled")
                     .font(.system(size: 50, weight: .bold))
                     .foregroundStyle(HuntReference.green)
-                Text("HUNT MAP KZ").font(.headline.bold())
+                Text("QAZ TRAIL").font(.headline.bold())
                 Text("Версия \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "неизвестна")")
                     .font(.caption).foregroundStyle(HuntReference.muted)
             }

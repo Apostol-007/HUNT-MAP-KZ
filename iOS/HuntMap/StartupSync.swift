@@ -15,11 +15,17 @@ import Network
     private var started = false
     private var cancelled = false
     private var startupTask: Task<Void, Never>?
+    private var releaseTask: Task<Void, Never>?
 
     func begin(hosting: HostingOfflineDownloads, tiles: OfflineTileStore,
                protomaps: ProtomapsOfflineStore, model: FieldModel,
                valhalla: ValhallaRoutingStore) {
         guard startupTask == nil, !cancelled else { return }
+        isDownloading = true
+        releaseTask = Task {
+            do { try await Task.sleep(for: .milliseconds(700)) } catch { return }
+            presented = false
+        }
         startupTask = Task {
             await start(hosting: hosting, tiles: tiles, protomaps: protomaps,
                         model: model, valhalla: valhalla)
@@ -29,6 +35,7 @@ import Network
     func skip() {
         cancelled = true
         startupTask?.cancel()
+        releaseTask?.cancel()
         presented = false
     }
 
@@ -53,7 +60,7 @@ import Network
                valhalla: ValhallaRoutingStore) async {
         guard !started else { return }
         started = true
-        defer { isDownloading = false; presented = false }
+        defer { releaseTask?.cancel(); isDownloading = false; presented = false }
         guard !cancelled, !Task.isCancelled else { return }
         guard await internetAvailable() else {
             AppDiagnosticLog.shared.record(severity: "info", subsystem: "Загрузка",
@@ -214,7 +221,7 @@ struct StartupSyncScreen: View {
                     .padding(30)
                     .background(.mint.opacity(0.09), in: Circle())
                 VStack(spacing: 8) {
-                    Text("HUNT MAP KZ").font(.system(size: 31, weight: .bold, design: .rounded))
+                    Text("QAZ TRAIL").font(.system(size: 31, weight: .bold, design: .rounded))
                     Text(sync.title).font(.headline).foregroundStyle(.white.opacity(0.85))
                     Text(sync.detail).font(.subheadline).foregroundStyle(.white.opacity(0.64))
                         .lineLimit(2).multilineTextAlignment(.center)

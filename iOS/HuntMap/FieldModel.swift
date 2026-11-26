@@ -105,6 +105,20 @@ struct LocalData: Codable {
     @Published var gpsAuthorization = "не определено"
     @Published var lastError = ""
     private let manager=CLLocationManager()
+    private var foregroundGPS = true
+    private var needsContinuousGPS: Bool { (recording && !paused) || navigatingRecordedTrack || monitoredGroundID != nil }
+    func setForegroundGPS(_ active: Bool) {
+        foregroundGPS = active
+        reconcileGPS()
+    }
+    private func reconcileGPS() {
+        let authorized = manager.authorizationStatus == .authorizedAlways || manager.authorizationStatus == .authorizedWhenInUse
+        let background = manager.authorizationStatus == .authorizedAlways && needsContinuousGPS
+        manager.allowsBackgroundLocationUpdates = background
+        manager.pausesLocationUpdatesAutomatically = !needsContinuousGPS
+        if authorized && (foregroundGPS || background) { manager.startUpdatingLocation() }
+        else { manager.stopUpdatingLocation() }
+    }
     private var engine=BoundaryEngine()
     @Published private(set) var monitoredGroundID: String?
     @Published private(set) var groundMonitorStatus = "Контроль выключен"
@@ -192,10 +206,7 @@ struct LocalData: Codable {
 
     func stopRecordedRouteGuidance() {
         navigatingRecordedTrack = false
-        if !recording && monitoredGroundID == nil {
-            manager.allowsBackgroundLocationUpdates = false
-            manager.pausesLocationUpdatesAutomatically = true
-        }
+        reconcileGPS()
     }
 
     func startTrack() {
@@ -230,6 +241,7 @@ struct LocalData: Codable {
         if !paused { recoveredSession=false }
         lastFix = nil // A paused interval must not create a jump when recording resumes.
         status = paused ? "Запись приостановлена" : "Запись продолжена"
+        reconcileGPS()
         persist()
     }
     func stopTrack() {
@@ -239,7 +251,7 @@ struct LocalData: Codable {
         currentTrack=nil;recording=false;paused=false
         lastFix=nil
         if manager.allowsBackgroundLocationUpdates && !navigatingRecordedTrack && monitoredGroundID == nil { manager.allowsBackgroundLocationUpdates=false }
-        manager.pausesLocationUpdatesAutomatically = !navigatingRecordedTrack && monitoredGroundID == nil
+        reconcileGPS()
         persist()
     }
     func addMarker(kind:String="Точка") {
@@ -340,10 +352,7 @@ struct LocalData: Codable {
     func stopGroundMonitor() {
         monitoredGroundID = nil
         groundMonitorStatus = "Контроль выключен"
-        if !recording && !navigatingRecordedTrack {
-            manager.allowsBackgroundLocationUpdates = false
-            manager.pausesLocationUpdatesAutomatically = true
-        }
+        reconcileGPS()
     }
     private func checkSelectedGround(_ fix: CLLocation, point: GeoPoint) {
         guard let id = monitoredGroundID, let ground = zones.first(where: { $0.id == id }) else { return }
@@ -420,7 +429,7 @@ struct LocalData: Codable {
             }
             lastWarning=message
             let notification=UNMutableNotificationContent()
-            notification.title="HUNT MAP KZ";notification.body=message;notification.sound = .default
+            notification.title="QAZ TRAIL";notification.body=message;notification.sound = .default
             UNUserNotificationCenter.current().add(UNNotificationRequest(identifier:UUID().uuidString,content:notification,trigger:nil))
         }
     }
@@ -431,13 +440,7 @@ struct LocalData: Codable {
             operation: "Получение координат", error: error)
     }
     func locationManagerDidChangeAuthorization(_ manager:CLLocationManager) {
-        if manager.authorizationStatus == .authorizedAlways || manager.authorizationStatus == .authorizedWhenInUse {
-            if manager.authorizationStatus == .authorizedAlways && (navigatingRecordedTrack || monitoredGroundID != nil) {
-                manager.allowsBackgroundLocationUpdates = true
-                manager.pausesLocationUpdatesAutomatically = false
-            }
-            manager.startUpdatingLocation()
-        }
+        reconcileGPS()
         gpsAuthorization = String(describing: manager.authorizationStatus.rawValue)
         if manager.authorizationStatus == .denied {status="Нет разрешения геолокации"; lastError=status}
     }
@@ -498,7 +501,7 @@ struct LocalData: Codable {
             if split { segmentIndex += 1 }
             return (split ? "</trkseg><trkseg>" : "") + "<trkpt lat=\"\(fix.point.latitude)\" lon=\"\(fix.point.longitude)\">\(elevation)<time>\(formatter.string(from:fix.timestamp))</time></trkpt>"
         }.joined()
-        let data="<?xml version=\"1.0\" encoding=\"UTF-8\"?><gpx version=\"1.1\" creator=\"HUNT MAP KZ\" xmlns=\"http://www.topografix.com/GPX/1/1\"><trk><name>\(xml(track.name))</name><trkseg>\(points)</trkseg></trk></gpx>"
+        let data="<?xml version=\"1.0\" encoding=\"UTF-8\"?><gpx version=\"1.1\" creator=\"QAZ TRAIL\" xmlns=\"http://www.topografix.com/GPX/1/1\"><trk><name>\(xml(track.name))</name><trkseg>\(points)</trkseg></trk></gpx>"
         let url=FileManager.default.temporaryDirectory.appendingPathComponent("route-\(track.id).gpx")
         do {try data.write(to:url,atomically:true,encoding:.utf8);return url} catch {return nil}
     }

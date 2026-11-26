@@ -108,6 +108,8 @@ struct OfflineMapView: UIViewRepresentable {
 
     static func dismantleUIView(_ container: UIView, coordinator: Coordinator) {
         coordinator.windOverlay?.configure(grid: nil, enabled: false)
+        coordinator.fieldOverlay?.configure(grid: nil, layer: .none)
+        if let observer = coordinator.tilesReadyObserver { NotificationCenter.default.removeObserver(observer); coordinator.tilesReadyObserver = nil }
         coordinator.map?.delegate = nil
     }
 
@@ -712,7 +714,7 @@ private enum OfflineMapStyle {
         // Explicitly empty sources means rendering a blank map when no offline package is present.
         // Never substitute an internet basemap.
         let json = """
-        {"version":8,"name":"HUNT MAP KZ strict offline","sources":{},"layers":[{"id":"background","type":"background","paint":{"background-color":"#102332"}}]}
+        {"version":8,"name":"QAZ TRAIL strict offline","sources":{},"layers":[{"id":"background","type":"background","paint":{"background-color":"#102332"}}]}
         """
         do { try Data(json.utf8).write(to: destination, options: [.atomic]) }
         catch { assertionFailure("Could not create offline style: \(error)") }
