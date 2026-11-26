@@ -311,7 +311,8 @@ def test_heavy_offline_work_is_awaited():
     assert "Task.detached(priority: .utility)" in worker
     assert "try await HuntBackgroundWork.append" in hosting
     assert "try await HuntBackgroundWork.digest" in pmtiles
-    assert "try? await hosting.graph" in main
+    assert "try await hosting.graph" in main
+    assert "try Task.checkCancellation()" in main
     assert "async throws -> OfflineRouteGraph" in hosting
     assert "try await HuntBackgroundWork.run { try graph.path" in main
     assert "routeRequestID == requestID, routeDestination == destination" in main
@@ -409,3 +410,12 @@ def test_track_editor_creates_copies_atomically():
     save = field[field.index("func saveEditedTracks"):field.index("func deleteTrack")]
     assert save.index("try writeSnapshot(snapshot)") < save.index("tracks = snapshot.tracks")
     assert "Редактировать копию" in (IOS / "MainView.swift").read_text()
+
+
+def test_address_route_planner_uses_selected_origin():
+    main = (IOS / "MainView.swift").read_text()
+    assert "guard let current = origin ?? model.coordinate" in main
+    assert "origin: addressOrigin?.point" in main
+    assert "origin: plannedOrigin" in main
+    assert "refreshNextTurn(at: plannedOrigin ?? model.coordinate ?? current)" in main
+    assert "Маршрут от GPS" in main
