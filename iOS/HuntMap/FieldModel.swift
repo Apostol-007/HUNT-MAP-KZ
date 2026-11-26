@@ -339,6 +339,18 @@ struct LocalData: Codable {
         markers.removeAll { $0.id == id }
         persist()
     }
+    /// Commit all generated copies together, without changing any source track.
+    func saveEditedTracks(_ copies: [Track]) throws {
+        guard fieldStorageReadable, !copies.isEmpty,
+              copies.allSatisfy({ $0.fixes.count >= 2 && $0.fixes.allSatisfy { $0.point.valid } }),
+              Set(copies.map(\.id)).count == copies.count,
+              !copies.contains(where: { copy in tracks.contains(where: { $0.id == copy.id }) || currentTrack?.id == copy.id })
+        else { throw CocoaError(.fileWriteUnknown) }
+        var snapshot = backupSnapshot()
+        snapshot.tracks.insert(contentsOf: copies, at: 0)
+        try writeSnapshot(snapshot)
+        tracks = snapshot.tracks
+    }
     func deleteTrack(id: UUID) {
         tracks.removeAll { $0.id == id }
         persist()

@@ -20,6 +20,7 @@ struct MainView: View {
     @State private var measurementPoints: [GeoPoint] = []
     @State private var measurementMoveIndex: Int?
     @State private var profileTrack: Track?
+    @State private var editingTrack: Track?
     @State private var measurementArchive = MeasurementArchive()
     @StateObject private var animals = WildlifeStore()
     @StateObject private var connectivity = WeatherConnectivity()
@@ -406,6 +407,9 @@ struct MainView: View {
                 onStorage: { showSettings = false; showOfflineManager = true },
                 onDiagnostics: { showSettings = false; showDiagnostics = true })
                 .huntModal()
+        }
+        .sheet(item: $editingTrack) { track in
+            TrackEditScreen(model: model, source: track).huntModal()
         }
         .sheet(item: $profileTrack) { track in
             TrackProfileScreen(track: track, onMap: { point in
@@ -1631,6 +1635,7 @@ struct MainView: View {
             }
             Spacer(minLength: 2)
             Menu {
+                Button("Редактировать копию", systemImage: "scissors") { editingTrack = track }.disabled(track.fixes.count < 2)
                 Button("Профиль высот", systemImage: "chart.xyaxis.line") { profileTrack = track }
                 Button("Показать на карте", systemImage: "map") {
                     showRecordedTrack(track, direction: .forward, follow: false)

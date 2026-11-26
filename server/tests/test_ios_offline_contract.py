@@ -388,3 +388,14 @@ def test_course_up_and_explicit_azimuth():
     assert 'АЗИМУТ · НЕ ДОРОЖНЫЙ МАРШРУТ' in ui
     assert "private func beginAzimuth" in ui
     assert "navigationPath = []" in ui[ui.index("private func beginAzimuth"):ui.index("private var navigationPanel")]
+
+
+def test_track_editor_creates_copies_atomically():
+    editor = (IOS / "TrackEditScreen.swift").read_text()
+    field = (IOS / "FieldModel.swift").read_text()
+    assert "TrackEdit.trim" in editor and "TrackEdit.split" in editor and "TrackEdit.join" in editor
+    assert "copy.segmentStart = true" in editor
+    assert "try model.saveEditedTracks(copies)" in editor
+    save = field[field.index("func saveEditedTracks"):field.index("func deleteTrack")]
+    assert save.index("try writeSnapshot(snapshot)") < save.index("tracks = snapshot.tracks")
+    assert "Редактировать копию" in (IOS / "MainView.swift").read_text()
