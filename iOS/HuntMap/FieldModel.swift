@@ -99,6 +99,8 @@ struct LocalData: Codable {
     @Published private(set) var recordedGuidanceResult: TrackReturnTracker.Result?
     private var recordedTracker: TrackReturnTracker?
     private lazy var navigationVoice = NavigationVoice()
+    func speakRouteInstruction(_ message: String) { navigationVoice.speakRoute(message) }
+    func silenceRouteVoice() { navigationVoice.reset() }
     @discardableResult
     func beginRecordedGuidance(points: [GeoPoint]) -> Bool {
         guard let tracker = TrackReturnTracker(points: points) else { return false }
