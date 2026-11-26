@@ -106,6 +106,13 @@ struct MainView: View {
     @State private var valhallaManeuvers: [ValhallaManeuver] = []
     @State private var nextTurnText = ""
     @State private var nextTurnDistance = 0.0
+    @AppStorage("hunt.navigation.voice") private var routeVoiceEnabled = true
+    @State private var routeCumulative: [Double] = []
+    @State private var routeRemainingMeters = 0.0
+    @State private var routeDurationSeconds: Double?
+    @State private var announcedManeuver = -1
+    @State private var announcedStage = 0
+    @State private var recordedAverageSpeed = 4.5
     @State private var routingError: String?
     @State private var importingRoutingNetwork = false
     @State private var legacyRouteTask: Task<Void, Never>?
@@ -223,6 +230,7 @@ struct MainView: View {
                     navigationKind = "Вы достигли точки назначения"
                     routeGuidance = false
                     model.stopRecordedRouteGuidance()
+                    model.speakRouteInstruction("Вы достигли точки назначения.")
                     return
                 }
                 refreshNextTurn(at: position)
@@ -888,6 +896,14 @@ struct MainView: View {
                     }
                 }
                 Spacer(minLength: 0)
+                Button {
+                    routeVoiceEnabled.toggle()
+                    if !routeVoiceEnabled { model.silenceRouteVoice() }
+                    else if !recordedRouteFollowing { model.speakRouteInstruction(nextTurnText.isEmpty ? "Голосовые подсказки включены" : nextTurnText) }
+                } label: {
+                    Image(systemName: routeVoiceEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                        .font(.title3).padding(8)
+                }.accessibilityLabel(routeVoiceEnabled ? "Выключить голос" : "Включить голос")
             }.padding(12).background(HuntReference.card.opacity(0.97), in: RoundedRectangle(cornerRadius: 14))
             HStack {
                 Spacer()
@@ -907,9 +923,10 @@ struct MainView: View {
                         Text(returnStatus).font(.caption.bold()).foregroundStyle(.orange)
                         Text(String(format: "По треку: %.2f км", recordedRouteRemaining / 1000)).font(.headline.monospacedDigit())
                     } else { Text(routeTitle).font(.headline).lineLimit(1) }
+                    routeETA(at: clock.date)
                     HStack {
                         if fresh, let speed = model.fieldSpeed, speed.isFinite, speed >= 0 {
-                            Text(String(format: "%.0f км/ч", speed * 3.6)).font(.caption.monospacedDigit())
+                            Text(String(format: "%.0f км/ч", speed)).font(.caption.monospacedDigit())
                         }
                         Spacer()
                         if model.recording {
@@ -952,6 +969,11 @@ struct MainView: View {
         routeDestination = destination
         routeTitle = title
         navigationTargetID = markerID
+        routeCumulative = []
+        routeRemainingMeters = 0
+        routeDurationSeconds = nil
+        announcedManeuver = -1
+        announcedStage = 0
         valhallaManeuvers = []
         nextTurnText = ""
         tab = .map
@@ -973,7 +995,8 @@ struct MainView: View {
                     guard routeRequestID == requestID, routeDestination == destination else { return }
                     navigationPath = result.path
                     valhallaManeuvers = result.maneuvers
-                    refreshNextTurn(at: current)
+                    prepareRouteEstimate(path: result.path, duration: result.durationSeconds)
+                    refreshNextTurn(at: model.coordinate ?? current)
                     navigationKind = chosenMode == .foot ? "Valhalla · пешком" : "Valhalla · автомобиль"
                     routingError = nil
                 } catch {
@@ -1017,6 +1040,8 @@ struct MainView: View {
                 guard route.count >= 2 else { throw OfflineRouteGraph.RouteError.disconnected }
                 routeGraphCount = graph.count
                 navigationPath = route
+                prepareRouteEstimate(path: route, duration: nil)
+                refreshNextTurn(at: model.coordinate ?? current)
                 navigationKind = mode == .foot ? "Локальный граф · пешком" : "Локальный граф · автомобиль"
                 routingError = nil
             } catch {
@@ -1031,24 +1056,98 @@ struct MainView: View {
         }
     }
 
-    private func refreshNextTurn(at location: GeoPoint) {
-        guard navigationPath.count >= 2, !valhallaManeuvers.isEmpty else { return }
-        // Progress is projected onto the received road geometry, not a straight-line route.
-        var closestIndex = 0
-        var closestMeters = Double.infinity
-        for (index, point) in navigationPath.enumerated() {
-            let d = GeoMath.meters(location, point)
-            if d < closestMeters { closestMeters = d; closestIndex = index }
+    private func prepareRouteEstimate(path: [GeoPoint], duration: Double?) {
+        var cumulative = [0.0]
+        for (a, b) in zip(path, path.dropFirst()) {
+            cumulative.append(cumulative.last! + GeoMath.meters(a, b))
         }
-        let upcoming = valhallaManeuvers.first(where: { $0.beginIndex > closestIndex }) ??
-            valhallaManeuvers.last!
-        nextTurnText = upcoming.instruction
-        nextTurnDistance = 0
-        if closestIndex < upcoming.beginIndex {
-            for index in (closestIndex + 1)...upcoming.beginIndex {
-                nextTurnDistance += GeoMath.meters(navigationPath[index - 1], navigationPath[index])
+        routeCumulative = cumulative
+        routeRemainingMeters = cumulative.last ?? 0
+        routeDurationSeconds = duration
+    }
+
+    private var remainingTravelSeconds: Double? {
+        if recordedRouteFollowing {
+            return recordedRouteRemaining / max(1, recordedAverageSpeed) * 3.6
+        }
+        guard let total = routeCumulative.last, total > 0 else { return nil }
+        if let duration = routeDurationSeconds {
+            return duration * min(1, max(0, routeRemainingMeters / total))
+        }
+        return routeRemainingMeters / (travelMode == .foot ? 4.5 : 40) * 3.6
+    }
+
+    private func travelTimeText(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0, seconds < 31_536_000 else { return "—" }
+        let minutes = Int(ceil(seconds / 60))
+        return minutes >= 60 ? "\(minutes / 60) ч \(minutes % 60) мин" : "\(minutes) мин"
+    }
+
+    private func routeETA(at date: Date) -> some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(remainingTravelSeconds.map { travelTimeText($0) } ?? "—")
+                    .font(.title2.bold()).monospacedDigit()
+                Text("Осталось").font(.caption2)
+            }
+            Spacer(minLength: 4)
+            VStack(alignment: .center, spacing: 2) {
+                Text(String(format: "%.1f км", (recordedRouteFollowing ? recordedRouteRemaining : routeRemainingMeters) / 1000))
+                    .font(.headline.monospacedDigit())
+                Text("По маршруту").font(.caption2)
+            }
+            Spacer(minLength: 4)
+            VStack(alignment: .trailing, spacing: 2) {
+                if let seconds = remainingTravelSeconds {
+                    Text(date.addingTimeInterval(seconds), format: .dateTime.hour().minute())
+                        .font(.headline.monospacedDigit())
+                } else { Text("—").font(.headline) }
+                Text("Прибытие ≈").font(.caption2)
+            }
+        }.accessibilityIdentifier("route_eta")
+    }
+
+    private func refreshNextTurn(at location: GeoPoint) {
+        guard navigationPath.count >= 2, routeCumulative.count == navigationPath.count,
+              let total = routeCumulative.last else { return }
+        let longitudeScale = cos(location.latitude * .pi / 180)
+        var best = Double.infinity
+        var progress = 0.0
+        for index in 1..<navigationPath.count {
+            let a = navigationPath[index - 1], b = navigationPath[index]
+            let x = (a.longitude - location.longitude) * longitudeScale
+            let y = a.latitude - location.latitude
+            let dx = (b.longitude - a.longitude) * longitudeScale
+            let dy = b.latitude - a.latitude
+            let denominator = dx * dx + dy * dy
+            let fraction = denominator > 0 ? min(1, max(0, -(x * dx + y * dy) / denominator)) : 0
+            let distance = pow(x + fraction * dx, 2) + pow(y + fraction * dy, 2)
+            if distance < best {
+                best = distance
+                progress = routeCumulative[index - 1] + fraction * (routeCumulative[index] - routeCumulative[index - 1])
             }
         }
+        routeRemainingMeters = max(0, total - progress)
+        let valid = valhallaManeuvers.filter { routeCumulative.indices.contains($0.beginIndex) }
+        guard let upcoming = valid.first(where: { routeCumulative[$0.beginIndex] >= progress - 5 && $0.beginIndex > 0 }) ?? valid.last else {
+            nextTurnText = "Следуйте по линии маршрута"
+            nextTurnDistance = 0
+            return
+        }
+        nextTurnText = upcoming.instruction
+        nextTurnDistance = max(0, routeCumulative[upcoming.beginIndex] - progress)
+        guard routeGuidance, routeVoiceEnabled else { return }
+        if announcedManeuver != upcoming.beginIndex {
+            announcedManeuver = upcoming.beginIndex
+            announcedStage = 0
+        }
+        let near = travelMode == .car ? 50.0 : 20.0
+        let far = travelMode == .car ? 300.0 : 100.0
+        let stage = nextTurnDistance <= near ? 2 : (nextTurnDistance <= far ? 1 : 0)
+        guard stage > announcedStage else { return }
+        announcedStage = stage
+        let prefix = nextTurnDistance <= 10 ? "" : "Через \(Int(nextTurnDistance.rounded())) метров. "
+        model.speakRouteInstruction(prefix + upcoming.instruction)
     }
 
     private func stopNavigation() {
@@ -1056,6 +1155,9 @@ struct MainView: View {
         legacyRouteTask?.cancel()
         valhallaManeuvers = []
         nextTurnText = ""
+        routeCumulative = []
+        routeDurationSeconds = nil
+        routeRemainingMeters = 0
         routeRequestID = nil
         navigationTargetID = nil
         routeDestination = nil
@@ -1104,6 +1206,8 @@ struct MainView: View {
         recordedRoutePreviewIndex = 0
         recordedRouteProgress = 0
         recordedRouteRemaining = route.remainingFrom[0]
+        let recordedSpeed = track.durationSeconds > 0 ? recordedRouteRemaining / track.durationSeconds * 3.6 : 4.5
+        recordedAverageSpeed = recordedSpeed.isFinite && recordedSpeed >= 1 ? recordedSpeed : 4.5
         recordedRouteDeviation = 0
         recordedRouteFollowing = follow
         navigationPath = route.points
@@ -1353,6 +1457,7 @@ struct MainView: View {
                                 distance, bearing(to: destination, from: current)))
                         .font(.caption.monospacedDigit())
                 }
+                if !routeCumulative.isEmpty { routeETA(at: Date()) }
                 if routeGuidance {
                     Label("Ведение включено", systemImage: "location.north.line.fill")
                         .font(.caption.bold()).foregroundStyle(HuntReference.green)
@@ -1368,6 +1473,9 @@ struct MainView: View {
                         rerouteTime = Date()
                         model.startRecordedRouteGuidance()
                         if let position = model.coordinate { refreshNextTurn(at: position) }
+                        if announcedStage == 0 {
+                            model.speakRouteInstruction(valhallaManeuvers.first?.instruction ?? "Следуйте по линии маршрута.")
+                        }
                     } label: {
                         Label("В путь", systemImage: "location.north.line.fill")
                             .font(.headline.bold()).frame(maxWidth: .infinity).frame(minHeight: 46)
