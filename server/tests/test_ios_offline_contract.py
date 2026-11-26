@@ -376,3 +376,15 @@ def test_recorded_navigation_updates_from_gps_not_view():
     assert "timestamp.timeIntervalSince($0) >= 120" in voice
     assert "UNUserNotificationCenter.current()" in voice
     assert "hunt.navigation.voice" in (IOS / "HuntSettingsScreen.swift").read_text()
+
+
+def test_course_up_and_explicit_azimuth():
+    native = (IOS / "OfflineMapView.swift").read_text()
+    ui = (IOS / "MainView.swift").read_text()
+    assert "view.setDirection(course, animated: animated)" in native
+    assert "Date().timeIntervalSince(fixTime) < 30" in native
+    assert "(model.fieldSpeed ?? 0) >= 3.6" in ui
+    assert 'ForEach(["Автомобиль", "Лагерь"]' in ui
+    assert 'АЗИМУТ · НЕ ДОРОЖНЫЙ МАРШРУТ' in ui
+    assert "private func beginAzimuth" in ui
+    assert "navigationPath = []" in ui[ui.index("private func beginAzimuth"):ui.index("private var navigationPanel")]

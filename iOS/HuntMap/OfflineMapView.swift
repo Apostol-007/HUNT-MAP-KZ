@@ -33,6 +33,8 @@ struct OfflineMapView: UIViewRepresentable {
     var followsGPS = false
     var followPosition: GeoPoint? = nil
     var followFixTime: Date? = nil
+    var courseUp = false
+    var gpsCourse: Double? = nil
     var centerRequest: Int = 0
     var zoomCommand: Int = 0
     var overviewCommand: Int = 0
@@ -170,6 +172,7 @@ struct OfflineMapView: UIViewRepresentable {
         context.coordinator.fitCountryIfNeeded(view: view, command: overviewCommand)
         context.coordinator.fitGroundIfNeeded(view: view, command: groundFitRequest, ground: zones.first(where: { $0.id == highlightedGroundID }))
         context.coordinator.followGPS(view: view, enabled: followsGPS, position: followPosition, fixTime: followFixTime)
+        context.coordinator.applyCourse(view: view, enabled: courseUp && followsGPS, course: gpsCourse, fixTime: followFixTime)
     }
 
     final class Coordinator: NSObject, MLNMapViewDelegate, UIGestureRecognizerDelegate {
@@ -402,6 +405,7 @@ struct OfflineMapView: UIViewRepresentable {
         private var centeredOnGPS = false
         private var lastFollowPoint: GeoPoint?
         private var followingGPS = false
+        private var courseWasEnabled = false
         private var followValidUntil = Date.distantPast
         private var recentering = false
         private var appliedCenterRequest = 0
@@ -442,6 +446,22 @@ struct OfflineMapView: UIViewRepresentable {
             lastFollowPoint = position
             let center = CLLocationCoordinate2D(latitude: position.latitude, longitude: position.longitude)
             view.setCenter(center, zoomLevel: initial ? max(14, view.zoomLevel) : view.zoomLevel, animated: !initial && !UIAccessibility.isReduceMotionEnabled)
+        }
+
+        func applyCourse(view: MLNMapView, enabled: Bool, course: Double?, fixTime: Date?) {
+            let animated = !UIAccessibility.isReduceMotionEnabled
+            if !enabled {
+                if courseWasEnabled { view.setDirection(0, animated: animated) }
+                courseWasEnabled = false
+                return
+            }
+            courseWasEnabled = true
+            guard let course, course.isFinite, course >= 0, course < 360,
+                  let fixTime, Date().timeIntervalSince(fixTime) >= -5,
+                  Date().timeIntervalSince(fixTime) < 30 else { return }
+            let delta = abs((course - view.direction + 540).truncatingRemainder(dividingBy: 360) - 180)
+            guard delta >= 5 else { return }
+            view.setDirection(course, animated: animated)
         }
 
         func applyCameraCommands(view: MLNMapView, position: GeoPoint?, centerRequest: Int, zoomCommand: Int) {

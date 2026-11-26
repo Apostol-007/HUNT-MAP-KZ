@@ -30,6 +30,10 @@ struct MainView: View {
     @State private var didCleanExports = false
 
     @AppStorage("hunt.onlineBasemap") private var online = true
+    @AppStorage("hunt.navigation.courseUp") private var courseUp = false
+    @State private var showReturnPoints = false
+    @State private var returnPointMessage = ""
+    @State private var azimuthMode = false
     @AppStorage("hunt.map.style") private var mapStyle = MapBasemap.protomaps.rawValue
     private var hasMapTilerKey: Bool { MapTilerConfiguration.isConfigured }
 
@@ -273,6 +277,7 @@ struct MainView: View {
     private var mapPresentation: some View {
         importLayout
         .sheet(isPresented: $showLayers) { layerSheet.huntModal() }
+        .sheet(isPresented: $showReturnPoints) { returnPointsSheet.huntModal() }
         .sheet(isPresented: $showSearch) { mapSearchSheet.huntModal() }
         .sheet(item: $selectedMapMarker) { selection in
             MapMarkerDetails(markerID: selection.id, model: model,
@@ -627,6 +632,8 @@ struct MainView: View {
                            followsGPS: (model.recording && !model.paused) || routeGuidance || recordedRouteFollowing,
                            followPosition: model.fieldFixTime.map { Date().timeIntervalSince($0) < 30 && Date().timeIntervalSince($0) >= -5 } == true ? model.coordinate : nil,
                            followFixTime: model.fieldFixTime,
+                           courseUp: courseUp,
+                           gpsCourse: (model.fieldSpeed ?? 0) >= 3.6 ? model.fieldCourse : nil,
                            centerRequest: centerRequest,
                            zoomCommand: zoomCommand,
                            overviewCommand: overviewCommand,
@@ -726,6 +733,10 @@ struct MainView: View {
                             centerRequest += 1
                         }
                         Spacer().frame(height: 8)
+                        circleMapButton(courseUp ? "location.north.line.fill" : "location.north", label: courseUp ? "По курсу" : "Север сверху") {
+                            courseUp.toggle()
+                        }
+                        circleMapButton("mappin.and.ellipse", label: "Автомобиль и лагерь") { showReturnPoints = true }
                         circleMapButton("plus", label: "Приблизить") { zoomCommand += 1 }
                         circleMapButton("minus", label: "Отдалить") { zoomCommand -= 1 }
                     }
@@ -870,6 +881,7 @@ struct MainView: View {
         planRoute(to: marker.coordinate, title: marker.title, markerID: id)
     }
     private func planRoute(to destination: GeoPoint, title: String, markerID: UUID? = nil) {
+        azimuthMode = false
         legacyRouteTask?.cancel()
         routeRequestID = nil
         if recordedRoute != nil { stopRecordedTrack() }
@@ -974,6 +986,7 @@ struct MainView: View {
     }
 
     private func stopNavigation() {
+        azimuthMode = false
         legacyRouteTask?.cancel()
         valhallaManeuvers = []
         nextTurnText = ""
@@ -1163,6 +1176,60 @@ struct MainView: View {
         return Int((atan2(y, x) * 180 / .pi + 360).truncatingRemainder(dividingBy: 360).rounded()) % 360
     }
 
+    private var returnPointsSheet: some View {
+        NavigationStack {
+            List {
+                Section("Сохранить текущую GPS-позицию") {
+                    ForEach(["Автомобиль", "Лагерь"], id: \.self) { kind in
+                        Button("Сохранить: " + kind) {
+                            guard let point = model.coordinate, let time = model.fieldFixTime,
+                                  Date().timeIntervalSince(time) >= -5, Date().timeIntervalSince(time) < 30,
+                                  let accuracy = model.accuracy, accuracy >= 0, accuracy <= 30 else {
+                                returnPointMessage = "Нужна свежая GPS-позиция с точностью до 30 м."
+                                model.requestGPS()
+                                return
+                            }
+                            model.addMarker(at: point, kind: kind)
+                            returnPointMessage = "Точка добавлена в список меток."
+                        }
+                    }
+                    if !returnPointMessage.isEmpty { Text(returnPointMessage).font(.caption) }
+                }
+                Section("Возвращение к сохранённой точке") {
+                    ForEach(model.markers.filter { $0.kind == "Автомобиль" || $0.kind == "Лагерь" }) { marker in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(marker.title).font(.headline)
+                            Button("По дорогам") {
+                                showReturnPoints = false
+                                planRoute(to: marker.coordinate, title: marker.title, markerID: marker.id)
+                            }
+                            Button("По азимуту") {
+                                showReturnPoints = false
+                                beginAzimuth(to: marker.coordinate, title: marker.title, markerID: marker.id)
+                            }
+                        }
+                    }
+                }
+                Text("Азимут показывает направление по прямой, а не безопасный проходимый маршрут. Учитывайте препятствия и границы.").font(.caption)
+            }
+            .navigationTitle("Точки возвращения")
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Готово") { showReturnPoints = false } } }
+        }
+    }
+
+    private func beginAzimuth(to destination: GeoPoint, title: String, markerID: UUID?) {
+        stopNavigation()
+        if recordedRoute != nil { stopRecordedTrack() }
+        azimuthMode = true
+        routeDestination = destination
+        routeTitle = title
+        navigationTargetID = markerID
+        navigationKind = "Азимут · направление по прямой"
+        navigationPath = []
+        tab = .map
+        model.requestGPS()
+    }
+
     private var navigationPanel: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let destination = routeDestination {
@@ -1175,6 +1242,21 @@ struct MainView: View {
                         Image(systemName: "xmark.circle.fill").font(.title3)
                     }
                 }
+                if azimuthMode {
+                    Text("АЗИМУТ · НЕ ДОРОЖНЫЙ МАРШРУТ").font(.caption.bold()).foregroundStyle(.orange)
+                    if let current = model.coordinate, let time = model.fieldFixTime,
+                       Date().timeIntervalSince(time) >= -5, Date().timeIntervalSince(time) < 30,
+                       let accuracy = model.accuracy, accuracy >= 0, accuracy <= 50 {
+                        let distance = GeoMath.meters(current, destination)
+                        Text(String(format: "%.0f м · %d° от севера", distance, bearing(to: destination, from: current)))
+                            .font(.title2.monospacedDigit().bold())
+                        if distance <= 15 && accuracy <= 10 {
+                            Text("Вы рядом с сохранённой точкой").font(.caption)
+                        }
+                    } else { Text("Ожидание точной GPS-позиции").font(.caption) }
+                    Text("Не пересекайте препятствия по прямой.").font(.caption)
+                    Button("Завершить") { stopNavigation() }.buttonStyle(.bordered)
+                } else {
                 HStack(spacing: 9) {
                     Button {
                         travelMode = .car
@@ -1231,6 +1313,10 @@ struct MainView: View {
                 if navigationPath.count < 2 {
                     Text("Для навигации необходима загруженная дорожная сеть.")
                         .font(.caption2).foregroundStyle(.secondary)
+                }
+                Button("Показать азимут вместо маршрута") {
+                    beginAzimuth(to: destination, title: routeTitle, markerID: navigationTargetID)
+                }.font(.caption)
                 }
             }
         }

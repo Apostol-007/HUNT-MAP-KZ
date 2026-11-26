@@ -77,6 +77,7 @@ struct HuntSettingsScreen:View {
     @AppStorage("hunt.map.style") private var style="protomaps"
     @AppStorage("hunt.weather.windMS") private var windMS=false
     @AppStorage("hunt.navigation.voice") private var voiceGuidance=true
+    @AppStorage("hunt.navigation.courseUp") private var courseUp=false
     @AppStorage("hunt.weather.pressureMMHG") private var pressureMMHG=false
     @State private var importing=false
     @State private var pending:BackupContents?
@@ -97,6 +98,7 @@ struct HuntSettingsScreen:View {
                 }
                 Section("GPS и навигация") {
                     Toggle("Голосовое сопровождение маршрута", isOn: $voiceGuidance)
+                    Toggle("Поворот карты по курсу движения", isOn: $courseUp)
                     Text("На экране используется установленный русский голос iOS. В фоне — звуковые уведомления при отклонении и прибытии, если разрешены.").font(.caption)
                     Text(model.status)
                     Text(model.gpsAuthorization).font(.caption)
