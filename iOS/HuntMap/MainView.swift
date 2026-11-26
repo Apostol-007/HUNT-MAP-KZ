@@ -67,6 +67,10 @@ struct MainView: View {
     @State private var addressDestination: AddressHit?
     @State private var plannedOrigin: GeoPoint?
     @State private var addressResults: [AddressHit] = []
+    @State private var addressIndex = OfflineAddressIndex()
+    @State private var importingAddressIndex = false
+    @State private var addressIndexReady = false
+    @State private var addressIndexStatus = ""
     @State private var addressRequest: UUID?
     @State private var addressLoading = false
     @State private var addressMessage = ""
@@ -1613,6 +1617,20 @@ struct MainView: View {
         addressMessage = ""
         defer { if addressRequest == requestID { addressLoading = false } }
         let number = houseNumber(query)
+        let local: [OfflineAddressIndex.Hit]
+        do {
+            local = try await addressIndex.search(words: addressWords(query).filter { !$0.contains(where: \.isNumber) }, house: number)
+        } catch {
+            local = []
+            addressIndexStatus = error.localizedDescription
+        }
+        guard !Task.isCancelled, addressRequest == requestID else { return }
+        let offlineHits = local.map { AddressHit(title: $0.title, address: $0.address, latitude: $0.latitude, longitude: $0.longitude, house: $0.house) }
+        addressResults = offlineHits
+        if !offlineHits.isEmpty || !connectivity.connected {
+            if offlineHits.isEmpty { addressMessage = "В локальной базе адрес не найден." }
+            return
+        }
         let request = MKLocalSearch.Request()
         request.naturalLanguageQuery = query + ", Казахстан"
         request.resultTypes = number == nil ? [.address, .pointOfInterest] : [.address]
@@ -1715,19 +1733,31 @@ struct MainView: View {
         }.padding(12).background(HuntReference.card, in: RoundedRectangle(cornerRadius: 16))
     }
 
+    private var addressIndexControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(addressIndexReady ? "Офлайн-адреса установлены" : "Офлайн-адреса не загружены", systemImage: addressIndexReady ? "checkmark.circle" : "arrow.down.circle")
+                .font(.caption)
+            Button("Импорт базы адресов SQLite") { importingAddressIndex = true }
+                .font(.caption).buttonStyle(.bordered)
+            if !addressIndexStatus.isEmpty { Text(addressIndexStatus).font(.caption) }
+            Text("Данные адресов: © OpenStreetMap contributors, ODbL").font(.caption2)
+        }
+    }
+
     private var mapSearchSheet: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     addressRoutePlanner
+                    addressIndexControls
                     HuntSearchField(text: $searchText, placeholder: "Город, улица, дом, место")
                     Button { addressRequest = UUID() } label: {
                         Label("Найти адрес", systemImage: "magnifyingglass")
                             .frame(maxWidth: .infinity)
                     }.buttonStyle(.borderedProminent)
-                    .disabled(searchText.trimmingCharacters(in: .whitespacesAndNewlines).count < 3 || !connectivity.connected || addressLoading)
+                    .disabled(searchText.trimmingCharacters(in: .whitespacesAndNewlines).count < 3 || (!connectivity.connected && !addressIndexReady) || addressLoading)
                     if !connectivity.connected {
-                        Text("Без интернета доступны ранее найденные адреса, метки и угодья.")
+                        Text(addressIndexReady ? "Офлайн-поиск по загруженной базе адресов." : "Загрузите базу для поиска новых адресов без интернета.")
                             .font(.caption).foregroundStyle(HuntReference.muted)
                     }
                     if addressLoading { ProgressView("Поиск адресов…") }
@@ -1765,9 +1795,25 @@ struct MainView: View {
                 }.padding(16)
             }
             .background(HuntReference.background)
+            .task { addressIndexReady = await addressIndex.isInstalled() }
             .task(id: addressRequest) {
                 if let id = addressRequest {
                     await findAddresses(searchText.trimmingCharacters(in: .whitespacesAndNewlines), requestID: id)
+                }
+            }
+            .fileImporter(isPresented: $importingAddressIndex, allowedContentTypes: [.data], allowsMultipleSelection: false) { result in
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else { return }
+                    Task {
+                        addressIndexStatus = "Установка базы…"
+                        do {
+                            try await addressIndex.install(url)
+                            addressIndexReady = true
+                            addressIndexStatus = "Адресная база установлена"
+                        } catch { addressIndexStatus = error.localizedDescription }
+                    }
+                case .failure(let error): addressIndexStatus = error.localizedDescription
                 }
             }
             .onChange(of: searchText) { _, _ in
