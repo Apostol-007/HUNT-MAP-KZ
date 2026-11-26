@@ -336,8 +336,15 @@ def test_startup_releases_ui_and_gps_preserves_active_sessions():
     startup = (IOS / "StartupSync.swift").read_text()
     field = (IOS / "FieldModel.swift").read_text()
     main = (IOS / "MainView.swift").read_text()
-    assert "Task.sleep(for: .milliseconds(700))" in startup
-    assert "releaseTask?.cancel()" in startup
+    app = (IOS / "HuntMapApp.swift").read_text()
+    assert "var presented = false" in startup
+    assert "presented = true" not in startup
+    assert "Task.sleep(for: .seconds(3))" in startup
+    assert "await state.loadAtStartup()" in app
+    assert "enter && state.startupLoaded" in app
+    assert "Task.detached(priority: .utility)" in field
+    assert "hunt.startup.autoDownloadPackages" in startup
+    assert startup.index("hunt.startup.autoDownloadPackages") < startup.index("await protomaps.downloadAllAvailable()")
     assert "(recording && !paused) || navigatingRecordedTrack || monitoredGroundID != nil" in field
     assert "foregroundGPS || background" in field
     assert "manager.stopUpdatingLocation()" in field
