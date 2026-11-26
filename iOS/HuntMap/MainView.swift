@@ -192,6 +192,7 @@ struct MainView: View {
         }
         .onChange(of: tab) { _, value in
             if value == .services { refreshWeatherOnLaunch() }
+            if value == .map { nativePacks.restore() }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { HuntPerformance.shared.start() } else { HuntPerformance.shared.stop() }
