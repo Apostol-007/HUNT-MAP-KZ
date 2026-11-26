@@ -1550,6 +1550,7 @@ struct MainView: View {
         let address: String
         let latitude: Double
         let longitude: Double
+        var house: String? = nil
         var id: String { "\(latitude),\(longitude),\(title)" }
         var point: GeoPoint { GeoPoint(latitude, longitude) }
     }
@@ -1558,10 +1559,37 @@ struct MainView: View {
         (try? JSONDecoder().decode([AddressHit].self, from: Data(addressHistoryJSON.utf8))) ?? []
     }
 
+    // Preserve fractional numbers and suffixes, including Cyrillic/Latin equivalents.
+    private func normalizedHouse(_ value: String) -> String {
+        value.lowercased().replacingOccurrences(of: "а", with: "a")
+            .replacingOccurrences(of: "б", with: "b")
+            .replacingOccurrences(of: "в", with: "v")
+            .replacingOccurrences(of: "с", with: "c")
+            .replacingOccurrences(of: " ", with: "")
+    }
+
+    private func houseNumber(_ query: String) -> String? {
+        let pattern = #"(?<![\p{L}\d])\d+[\p{L}]?(?:\s*[/\-]\s*\d+[\p{L}]?)?(?![\p{L}\d])"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.matches(in: query, range: NSRange(query.startIndex..., in: query)).last,
+              let range = Range(match.range, in: query) else { return nil }
+        return normalizedHouse(String(query[range]))
+    }
+
+    private func addressWords(_ value: String) -> [String] {
+        value.lowercased().split(whereSeparator: { $0.isWhitespace || $0 == "," || $0 == "." })
+            .map(String.init).filter { !["ул", "улица", "пр", "проспект", "д", "дом", "г", "город"].contains($0) }
+    }
+
     private var cachedAddressMatches: [AddressHit] {
-        let words = searchText.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        let number = houseNumber(searchText)
+        let words = addressWords(searchText).filter { !$0.contains(where: \.isNumber) }
         return Array(addressHistory.filter { hit in
-            words.allSatisfy { (hit.title + " " + hit.address).localizedCaseInsensitiveContains($0) }
+            let text = hit.title + " " + hit.address
+            guard words.allSatisfy({ text.localizedCaseInsensitiveContains($0) }) else { return false }
+            guard let number else { return true }
+            // Old cached records lack structured house numbers; do not treat them as exact.
+            return hit.house == number
         }.prefix(20))
     }
 
@@ -1578,33 +1606,37 @@ struct MainView: View {
         addressResults = []
         addressMessage = ""
         defer { if addressRequest == requestID { addressLoading = false } }
+        let number = houseNumber(query)
         let request = MKLocalSearch.Request()
         request.naturalLanguageQuery = query + ", Казахстан"
-        request.resultTypes = [.address, .pointOfInterest]
+        request.resultTypes = number == nil ? [.address, .pointOfInterest] : [.address]
         request.region = MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 48, longitude: 67),
                                             span: MKCoordinateSpan(latitudeDelta: 16, longitudeDelta: 44))
         let search = MKLocalSearch(request: request)
+        var hits: [AddressHit] = []
         do {
             let response = try await withTaskCancellationHandler(operation: {
                 try await search.start()
             }, onCancel: { search.cancel() })
             guard !Task.isCancelled, addressRequest == requestID else { return }
-            var seen = Set<String>()
-            addressResults = response.mapItems.compactMap { item -> AddressHit? in
+            hits = response.mapItems.compactMap { item in
                 let p = item.placemark
-                if let country = p.isoCountryCode, country != "KZ" { return nil }
-                let coordinate = p.coordinate
-                guard CLLocationCoordinate2DIsValid(coordinate) else { return nil }
+                guard p.isoCountryCode == "KZ", CLLocationCoordinate2DIsValid(p.coordinate) else { return nil }
+                let house = p.subThoroughfare.map(normalizedHouse)
+                if let number, house != number { return nil }
                 let address = p.title ?? item.name ?? query
-                let hit = AddressHit(title: item.name ?? address, address: address,
-                                     latitude: coordinate.latitude, longitude: coordinate.longitude)
-                return seen.insert(hit.id).inserted ? hit : nil
+                return AddressHit(title: item.name ?? address, address: address,
+                                  latitude: p.coordinate.latitude, longitude: p.coordinate.longitude, house: house)
             }
-            rememberAddresses(addressResults)
-            if addressResults.isEmpty { addressMessage = "Адрес не найден. Уточните город, улицу и номер дома." }
         } catch {
             guard !Task.isCancelled, addressRequest == requestID else { return }
-            addressMessage = "Не удалось получить адреса. Проверьте интернет или уточните запрос."
+        }
+        guard !Task.isCancelled, addressRequest == requestID else { return }
+        var seen = Set<String>()
+        addressResults = hits.filter { seen.insert($0.id).inserted }
+        rememberAddresses(addressResults)
+        if addressResults.isEmpty {
+            addressMessage = number == nil ? "Адрес не найден. Уточните город и улицу." : "Точный номер дома не найден. Укажите город и улицу. Соседние дома не подставляются."
         }
     }
 
