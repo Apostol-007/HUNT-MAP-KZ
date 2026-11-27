@@ -71,6 +71,9 @@ struct MainView: View {
     @State private var importingAddressIndex = false
     @State private var addressIndexReady = false
     @State private var addressIndexStatus = ""
+    @State private var addressIndexSummary = ""
+    @State private var nearestAddressText = ""
+    @State private var showNearestAddress = false
     @State private var addressIndexDownloading = false
     @State private var addressRequest: UUID?
     @State private var addressLoading = false
@@ -335,6 +338,21 @@ struct MainView: View {
                 pendingMapPoint = nil
                 pendingMapZone = nil
             }
+            Button("Определить ближайший адрес") {
+                guard let point = pendingMapPoint else { return }
+                pendingMapPoint = nil
+                pendingMapZone = nil
+                Task {
+                    do {
+                        if let hit = try await addressIndex.nearest(latitude: point.latitude, longitude: point.longitude) {
+                            nearestAddressText = hit.address
+                        } else {
+                            nearestAddressText = "В радиусе 300 м адрес не найден или база не установлена."
+                        }
+                    } catch { nearestAddressText = error.localizedDescription }
+                    showNearestAddress = true
+                }
+            }
             Button("Поставить метку") {
                 if let point = pendingMapPoint {
                     creatingMapMarker = Marker(title: "Моя метка", kind: "Точка", coordinate: point)
@@ -359,6 +377,9 @@ struct MainView: View {
 
     private var editingPresentation: some View {
         AnyView(mapPresentation)
+        .alert("Ближайший адрес", isPresented: $showNearestAddress) {
+            Button("Закрыть", role: .cancel) {}
+        } message: { Text(nearestAddressText) }
         .sheet(item: $creatingMapMarker) { marker in
             MarkerEditor(marker: marker, isNew: true,
                          onSave: { changed in
@@ -699,6 +720,7 @@ struct MainView: View {
                                    movingMarkerID = nil
                                } else {
                                    pendingMapPoint = point
+                                   nearestAddressText = ""
                                    pendingMapZone = model.zones.first(where: { $0.contains(point) })
                                    if showGrounds, let ground = pendingMapZone {
                                        highlightedGroundID = ground.id
@@ -1748,7 +1770,8 @@ struct MainView: View {
                     do {
                         try await addressIndex.downloadFromHosting()
                         addressIndexReady = true
-                        addressIndexStatus = "Адресная база установлена"
+                        addressIndexSummary = await addressIndex.installedSummary()
+                        addressIndexStatus = "Адресная база актуальна"
                     } catch { addressIndexStatus = error.localizedDescription }
                 }
             }.buttonStyle(.borderedProminent)
@@ -1757,6 +1780,7 @@ struct MainView: View {
             Button("Импорт базы адресов SQLite") { importingAddressIndex = true }
                 .disabled(addressIndexDownloading)
                 .font(.caption).buttonStyle(.bordered)
+            if !addressIndexSummary.isEmpty { Text(addressIndexSummary).font(.caption) }
             if !addressIndexStatus.isEmpty { Text(addressIndexStatus).font(.caption) }
             Text("Данные адресов: © OpenStreetMap contributors, ODbL").font(.caption2)
         }
@@ -1813,7 +1837,16 @@ struct MainView: View {
                 }.padding(16)
             }
             .background(HuntReference.background)
-            .task { addressIndexReady = await addressIndex.isInstalled() }
+            .task {
+                addressIndexReady = await addressIndex.isInstalled()
+                addressIndexSummary = await addressIndex.installedSummary()
+            }
+            .task(id: searchText) {
+                guard addressIndexReady, searchText.trimmingCharacters(in: .whitespacesAndNewlines).count >= 3 else { return }
+                do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
+                guard !Task.isCancelled else { return }
+                addressRequest = UUID()
+            }
             .task(id: addressRequest) {
                 if let id = addressRequest {
                     await findAddresses(searchText.trimmingCharacters(in: .whitespacesAndNewlines), requestID: id)
