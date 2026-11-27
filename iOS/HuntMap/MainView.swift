@@ -449,7 +449,8 @@ struct MainView: View {
         .onChange(of: showOfflineManager) { _, shown in if shown { HuntPerformance.shared.markOfflineOpening() } }
         .sheet(isPresented: $showOfflineManager) {
             OfflineManagerScreen(hosting: hosting, tiles: maps, protomaps: protomaps, valhalla: valhalla,
-                startupBusy: startupSync.presented || startupSync.isDownloading, onCancelStartup: { startupSync.skip() })
+                startupBusy: startupSync.presented || startupSync.isDownloading, onCancelStartup: { startupSync.skip() },
+                addressControls: AnyView(addressIndexControls), onAddressAppear: { addressIndexReady = await addressIndex.isInstalled() })
                 .huntModal()
         }
         .sheet(isPresented: $showAbout) { AboutHuntView().huntModal() }

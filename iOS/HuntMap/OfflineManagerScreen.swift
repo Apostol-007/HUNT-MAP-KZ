@@ -7,6 +7,8 @@ struct OfflineManagerScreen: View {
     @ObservedObject var valhalla: ValhallaRoutingStore
     let startupBusy: Bool
     var onCancelStartup: () -> Void = {}
+    var addressControls: AnyView? = nil
+    var onAddressAppear: () async -> Void = {}
     @Environment(\.dismiss) private var dismiss
     @State private var filter: Filter = .all
     @State private var query = ""
@@ -38,6 +40,7 @@ struct OfflineManagerScreen: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     summary
+                    if let addressControls { addressControls.huntSurface() }
                     controls
                     if hosting.busy || protomaps.busy || job != nil { progress }
                     if showPackages {
@@ -76,6 +79,7 @@ struct OfflineManagerScreen: View {
             do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
             guard !Task.isCancelled else { return }
             showPackages = true
+            await onAddressAppear()
             let free = await Task.detached(priority: .utility) {
                 let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
                 return try? folder?.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage
