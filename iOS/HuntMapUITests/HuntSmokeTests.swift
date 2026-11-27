@@ -15,23 +15,22 @@ final class HuntSmokeTests: XCTestCase {
     private func openApp() -> XCUIApplication {
         let app = XCUIApplication()
         app.launch()
-        let skip = app.buttons["startup_skip"]
         let home = app.buttons["tab_Главная"]
         let deadline = Date().addingTimeInterval(90)
+        // Startup no longer exposes a transient, automatically disappearing button.
+        // Wait for the actual interactive home screen instead of tapping an overlay.
         var ready = false
         while Date() < deadline {
-            // A visible startup gate always takes precedence over underlying controls.
-            if skip.exists {
-                if skip.isHittable { skip.tap() }
-            } else if home.exists && home.isHittable && home.isEnabled {
+            if app.state == .runningForeground && home.exists && home.isHittable && home.isEnabled {
                 ready = true
                 break
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.5))
         }
-        XCTAssertTrue(ready, "Startup gate did not release navigation")
-        XCTAssertFalse(skip.exists, "Startup screen still covers the application")
-        XCTAssertTrue(home.isHittable && home.isEnabled)
+        if !ready { capture("failure-startup", app: app) }
+        XCTAssertTrue(ready, "Home screen did not become interactive")
+        XCTAssertEqual(app.state, .runningForeground)
+        XCTAssertFalse(app.buttons["startup_skip"].exists, "Unexpected blocking startup overlay")
         return app
     }
 

@@ -76,7 +76,12 @@ struct AppDiagnosticEvent: Codable, Identifiable, Sendable {
                      endpoint: String = "", usedCache: Bool = false) {
         let ns = error as NSError
         let (cause, action): (String, String)
-        if ns.domain == NSURLErrorDomain {
+        if error is CancellationError || (ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled) { return }
+        if ns.domain == "kCLErrorDomain" && ns.code == 0 {
+            (cause, action) = ("Координаты временно недоступны", "Дождаться следующего GPS-сигнала")
+        } else if ns.domain == NSCocoaErrorDomain && ns.code == 260 {
+            (cause, action) = ("Локальный файл отсутствует", "Проверить установку необходимого пакета")
+        } else if ns.domain == NSURLErrorDomain {
             switch ns.code {
             case NSURLErrorNotConnectedToInternet:
                 (cause, action) = ("Нет доступа к интернету", "Показать кеш и повторить при восстановлении сети")
@@ -96,7 +101,7 @@ struct AppDiagnosticEvent: Codable, Identifiable, Sendable {
         } else {
             (cause, action) = ("Сбой обработки данных или локальной операции", "Проверить схему, размер файла и декодирование")
         }
-        record(subsystem: subsystem, operation: operation,
+        record(severity: ns.domain == "kCLErrorDomain" && ns.code == 0 ? "warning" : "error", subsystem: subsystem, operation: operation,
                code: "\(ns.domain) \(ns.code)", rootCause: cause, nextAction: action,
                details: "iOS: \(String(ns.localizedDescription.prefix(150))); cache: \(usedCache ? "available" : "empty")",
                endpoint: endpoint)

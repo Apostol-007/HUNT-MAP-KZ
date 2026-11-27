@@ -2,6 +2,17 @@ name: HUNT MAP KZ - unsigned iOS IPA
 
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        description: 'IPA only or full verification'
+        type: choice
+        options: [ipa, full]
+        default: ipa
+      runner:
+        description: 'macOS runner architecture'
+        type: choice
+        options: [macos-15-intel, macos-15, macos-26-intel, macos-26]
+        default: macos-15-intel
   pull_request:
     paths:
       - 'iOS/**'
@@ -10,7 +21,7 @@ on:
       - 'scripts/**'
       - '.github/workflows/ios-unsigned-ipa.yml'
   push:
-    branches: [main, 'ci/**']
+    branches: [main]
     paths:
       - 'iOS/**'
       - 'Core/**'
@@ -20,8 +31,8 @@ on:
       - '.github/workflows/ios-unsigned-ipa.yml'
 
 concurrency:
-  group: hunt-ios-${{ startsWith(github.ref, 'refs/heads/ci/') && 'candidate' || github.ref }}
-  cancel-in-progress: ${{ startsWith(github.ref, 'refs/heads/ci/') }}
+  group: hunt-ios-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'full' }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -29,6 +40,7 @@ permissions:
 jobs:
   verify:
     name: Swift Core and server tests
+    if: github.event_name != 'workflow_dispatch' || inputs.mode == 'full'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -49,27 +61,24 @@ jobs:
 
   ios:
     name: Compile iOS and package unsigned IPA
-    needs: [verify, simulator]
-    runs-on: macos-15
+    runs-on: ${{ inputs.runner || 'macos-15-intel' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Show Xcode version
         run: xcodebuild -version
       - name: Install XcodeGen
-        run: brew install xcodegen
+        run: command -v xcodegen >/dev/null || brew install xcodegen
       - name: Generate Xcode project
         working-directory: iOS
         run: xcodegen generate --spec project.yml
-      - name: Show schemes
-        working-directory: iOS
-        run: xcodebuild -list -project HuntMapKZ.xcodeproj
-      - name: Resolve Swift packages
-        working-directory: iOS
-        run: |
-          xcodebuild -resolvePackageDependencies \
-            -project HuntMapKZ.xcodeproj \
-            -scheme HuntMapKZ
+      - name: Cache Swift package downloads
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/HuntPackages
+          key: hunt-spm-device-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('iOS/project.yml', 'Core/Package.swift') }}
+          restore-keys: |
+            hunt-spm-device-v1-${{ runner.os }}-${{ runner.arch }}-
       - name: Build for physical iPhone without signing
         working-directory: iOS
         env:
@@ -84,6 +93,7 @@ jobs:
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -derivedDataPath "$RUNNER_TEMP/HuntBuild" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/HuntPackages" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY='' \
@@ -131,6 +141,7 @@ jobs:
           path: ${{ runner.temp }}/unsigned-output/HUNT_MAP_KZ_unsigned.ipa
           if-no-files-found: error
           retention-days: 14
+          compression-level: 0
       - name: Upload build log for diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -142,16 +153,23 @@ jobs:
 
   simulator:
     name: iOS simulator smoke tests
-    needs: verify
-    runs-on: macos-15
+    if: github.event_name != 'workflow_dispatch' || inputs.mode == 'full'
+    runs-on: ${{ inputs.runner || 'macos-15-intel' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Generate Xcode project
         working-directory: iOS
         run: |
-          brew install xcodegen
+          command -v xcodegen >/dev/null || brew install xcodegen
           xcodegen generate --spec project.yml
+      - name: Cache simulator Swift packages
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/HuntSimulatorPackages
+          key: hunt-spm-simulator-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('iOS/project.yml', 'Core/Package.swift') }}
+          restore-keys: |
+            hunt-spm-simulator-v1-${{ runner.os }}-${{ runner.arch }}-
       - name: Select available iPhone simulator
         run: |
           set -euo pipefail
@@ -171,6 +189,7 @@ jobs:
             -parallel-testing-enabled NO \
             -resultBundlePath "$RUNNER_TEMP/hunt-ui.xcresult" \
             -derivedDataPath "$RUNNER_TEMP/HuntSimulatorBuild" \
+            -clonedSourcePackagesDirPath "$RUNNER_TEMP/HuntSimulatorPackages" \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
             test 2>&1 | tee "$RUNNER_TEMP/ios-ui-test.log"
       - name: Export screenshot attachments

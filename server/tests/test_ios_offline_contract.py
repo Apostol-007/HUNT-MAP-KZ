@@ -187,7 +187,10 @@ def test_user_can_plan_and_follow_without_manual_download_buttons():
     ui = (IOS / "MainView.swift").read_text()
     startup = (IOS / "StartupSync.swift").read_text()
     assert 'Button("Построить маршрут")' in ui
-    assert 'Label("В путь"' in ui
+    assert 'Label(plannedOrigin == nil ? "В путь" : "Маршрут от GPS"' in ui
+    assert '.accessibilityIdentifier("route_start_guidance")' in ui
+    assert "if plannedOrigin != nil" in ui
+    assert "routeGuidance = true" in ui
     assert 'Label("Авто"' in ui and 'Label("Пешком"' in ui
     assert 'Скачать Valhalla' not in ui
     assert 'Загрузить карты' not in ui
@@ -311,7 +314,8 @@ def test_heavy_offline_work_is_awaited():
     assert "Task.detached(priority: .utility)" in worker
     assert "try await HuntBackgroundWork.append" in hosting
     assert "try await HuntBackgroundWork.digest" in pmtiles
-    assert "try? await hosting.graph" in main
+    assert "try await hosting.graph" in main
+    assert "try Task.checkCancellation()" in main
     assert "async throws -> OfflineRouteGraph" in hosting
     assert "try await HuntBackgroundWork.run { try graph.path" in main
     assert "routeRequestID == requestID, routeDestination == destination" in main
@@ -336,8 +340,18 @@ def test_startup_releases_ui_and_gps_preserves_active_sessions():
     startup = (IOS / "StartupSync.swift").read_text()
     field = (IOS / "FieldModel.swift").read_text()
     main = (IOS / "MainView.swift").read_text()
-    assert "Task.sleep(for: .milliseconds(700))" in startup
-    assert "releaseTask?.cancel()" in startup
+    app = (IOS / "HuntMapApp.swift").read_text()
+    assert "var presented = false" in startup
+    assert "presented = true" not in startup
+    assert "Task.sleep(for: .seconds(3))" in startup
+    assert "await model.loadAtStartup(seedGrounds: !recoveryMode)" in app
+    assert "enter && state.startupLoaded" in app
+    assert "if showMain, let state" in app
+    assert "Безопасный режим" in app
+    assert "hunt.launch.stage" in app
+    assert "Task.detached(priority: .utility)" in field
+    assert "hunt.startup.autoDownloadPackages" in startup
+    assert startup.index("hunt.startup.autoDownloadPackages") < startup.index("await protomaps.downloadAllAvailable()")
     assert "(recording && !paused) || navigatingRecordedTrack || monitoredGroundID != nil" in field
     assert "foregroundGPS || background" in field
     assert "manager.stopUpdatingLocation()" in field
@@ -399,3 +413,12 @@ def test_track_editor_creates_copies_atomically():
     save = field[field.index("func saveEditedTracks"):field.index("func deleteTrack")]
     assert save.index("try writeSnapshot(snapshot)") < save.index("tracks = snapshot.tracks")
     assert "Редактировать копию" in (IOS / "MainView.swift").read_text()
+
+
+def test_address_route_planner_uses_selected_origin():
+    main = (IOS / "MainView.swift").read_text()
+    assert "guard let current = origin ?? model.coordinate" in main
+    assert "origin: addressOrigin?.point" in main
+    assert "origin: plannedOrigin" in main
+    assert "refreshNextTurn(at: plannedOrigin ?? model.coordinate ?? current)" in main
+    assert "Маршрут от GPS" in main

@@ -40,7 +40,10 @@ struct Track: Identifiable, Codable {
             speed:fix.speedMetersPerSecond,segmentStart:fix.segmentStart ?? false)
     }
     var statistics: TrackStatistics {
-        cachedStatistics ?? TrackStatistics.calculate(fixes.map(Self.sample))
+        if let cachedStatistics { return cachedStatistics }
+        var result = TrackStatistics()
+        for (a, b) in zip(fixes, fixes.dropFirst()) { result.append(from: Self.sample(a), to: Self.sample(b)) }
+        return result
     }
     mutating func cacheStatistics() { cachedStatistics = statistics }
     mutating func appendFix(_ fix: TrackFix) {
@@ -95,7 +98,9 @@ struct LocalData: Codable {
     @Published private(set) var navigatingRecordedTrack = false
     @Published private(set) var recordedGuidanceResult: TrackReturnTracker.Result?
     private var recordedTracker: TrackReturnTracker?
-    private let navigationVoice = NavigationVoice()
+    private lazy var navigationVoice = NavigationVoice()
+    func speakRouteInstruction(_ message: String) { navigationVoice.speakRoute(message) }
+    func silenceRouteVoice() { navigationVoice.reset() }
     @discardableResult
     func beginRecordedGuidance(points: [GeoPoint]) -> Bool {
         guard let tracker = TrackReturnTracker(points: points) else { return false }
@@ -126,6 +131,7 @@ struct LocalData: Codable {
     @Published private(set) var groundRevisions: [GroundRevision] = []
     private var deletedGroundIDs: Set<String> = []
     private var fieldStorageReadable = true
+    @Published private(set) var startupLoaded = false
     @Published var strictOffline = true
     @Published var gpsAuthorization = "не определено"
     @Published var lastError = ""
@@ -167,8 +173,7 @@ struct LocalData: Codable {
         manager.delegate=self
         manager.desiredAccuracy=kCLLocationAccuracyBest
         manager.distanceFilter=5
-        load()
-        loadBundledGrounds()
+        // Root view starts loading only after the first SwiftUI frame.
     }
     private func loadBundledGrounds() {
         guard fieldStorageReadable else { return }
@@ -513,6 +518,10 @@ struct LocalData: Codable {
         }
     }
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        if (error as NSError).domain == "kCLErrorDomain" && (error as NSError).code == 0 {
+            if coordinate == nil { status = "Ожидание GPS-сигнала" }
+            return
+        }
         status = "Ошибка GPS: \(error.localizedDescription)"
         lastError = status
         AppDiagnosticLog.shared.recordError(subsystem: "GPS",
@@ -542,36 +551,53 @@ struct LocalData: Codable {
         markers=data.markers;tracks=data.tracks.map { track in var item = track; item.cacheStatistics(); return item };zones=data.zones
         groundRevisions=data.groundRevisions ?? [];deletedGroundIDs=data.deletedGroundIDs ?? []
     }
-    private func load() {
-        guard FileManager.default.fileExists(atPath:documentURL.path) else { return }
-        let obj: LocalData
-        do { obj = try JSONDecoder().decode(LocalData.self,from:Data(contentsOf:documentURL)) }
-        catch { fieldStorageReadable = false; lastError = "Не удалось прочитать field.json. Исходный файл защищён от перезаписи."; return }
-        markers=obj.markers;tracks=obj.tracks.map { track in var item = track; item.cacheStatistics(); return item };zones=obj.zones
-        groundRevisions = obj.groundRevisions ?? []
-        deletedGroundIDs = obj.deletedGroundIDs ?? []
-        // Resume explicitly: never record a straight line over a process interruption.
-        if let pending=obj.pendingTrack {
-            if tracks.contains(where:{$0.id==pending.id}) {
-                persist()
-                return
+    /// Decode and rebuild track caches away from the UI thread. Do not expose
+    /// editing controls until the existing snapshot and journal are restored.
+    func loadAtStartup(seedGrounds: Bool = true) async {
+        guard !startupLoaded else { return }
+        let url = documentURL
+        defer { startupLoaded = true; if seedGrounds { loadBundledGrounds() } }
+        do {
+            let result = try await Task.detached(priority: .utility) { () -> (LocalData?, Bool, String?) in
+                guard FileManager.default.fileExists(atPath: url.path) else { return (nil, false, nil) }
+                var obj = try JSONDecoder().decode(LocalData.self, from: Data(contentsOf: url, options: .mappedIfSafe))
+                for i in obj.tracks.indices { obj.tracks[i].cacheStatistics() }
+                var warning: String?
+                if var pending = obj.pendingTrack {
+                    if obj.tracks.contains(where: { $0.id == pending.id }) {
+                        obj.pendingTrack = nil
+                    } else {
+                        let directory = url.deletingLastPathComponent().appendingPathComponent("TrackJournal", isDirectory: true)
+                            .appendingPathComponent(pending.id.uuidString, isDirectory: true)
+                        do {
+                            let extra = try TrackPointJournal.recover(TrackFix.self, after: pending.fixes.count, directory: directory)
+                            pending.fixes.append(contentsOf: extra)
+                        } catch { warning = error.localizedDescription }
+                        pending.cacheStatistics()
+                        obj.pendingTrack = pending
+                    }
+                }
+                return (obj, obj.pendingTrack != nil, warning)
+            }.value
+            guard let obj = result.0 else { return }
+            markers = obj.markers; tracks = obj.tracks; zones = obj.zones
+            if !zones.isEmpty && lastWarning == "Границы не загружены" {
+                lastWarning = "Загружено контуров: \(zones.count); юридические границы не подтверждены"
             }
-            var recovered = pending
-            do {
-                let extra = try TrackPointJournal.recover(TrackFix.self, after: pending.fixes.count, directory: journalDirectory(pending.id))
-                recovered.fixes.append(contentsOf: extra)
-            } catch {
-                // Never overwrite a damaged journal or silently archive an incomplete track.
+            groundRevisions = obj.groundRevisions ?? []
+            deletedGroundIDs = obj.deletedGroundIDs ?? []
+            if let warning = result.2 {
                 fieldStorageReadable = false
-                lastError = "Журнал маршрута повреждён; исходные файлы сохранены: " + error.localizedDescription
+                lastError = "Журнал маршрута повреждён; исходные файлы сохранены: " + warning
             }
-            recovered.cacheStatistics()
-            currentTrack=recovered
-            recording=true
-            paused=true
-            recoveredSession=true
-            newSegment=true
-            lastWarning="Незавершённая запись восстановлена на паузе. Продолжите или завершите маршрут."
+            if result.1, let pending = obj.pendingTrack {
+                currentTrack = pending; recording = true; paused = true
+                recoveredSession = true; newSegment = true
+                lastWarning = "Незавершённая запись восстановлена на паузе."
+            }
+        } catch {
+            fieldStorageReadable = false
+            lastError = "Не удалось прочитать field.json. Исходный файл защищён от перезаписи."
         }
     }
     private func writeSnapshot(_ data: LocalData) throws {

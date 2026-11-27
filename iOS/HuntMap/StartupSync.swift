@@ -4,7 +4,7 @@ import Network
 
 /// The launch gate never deletes installed content when the network or a manifest fails.
 @MainActor final class StartupSync: ObservableObject {
-    @Published private(set) var presented = true
+    @Published private(set) var presented = false
     @Published private(set) var title = "Проверяем подключение"
     @Published private(set) var detail = "Локальные карты уже доступны"
     @Published private(set) var progress = 0.0
@@ -20,13 +20,10 @@ import Network
     func begin(hosting: HostingOfflineDownloads, tiles: OfflineTileStore,
                protomaps: ProtomapsOfflineStore, model: FieldModel,
                valhalla: ValhallaRoutingStore) {
-        guard startupTask == nil, !cancelled else { return }
+        guard startupTask == nil, !started, !cancelled else { return }
         isDownloading = true
-        releaseTask = Task {
-            do { try await Task.sleep(for: .milliseconds(700)) } catch { return }
-            presented = false
-        }
         startupTask = Task {
+            do { try await Task.sleep(for: .seconds(3)) } catch { return }
             await start(hosting: hosting, tiles: tiles, protomaps: protomaps,
                         model: model, valhalla: valhalla)
         }
@@ -78,7 +75,14 @@ import Network
         await hosting.refresh()
         guard !cancelled else { return }
         await protomaps.refresh()
-        guard !cancelled else { return }
+        guard !cancelled, !Task.isCancelled else { return }
+        // Catalog discovery is lightweight; bulk installation must be explicitly enabled.
+        guard UserDefaults.standard.bool(forKey: "hunt.startup.autoDownloadPackages") else {
+            title = "Каталоги обновлены"
+            detail = "Пакеты доступны в менеджере офлайн-карт"
+            progress = 1
+            return
+        }
         let maps = hosting.maps.filter { pack in
             !tiles.installed.contains { $0.sha256.lowercased() == pack.sha256.lowercased() }
         }

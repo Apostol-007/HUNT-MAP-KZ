@@ -20,10 +20,44 @@ enum ValhallaRoutingError: Error, LocalizedError {
 struct ValhallaManeuver {
     let instruction: String
     let beginIndex: Int
+    let isDestination: Bool
+    let endIndex: Int
+    let durationSeconds: Double?
+
+    static func shortInstruction(type: Int, exit: Int?) -> String {
+        switch type {
+        case 2, 9, 23, 37: return "Держитесь правее"
+        case 3, 16, 24, 38: return "Держитесь левее"
+        case 4, 5, 6: return "Вы приближаетесь к точке назначения"
+        case 10: return "Поверните направо"
+        case 11: return "Резко поверните направо"
+        case 12, 13: return "Развернитесь"
+        case 14: return "Резко поверните налево"
+        case 15: return "Поверните налево"
+        case 18, 20: return "Съезжайте направо"
+        case 19, 21: return "Съезжайте налево"
+        case 25: return "Влейтесь в поток"
+        case 26:
+            let exits = ["первый", "второй", "третий", "четвёртый", "пятый", "шестой", "седьмой", "восьмой"]
+            if let exit, (1...exits.count).contains(exit) { return "На круге выберите \(exits[exit - 1]) съезд" }
+            return "Въезжайте на круг"
+        case 27: return "Съезжайте с круга"
+        case 28: return "Въезжайте на паром"
+        case 29: return "Съезжайте с парома"
+        case 39: return "Воспользуйтесь лифтом"
+        case 40: return "Следуйте по лестнице"
+        case 41: return "Воспользуйтесь эскалатором"
+        case 42: return "Войдите в здание"
+        case 43: return "Выйдите из здания"
+        case 1, 7, 8, 17, 22: return "Продолжайте прямо"
+        default: return "Следуйте по маршруту"
+        }
+    }
 }
 struct ValhallaRouteResult {
     let path: [GeoPoint]
     let maneuvers: [ValhallaManeuver]
+    let durationSeconds: Double?
 }
 
 /// The Valhalla C++ actor is cached inside a Swift actor, never invoked on the main thread.
@@ -113,17 +147,22 @@ actor ValhallaLocalEngine {
             else { output.append(contentsOf: coordinates) }
             if let entries = leg["maneuvers"] as? [[String: Any]] {
                 for entry in entries {
-                    guard let instruction = entry["instruction"] as? String,
-                          let localIndex = entry["begin_shape_index"] as? Int else { continue }
+                    guard let localIndex = entry["begin_shape_index"] as? Int else { continue }
+                    let type = entry["type"] as? Int ?? 0
+                    let instruction = ValhallaManeuver.shortInstruction(type: type, exit: entry["roundabout_exit_count"] as? Int)
                     let position = offset + localIndex
                     if !instruction.isEmpty && (0..<output.count).contains(position) {
-                        maneuvers.append(ValhallaManeuver(instruction: instruction, beginIndex: position))
+                        let end = offset + (entry["end_shape_index"] as? Int ?? localIndex)
+                        let time = entry["time"] as? Double
+                        maneuvers.append(ValhallaManeuver(instruction: instruction, beginIndex: position, isDestination: (4...6).contains(type), endIndex: end, durationSeconds: time))
                     }
                 }
             }
         }
         guard output.count >= 2 else { throw ValhallaRoutingError.emptyRoute }
-        return ValhallaRouteResult(path: output, maneuvers: maneuvers)
+        let seconds = (trip["summary"] as? [String: Any])?["time"] as? Double
+        return ValhallaRouteResult(path: output, maneuvers: maneuvers,
+                                  durationSeconds: seconds.flatMap { $0.isFinite && $0 > 0 ? $0 : nil })
     }
 }
 

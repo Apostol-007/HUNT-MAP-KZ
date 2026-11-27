@@ -1,4 +1,5 @@
 import SwiftUI
+import MapKit
 import HuntCore
 import UniformTypeIdentifiers
 
@@ -62,6 +63,22 @@ struct MainView: View {
     @State private var showGBIF = false
     @State private var showSearch = false
     @State private var searchText = ""
+    @State private var addressOrigin: AddressHit?
+    @State private var addressDestination: AddressHit?
+    @State private var plannedOrigin: GeoPoint?
+    @State private var addressResults: [AddressHit] = []
+    @State private var addressIndex = OfflineAddressIndex()
+    @State private var importingAddressIndex = false
+    @State private var addressIndexReady = false
+    @State private var addressIndexStatus = ""
+    @State private var addressIndexSummary = ""
+    @State private var nearestAddressText = ""
+    @State private var showNearestAddress = false
+    @State private var addressIndexDownloading = false
+    @State private var addressRequest: UUID?
+    @State private var addressLoading = false
+    @State private var addressMessage = ""
+    @AppStorage("hunt.address.history.v1") private var addressHistoryJSON = "[]"
     @State private var selectedRouteFilter = "Все"
     @State private var selectedMarkerFilter = "Все"
     @State private var selectedWildlifeMode = "По угодьям"
@@ -106,6 +123,16 @@ struct MainView: View {
     @State private var valhallaManeuvers: [ValhallaManeuver] = []
     @State private var nextTurnText = ""
     @State private var nextTurnDistance = 0.0
+    @AppStorage("hunt.navigation.voice") private var routeVoiceEnabled = true
+    @State private var routeCumulative: [Double] = []
+    @State private var routeRemainingMeters = 0.0
+    @State private var routeDeviationMeters = Double.infinity
+    @State private var offRouteSince: Date?
+    @State private var routeSegmentTimes: [Double] = []
+    @State private var routeDurationSeconds: Double?
+    @State private var announcedManeuver = -1
+    @State private var announcedStage = 0
+    @State private var recordedAverageSpeed = 4.5
     @State private var routingError: String?
     @State private var importingRoutingNetwork = false
     @State private var legacyRouteTask: Task<Void, Never>?
@@ -131,6 +158,8 @@ struct MainView: View {
 
     var body: some View { featurePresentation }
 
+    private var immersiveNavigation: Bool { tab == .map && (routeGuidance || recordedRouteFollowing) }
+
     private var rootLayout: some View {
         ZStack {
             // Do not allocate the native map during cold launch.
@@ -138,7 +167,7 @@ struct MainView: View {
             if tab != .map { themedScreen }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .safeAreaInset(edge: .bottom, spacing: 0) { navigation }
+        .safeAreaInset(edge: .bottom, spacing: 0) { if !immersiveNavigation { navigation } }
         .accessibilityHidden(startupSync.presented || showFieldMode || showEmergency)
         .allowsHitTesting(!startupSync.presented && !showFieldMode && !showEmergency)
         .overlay {
@@ -164,7 +193,7 @@ struct MainView: View {
     }
 
     private var lifecycleLayout: some View {
-        rootLayout
+        AnyView(rootLayout)
         .onReceive(NotificationCenter.default.publisher(for: .huntShake)) { _ in showDiagnostics = true }
         .onAppear {
             HuntPerformance.shared.start()
@@ -190,6 +219,7 @@ struct MainView: View {
         }
         .onChange(of: tab) { _, value in
             if value == .services { refreshWeatherOnLaunch() }
+            if value == .map { nativePacks.restore() }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { HuntPerformance.shared.start() } else { HuntPerformance.shared.stop() }
@@ -207,7 +237,7 @@ struct MainView: View {
     }
 
     private var guidanceLayout: some View {
-        lifecycleLayout
+        AnyView(lifecycleLayout)
         .onChange(of: model.coordinate) { _, newPoint in
             if tab == .services, forecastPoint == nil, let point = newPoint {
                 weather.updateIfNeeded(latitude: point.latitude, longitude: point.longitude)
@@ -216,20 +246,34 @@ struct MainView: View {
                 planRoute(to: destination, title: routeTitle, markerID: navigationTargetID)
             }
             if let position = newPoint, routeGuidance, let destination = routeDestination {
-                if GeoMath.meters(position, destination) <= max(20, model.accuracy ?? 20) {
-                    navigationKind = "Вы достигли точки назначения"
-                    routeGuidance = false
-                    model.stopRecordedRouteGuidance()
+                let now = Date()
+                guard let fix = model.fieldFixTime, now.timeIntervalSince(fix) >= -5,
+                      now.timeIntervalSince(fix) < 15,
+                      let accuracy = model.accuracy, accuracy >= 0, accuracy <= 50,
+                      navigationPath.count >= 2 else {
+                    offRouteSince = nil
                     return
                 }
                 refreshNextTurn(at: position)
-                if navigationPath.count >= 2, Date().timeIntervalSince(rerouteTime) > 45 {
-                    let distance = navigationPath.map { GeoMath.meters(position, $0) }.min() ?? 0
-                    if distance > 150 {
-                        rerouteTime = Date()
+                if routeRemainingMeters <= 50, routeDeviationMeters <= max(20, accuracy),
+                   GeoMath.meters(position, destination) <= max(20, accuracy) {
+                    navigationKind = "Вы достигли точки назначения"
+                    routeGuidance = false
+                    model.stopRecordedRouteGuidance()
+                    model.speakRouteInstruction("Вы прибыли.")
+                    return
+                }
+                let threshold = max(travelMode == .car ? 65.0 : 35.0, accuracy * 2)
+                if routeDeviationMeters > threshold {
+                    if offRouteSince == nil { offRouteSince = now }
+                    if let since = offRouteSince, now.timeIntervalSince(since) >= 8,
+                       now.timeIntervalSince(rerouteTime) > 45 {
+                        rerouteTime = now
+                        offRouteSince = nil
+                        model.speakRouteInstruction("Перестраиваю маршрут.")
                         planRoute(to: destination, title: routeTitle, markerID: navigationTargetID)
                     }
-                }
+                } else { offRouteSince = nil }
             }
         }
         .onReceive(model.$recordedGuidanceResult) { result in
@@ -246,7 +290,7 @@ struct MainView: View {
     }
 
         private var importLayout: some View {
-        guidanceLayout
+        AnyView(guidanceLayout)
         .fileImporter(isPresented: $importingValhallaTiles,
                       allowedContentTypes: [UTType(filenameExtension: "tar") ?? .data],
                       allowsMultipleSelection: false) { result in
@@ -276,7 +320,7 @@ struct MainView: View {
     }
 
     private var mapPresentation: some View {
-        importLayout
+        AnyView(importLayout)
         .sheet(isPresented: $showLayers) { layerSheet.huntModal() }
         .sheet(isPresented: $showReturnPoints) { returnPointsSheet.huntModal() }
         .sheet(isPresented: $showSearch) { mapSearchSheet.huntModal() }
@@ -308,6 +352,21 @@ struct MainView: View {
                 pendingMapPoint = nil
                 pendingMapZone = nil
             }
+            Button("Определить ближайший адрес") {
+                guard let point = pendingMapPoint else { return }
+                pendingMapPoint = nil
+                pendingMapZone = nil
+                Task {
+                    do {
+                        if let hit = try await addressIndex.nearest(latitude: point.latitude, longitude: point.longitude) {
+                            nearestAddressText = hit.address
+                        } else {
+                            nearestAddressText = "В радиусе 300 м адрес не найден или база не установлена."
+                        }
+                    } catch { nearestAddressText = error.localizedDescription }
+                    showNearestAddress = true
+                }
+            }
             Button("Поставить метку") {
                 if let point = pendingMapPoint {
                     creatingMapMarker = Marker(title: "Моя метка", kind: "Точка", coordinate: point)
@@ -331,7 +390,10 @@ struct MainView: View {
     }
 
     private var editingPresentation: some View {
-        mapPresentation
+        AnyView(mapPresentation)
+        .alert("Ближайший адрес", isPresented: $showNearestAddress) {
+            Button("Закрыть", role: .cancel) {}
+        } message: { Text(nearestAddressText) }
         .sheet(item: $creatingMapMarker) { marker in
             MarkerEditor(marker: marker, isNew: true,
                          onSave: { changed in
@@ -366,7 +428,7 @@ struct MainView: View {
     }
 
     private var servicePresentation: some View {
-        editingPresentation
+        AnyView(editingPresentation)
         .sheet(isPresented: $showWeather) {
             WeatherPanel(service: weather, coordinate: forecastPoint ?? model.coordinate, online: connectivity.connected)
                 .huntModal()
@@ -399,7 +461,7 @@ struct MainView: View {
     }
 
     private var featurePresentation: some View {
-        servicePresentation
+        AnyView(servicePresentation)
         .sheet(isPresented: $showSettings) {
             HuntSettingsScreen(model: model, observations: observations,
                 online: $online, grounds: $showGrounds, markers: $showMarkersOnMap,
@@ -422,7 +484,8 @@ struct MainView: View {
         .onChange(of: showOfflineManager) { _, shown in if shown { HuntPerformance.shared.markOfflineOpening() } }
         .sheet(isPresented: $showOfflineManager) {
             OfflineManagerScreen(hosting: hosting, tiles: maps, protomaps: protomaps, valhalla: valhalla,
-                startupBusy: startupSync.presented || startupSync.isDownloading, onCancelStartup: { startupSync.skip() })
+                startupBusy: startupSync.presented || startupSync.isDownloading, onCancelStartup: { startupSync.skip() },
+                addressControls: AnyView(addressIndexControls), onAddressAppear: { addressIndexReady = await addressIndex.isInstalled() })
                 .huntModal()
         }
         .sheet(isPresented: $showAbout) { AboutHuntView().huntModal() }
@@ -648,6 +711,7 @@ struct MainView: View {
                            measurementClosed: measurementMode == .area,
                            measurementActive: measurementMode != nil,
                            onMapTap: { point in
+                               guard !immersiveNavigation else { return }
                                if pickingForecastPoint {
                                    selectForecastPoint(point, title: "Точка на карте", destination: pointDestination)
                                    return
@@ -670,6 +734,7 @@ struct MainView: View {
                                    movingMarkerID = nil
                                } else {
                                    pendingMapPoint = point
+                                   nearestAddressText = ""
                                    pendingMapZone = model.zones.first(where: { $0.contains(point) })
                                    if showGrounds, let ground = pendingMapZone {
                                        highlightedGroundID = ground.id
@@ -681,6 +746,7 @@ struct MainView: View {
                                }
                            },
                            onMarkerTap: { id in
+                               guard !immersiveNavigation else { return }
                                if movingMarkerID == nil {
                                    selectedMapMarker = MapMarkerSelection(id: id)
                                }
@@ -698,12 +764,15 @@ struct MainView: View {
                 .ignoresSafeArea()
                 .allowsHitTesting(false)
 
+            if immersiveNavigation {
+                immersiveGuidanceOverlay
+            } else {
             VStack(spacing: 0) {
                 HStack(spacing: 9) {
                     Button { showSearch = true } label: {
                         HStack(spacing: 9) {
                             Image(systemName: "magnifyingglass")
-                            Text("Поиск мест, охотугодий, точек")
+                            Text("Поиск адресов, мест и точек")
                                 .lineLimit(1).minimumScaleFactor(0.72)
                             Spacer(minLength: 0)
                         }
@@ -863,7 +932,67 @@ struct MainView: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 12)
             }
+            }
         }
+    }
+
+    private var immersiveGuidanceOverlay: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 10) {
+                Image(systemName: recordedRouteFollowing ? "figure.walk.motion" : "location.north.line.fill")
+                    .font(.title2).foregroundStyle(HuntReference.green)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(recordedRouteFollowing ? "По записанному треку" : (nextTurnText.isEmpty ? "Следуйте маршруту" : nextTurnText))
+                        .font(.headline).lineLimit(2)
+                    if !recordedRouteFollowing && !valhallaManeuvers.isEmpty && !nextTurnText.isEmpty {
+                        Text(String(format: "Манёвр через %.0f м", nextTurnDistance)).font(.caption.monospacedDigit())
+                    }
+                }
+                Spacer(minLength: 0)
+                Button {
+                    routeVoiceEnabled.toggle()
+                    if !routeVoiceEnabled { model.silenceRouteVoice() }
+                    else if !recordedRouteFollowing { model.speakRouteInstruction(nextTurnText.isEmpty ? "Голосовые подсказки включены" : nextTurnText) }
+                } label: {
+                    Image(systemName: routeVoiceEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                        .font(.title3).padding(8)
+                }.accessibilityLabel(routeVoiceEnabled ? "Выключить голос" : "Включить голос")
+            }.padding(12).background(HuntReference.card.opacity(0.97), in: RoundedRectangle(cornerRadius: 14))
+            HStack {
+                Spacer()
+                VStack(spacing: 8) {
+                    circleMapButton("location.fill", label: "Моё местоположение") { mapFocus = nil; model.requestGPS(); centerRequest += 1 }
+                    circleMapButton(courseUp ? "location.north.line.fill" : "location.north", label: "Ориентация карты") { courseUp.toggle() }
+                    circleMapButton("plus", label: "Приблизить") { zoomCommand += 1 }
+                    circleMapButton("minus", label: "Отдалить") { zoomCommand -= 1 }
+                }
+            }
+            Spacer(minLength: 0)
+            TimelineView(.periodic(from: .now, by: 1)) { clock in
+                let fresh = model.fieldFixTime.map { clock.date.timeIntervalSince($0) >= -5 && clock.date.timeIntervalSince($0) < 30 } ?? false
+                VStack(alignment: .leading, spacing: 6) {
+                    if !fresh { Text("Ожидание свежей GPS-позиции").foregroundStyle(.orange).font(.caption.bold()) }
+                    if recordedRouteFollowing {
+                        Text(returnStatus).font(.caption.bold()).foregroundStyle(.orange)
+                        Text(String(format: "По треку: %.2f км", recordedRouteRemaining / 1000)).font(.headline.monospacedDigit())
+                    } else { Text(routeTitle).font(.headline).lineLimit(1) }
+                    routeETA(at: clock.date)
+                    HStack {
+                        if fresh, let speed = model.fieldSpeed, speed.isFinite, speed >= 0 {
+                            Text(String(format: "%.0f км/ч", speed)).font(.caption.monospacedDigit())
+                        }
+                        Spacer()
+                        if model.recording {
+                            Button { model.togglePause() } label: { Label(model.paused ? "Продолжить" : "Пауза", systemImage: model.paused ? "play.fill" : "record.circle.fill") }.font(.caption.bold())
+                        }
+                        Button("Завершить") {
+                            if recordedRouteFollowing { stopRecordedTrack() } else { stopNavigation() }
+                        }.buttonStyle(.bordered).accessibilityIdentifier(recordedRouteFollowing ? "recorded_track_stop" : "route_stop_guidance")
+                    }
+                }.padding(12).background(HuntReference.card.opacity(0.97), in: RoundedRectangle(cornerRadius: 14))
+            }
+        }.foregroundStyle(.white).padding(.horizontal, 12).padding(.vertical, 8)
+        .accessibilityIdentifier("immersive_guidance")
     }
 
     private var measurementBoundaryDistance: Double? {
@@ -884,7 +1013,8 @@ struct MainView: View {
         routeGuidance = false
         planRoute(to: marker.coordinate, title: marker.title, markerID: id)
     }
-    private func planRoute(to destination: GeoPoint, title: String, markerID: UUID? = nil) {
+    private func planRoute(to destination: GeoPoint, title: String, markerID: UUID? = nil, origin: GeoPoint? = nil) {
+        plannedOrigin = origin
         azimuthMode = false
         legacyRouteTask?.cancel()
         routeRequestID = nil
@@ -893,10 +1023,15 @@ struct MainView: View {
         routeDestination = destination
         routeTitle = title
         navigationTargetID = markerID
+        routeCumulative = []
+        routeRemainingMeters = 0
+        routeDurationSeconds = nil
+        announcedManeuver = -1
+        announcedStage = 0
         valhallaManeuvers = []
         nextTurnText = ""
         tab = .map
-        guard let current = model.coordinate else {
+        guard let current = origin ?? model.coordinate else {
             navigationPath = []
             navigationKind = "Ожидание GPS"
             model.requestGPS()
@@ -914,7 +1049,8 @@ struct MainView: View {
                     guard routeRequestID == requestID, routeDestination == destination else { return }
                     navigationPath = result.path
                     valhallaManeuvers = result.maneuvers
-                    refreshNextTurn(at: current)
+                    prepareRouteEstimate(path: result.path, duration: result.durationSeconds, maneuvers: result.maneuvers)
+                    refreshNextTurn(at: plannedOrigin ?? model.coordinate ?? current)
                     navigationKind = chosenMode == .foot ? "Valhalla · пешком" : "Valhalla · автомобиль"
                     routingError = nil
                 } catch {
@@ -942,10 +1078,13 @@ struct MainView: View {
         legacyRouteTask = Task {
             do {
                 let graph: OfflineRouteGraph
-                if let downloaded = try? await hosting.graph(start: current, destination: destination, mode: mode) {
-                    graph = downloaded
-                } else {
+                do {
+                    graph = try await hosting.graph(start: current, destination: destination, mode: mode)
+                } catch {
                     try Task.checkCancellation()
+                    guard FileManager.default.fileExists(atPath: localURL.path) else {
+                        throw error
+                    }
                     graph = try await HuntBackgroundWork.run {
                         try OfflineRouteGraph(geoJSON: Data(contentsOf: localURL), mode: mode)
                     }
@@ -955,6 +1094,8 @@ struct MainView: View {
                 guard route.count >= 2 else { throw OfflineRouteGraph.RouteError.disconnected }
                 routeGraphCount = graph.count
                 navigationPath = route
+                prepareRouteEstimate(path: route, duration: nil)
+                refreshNextTurn(at: plannedOrigin ?? model.coordinate ?? current)
                 navigationKind = mode == .foot ? "Локальный граф · пешком" : "Локальный граф · автомобиль"
                 routingError = nil
             } catch {
@@ -969,31 +1110,152 @@ struct MainView: View {
         }
     }
 
-    private func refreshNextTurn(at location: GeoPoint) {
-        guard navigationPath.count >= 2, !valhallaManeuvers.isEmpty else { return }
-        // Progress is projected onto the received road geometry, not a straight-line route.
-        var closestIndex = 0
-        var closestMeters = Double.infinity
-        for (index, point) in navigationPath.enumerated() {
-            let d = GeoMath.meters(location, point)
-            if d < closestMeters { closestMeters = d; closestIndex = index }
+    private func prepareRouteEstimate(path: [GeoPoint], duration: Double?, maneuvers: [ValhallaManeuver] = []) {
+        var cumulative = [0.0]
+        for (a, b) in zip(path, path.dropFirst()) {
+            cumulative.append(cumulative.last! + GeoMath.meters(a, b))
         }
-        let upcoming = valhallaManeuvers.first(where: { $0.beginIndex > closestIndex }) ??
-            valhallaManeuvers.last!
-        nextTurnText = upcoming.instruction
-        nextTurnDistance = 0
-        if closestIndex < upcoming.beginIndex {
-            for index in (closestIndex + 1)...upcoming.beginIndex {
-                nextTurnDistance += GeoMath.meters(navigationPath[index - 1], navigationPath[index])
+        routeCumulative = cumulative
+        routeRemainingMeters = cumulative.last ?? 0
+        routeDurationSeconds = duration
+        routeDeviationMeters = .infinity
+        offRouteSince = nil
+        routeSegmentTimes = []
+        guard cumulative.count >= 2, let duration, duration.isFinite, duration > 0 else { return }
+        var times = Array(repeating: 0.0, count: cumulative.count - 1)
+        var covered = Array(repeating: false, count: times.count)
+        for step in maneuvers {
+            let start = step.beginIndex, end = step.endIndex
+            guard start >= 0, end > start, end < cumulative.count,
+                  let seconds = step.durationSeconds, seconds.isFinite, seconds >= 0 else { continue }
+            let distance = cumulative[end] - cumulative[start]
+            guard distance > 0 else { continue }
+            for i in start..<end {
+                times[i] = seconds * (cumulative[i+1] - cumulative[i]) / distance
+                covered[i] = true
             }
+        }
+        let sum = times.reduce(0, +)
+        if covered.allSatisfy({ $0 }), sum > 0 {
+            routeSegmentTimes = times.map { $0 * duration / sum }
         }
     }
 
+    private var remainingTravelSeconds: Double? {
+        if recordedRouteFollowing {
+            return recordedRouteRemaining / max(1, recordedAverageSpeed) * 3.6
+        }
+        guard let total = routeCumulative.last, total > 0 else { return nil }
+        if routeSegmentTimes.count == routeCumulative.count - 1 {
+            let progress = max(0, total - routeRemainingMeters)
+            var seconds = 0.0
+            for i in routeSegmentTimes.indices {
+                let start = routeCumulative[i], end = routeCumulative[i+1]
+                if end <= progress { continue }
+                let fraction = end > start ? min(1, (end - max(start, progress)) / (end - start)) : 0
+                seconds += routeSegmentTimes[i] * fraction
+            }
+            return seconds
+        }
+        if let duration = routeDurationSeconds {
+            return duration * min(1, max(0, routeRemainingMeters / total))
+        }
+        return routeRemainingMeters / (travelMode == .foot ? 4.5 : 40) * 3.6
+    }
+
+    private func travelTimeText(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0, seconds < 31_536_000 else { return "—" }
+        let minutes = Int(ceil(seconds / 60))
+        return minutes >= 60 ? "\(minutes / 60) ч \(minutes % 60) мин" : "\(minutes) мин"
+    }
+
+    private func routeETA(at date: Date) -> some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(remainingTravelSeconds.map { travelTimeText($0) } ?? "—")
+                    .font(.title2.bold()).monospacedDigit()
+                Text("Осталось").font(.caption2)
+            }
+            Spacer(minLength: 4)
+            VStack(alignment: .center, spacing: 2) {
+                Text(String(format: "%.1f км", (recordedRouteFollowing ? recordedRouteRemaining : routeRemainingMeters) / 1000))
+                    .font(.headline.monospacedDigit())
+                Text("По маршруту").font(.caption2)
+            }
+            Spacer(minLength: 4)
+            VStack(alignment: .trailing, spacing: 2) {
+                if let seconds = remainingTravelSeconds {
+                    Text(date.addingTimeInterval(seconds), format: .dateTime.hour().minute())
+                        .font(.headline.monospacedDigit())
+                } else { Text("—").font(.headline) }
+                Text("Прибытие ≈").font(.caption2)
+            }
+        }.accessibilityIdentifier("route_eta")
+    }
+
+    private func refreshNextTurn(at location: GeoPoint) {
+        guard navigationPath.count >= 2, routeCumulative.count == navigationPath.count,
+              let total = routeCumulative.last else { return }
+        let longitudeScale = cos(location.latitude * .pi / 180)
+        var best = Double.infinity
+        var progress = 0.0
+        for index in 1..<navigationPath.count {
+            let a = navigationPath[index - 1], b = navigationPath[index]
+            let x = (a.longitude - location.longitude) * longitudeScale
+            let y = a.latitude - location.latitude
+            let dx = (b.longitude - a.longitude) * longitudeScale
+            let dy = b.latitude - a.latitude
+            let denominator = dx * dx + dy * dy
+            let fraction = denominator > 0 ? min(1, max(0, -(x * dx + y * dy) / denominator)) : 0
+            let distance = pow(x + fraction * dx, 2) + pow(y + fraction * dy, 2)
+            if distance < best {
+                best = distance
+                progress = routeCumulative[index - 1] + fraction * (routeCumulative[index] - routeCumulative[index - 1])
+            }
+        }
+        routeDeviationMeters = sqrt(best) * 111_320
+        if routeGuidance, routeDeviationMeters > max(100, (model.accuracy ?? 50) * 2) { return }
+        routeRemainingMeters = max(0, total - progress)
+        let valid = valhallaManeuvers.filter { routeCumulative.indices.contains($0.beginIndex) }
+        guard let upcoming = valid.first(where: { routeCumulative[$0.beginIndex] >= progress - 5 && $0.beginIndex > 0 }) ?? valid.last else {
+            nextTurnText = "Следуйте по линии маршрута"
+            nextTurnDistance = 0
+            return
+        }
+        nextTurnText = upcoming.instruction
+        nextTurnDistance = max(0, routeCumulative[upcoming.beginIndex] - progress)
+        guard routeGuidance, routeVoiceEnabled else { return }
+        if announcedManeuver != upcoming.beginIndex {
+            announcedManeuver = upcoming.beginIndex
+            announcedStage = 0
+        }
+        let near = travelMode == .car ? 50.0 : 20.0
+        let far = travelMode == .car ? 300.0 : 100.0
+        let stage = nextTurnDistance <= near ? 2 : (nextTurnDistance <= far ? 1 : 0)
+        guard stage > announcedStage else { return }
+        announcedStage = stage
+        if upcoming.isDestination {
+            if stage == 1 { model.speakRouteInstruction("Вы приближаетесь к точке назначения") }
+            return
+        }
+        let meters = max(10, Int((nextTurnDistance / 10).rounded()) * 10)
+        let prefix = stage == 2 ? "" : "Через \(meters) метров, "
+        let command = stage == 2 ? upcoming.instruction : upcoming.instruction.prefix(1).lowercased() + upcoming.instruction.dropFirst()
+        model.speakRouteInstruction(prefix + command)
+    }
+
     private func stopNavigation() {
+        plannedOrigin = nil
         azimuthMode = false
         legacyRouteTask?.cancel()
         valhallaManeuvers = []
         nextTurnText = ""
+        routeCumulative = []
+        routeDurationSeconds = nil
+        routeSegmentTimes = []
+        routeDeviationMeters = .infinity
+        offRouteSince = nil
+        routeRemainingMeters = 0
         routeRequestID = nil
         navigationTargetID = nil
         routeDestination = nil
@@ -1042,6 +1304,8 @@ struct MainView: View {
         recordedRoutePreviewIndex = 0
         recordedRouteProgress = 0
         recordedRouteRemaining = route.remainingFrom[0]
+        let recordedSpeed = track.durationSeconds > 0 ? recordedRouteRemaining / track.durationSeconds * 3.6 : 4.5
+        recordedAverageSpeed = recordedSpeed.isFinite && recordedSpeed >= 1 ? recordedSpeed : 4.5
         recordedRouteDeviation = 0
         recordedRouteFollowing = follow
         navigationPath = route.points
@@ -1264,8 +1528,9 @@ struct MainView: View {
                 HStack(spacing: 9) {
                     Button {
                         travelMode = .car
+                        if routeGuidance { model.stopRecordedRouteGuidance() }
                         routeGuidance = false
-                        planRoute(to: destination, title: routeTitle, markerID: navigationTargetID)
+                        planRoute(to: destination, title: routeTitle, markerID: navigationTargetID, origin: plannedOrigin)
                     } label: {
                         Label("Авто", systemImage: "car.fill")
                             .frame(maxWidth: .infinity).padding(.vertical, 10)
@@ -1274,8 +1539,9 @@ struct MainView: View {
                     }.accessibilityIdentifier("route_drive")
                     Button {
                         travelMode = .foot
+                        if routeGuidance { model.stopRecordedRouteGuidance() }
                         routeGuidance = false
-                        planRoute(to: destination, title: routeTitle, markerID: navigationTargetID)
+                        planRoute(to: destination, title: routeTitle, markerID: navigationTargetID, origin: plannedOrigin)
                     } label: {
                         Label("Пешком", systemImage: "figure.walk")
                             .frame(maxWidth: .infinity).padding(.vertical, 10)
@@ -1285,29 +1551,42 @@ struct MainView: View {
                 }.buttonStyle(.plain).font(.caption.bold())
                 Text(navigationKind).font(.caption)
                     .foregroundStyle(navigationPath.isEmpty ? Color.orange : Color.gray)
-                if let current = model.coordinate {
+                if let current = plannedOrigin ?? model.coordinate {
                     let distance = GeoMath.meters(current, destination)
                     Text(String(format: "По прямой: %.0f м · Азимут %d°",
                                 distance, bearing(to: destination, from: current)))
                         .font(.caption.monospacedDigit())
                 }
+                if !routeCumulative.isEmpty { routeETA(at: Date()) }
                 if routeGuidance {
                     Label("Ведение включено", systemImage: "location.north.line.fill")
                         .font(.caption.bold()).foregroundStyle(HuntReference.green)
                     if !nextTurnText.isEmpty {
                         Text(nextTurnText).font(.subheadline.bold())
-                        Text(String(format: "Следующий манёвр через %.0f м", nextTurnDistance))
-                            .font(.caption.monospacedDigit())
+                        if !valhallaManeuvers.isEmpty {
+                            Text(String(format: "Следующий манёвр через %.0f м", nextTurnDistance))
+                                .font(.caption.monospacedDigit())
+                        }
                     }
                     Button("Завершить") { stopNavigation() }.buttonStyle(.bordered)
                 } else {
+                    if plannedOrigin != nil {
+                        Text("Предварительный маршрут между адресами. Для ведения пересчитайте от GPS.").font(.caption)
+                    }
                     Button {
+                        if plannedOrigin != nil {
+                            planRoute(to: destination, title: routeTitle, markerID: navigationTargetID)
+                            return
+                        }
                         routeGuidance = true
                         rerouteTime = Date()
                         model.startRecordedRouteGuidance()
                         if let position = model.coordinate { refreshNextTurn(at: position) }
+                        if announcedStage == 0 {
+                            model.speakRouteInstruction(valhallaManeuvers.first?.instruction ?? "Следуйте по линии маршрута.")
+                        }
                     } label: {
-                        Label("В путь", systemImage: "location.north.line.fill")
+                        Label(plannedOrigin == nil ? "В путь" : "Маршрут от GPS", systemImage: "location.north.line.fill")
                             .font(.headline.bold()).frame(maxWidth: .infinity).frame(minHeight: 46)
                     }
                     .buttonStyle(.borderedProminent).tint(HuntReference.green)
@@ -1351,11 +1630,242 @@ struct MainView: View {
         .buttonStyle(.plain)
     }
 
+    private struct AddressHit: Codable, Identifiable {
+        let title: String
+        let address: String
+        let latitude: Double
+        let longitude: Double
+        var house: String? = nil
+        var id: String { "\(latitude),\(longitude),\(title)" }
+        var point: GeoPoint { GeoPoint(latitude, longitude) }
+    }
+
+    private var addressHistory: [AddressHit] {
+        (try? JSONDecoder().decode([AddressHit].self, from: Data(addressHistoryJSON.utf8))) ?? []
+    }
+
+    // Preserve fractional numbers and suffixes, including Cyrillic/Latin equivalents.
+    private func normalizedHouse(_ value: String) -> String {
+        value.lowercased().replacingOccurrences(of: "а", with: "a")
+            .replacingOccurrences(of: "б", with: "b")
+            .replacingOccurrences(of: "в", with: "v")
+            .replacingOccurrences(of: "с", with: "c")
+            .replacingOccurrences(of: " ", with: "")
+    }
+
+    private func houseNumber(_ query: String) -> String? {
+        let pattern = #"(?<![\p{L}\d])\d+[\p{L}]?(?:\s*[/\-]\s*\d+[\p{L}]?)?(?![\p{L}\d])"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.matches(in: query, range: NSRange(query.startIndex..., in: query)).last,
+              let range = Range(match.range, in: query) else { return nil }
+        return normalizedHouse(String(query[range]))
+    }
+
+    private func addressWords(_ value: String) -> [String] {
+        value.lowercased().split(whereSeparator: { $0.isWhitespace || $0 == "," || $0 == "." })
+            .map(String.init).filter { !["ул", "улица", "пр", "проспект", "д", "дом", "г", "город"].contains($0) }
+    }
+
+    private var cachedAddressMatches: [AddressHit] {
+        let number = houseNumber(searchText)
+        let words = addressWords(searchText).filter { !$0.contains(where: \.isNumber) }
+        return Array(addressHistory.filter { hit in
+            let text = hit.title + " " + hit.address
+            guard words.allSatisfy({ text.localizedCaseInsensitiveContains($0) }) else { return false }
+            guard let number else { return true }
+            // Old cached records lack structured house numbers; do not treat them as exact.
+            return hit.house == number
+        }.prefix(20))
+    }
+
+    private func rememberAddresses(_ hits: [AddressHit]) {
+        var seen = Set<String>()
+        let unique = Array((hits + addressHistory).filter { seen.insert($0.id).inserted }.prefix(100))
+        if let data = try? JSONEncoder().encode(unique),
+           let json = String(data: data, encoding: .utf8) { addressHistoryJSON = json }
+    }
+
+    @MainActor
+    private func findAddresses(_ query: String, requestID: UUID) async {
+        addressLoading = true
+        addressResults = []
+        addressMessage = ""
+        defer { if addressRequest == requestID { addressLoading = false } }
+        let number = houseNumber(query)
+        let local: [OfflineAddressIndex.Hit]
+        do {
+            local = try await addressIndex.search(words: addressWords(query).filter { !$0.contains(where: \.isNumber) }, house: number)
+        } catch {
+            local = []
+            addressIndexStatus = error.localizedDescription
+        }
+        guard !Task.isCancelled, addressRequest == requestID else { return }
+        let offlineHits = local.map { AddressHit(title: $0.title, address: $0.address, latitude: $0.latitude, longitude: $0.longitude, house: $0.house) }
+        addressResults = offlineHits
+        if !offlineHits.isEmpty || !connectivity.connected {
+            if offlineHits.isEmpty { addressMessage = "В локальной базе адрес не найден." }
+            return
+        }
+        let request = MKLocalSearch.Request()
+        request.naturalLanguageQuery = query + ", Казахстан"
+        request.resultTypes = number == nil ? [.address, .pointOfInterest] : [.address]
+        request.region = MKCoordinateRegion(center: CLLocationCoordinate2D(latitude: 48, longitude: 67),
+                                            span: MKCoordinateSpan(latitudeDelta: 16, longitudeDelta: 44))
+        let search = MKLocalSearch(request: request)
+        var hits: [AddressHit] = []
+        do {
+            let response = try await withTaskCancellationHandler(operation: {
+                try await search.start()
+            }, onCancel: { search.cancel() })
+            guard !Task.isCancelled, addressRequest == requestID else { return }
+            hits = response.mapItems.compactMap { item in
+                let p = item.placemark
+                guard p.isoCountryCode == "KZ", CLLocationCoordinate2DIsValid(p.coordinate) else { return nil }
+                let house = p.subThoroughfare.map(normalizedHouse)
+                if let number, house != number { return nil }
+                let address = p.title ?? item.name ?? query
+                return AddressHit(title: item.name ?? address, address: address,
+                                  latitude: p.coordinate.latitude, longitude: p.coordinate.longitude, house: house)
+            }
+        } catch {
+            guard !Task.isCancelled, addressRequest == requestID else { return }
+        }
+        guard !Task.isCancelled, addressRequest == requestID else { return }
+        var seen = Set<String>()
+        addressResults = hits.filter { seen.insert($0.id).inserted }
+        rememberAddresses(addressResults)
+        if addressResults.isEmpty {
+            addressMessage = number == nil ? "Адрес не найден. Уточните город и улицу." : "Точный номер дома не найден. Укажите город и улицу. Соседние дома не подставляются."
+        }
+    }
+
+    private func addressRow(_ hit: AddressHit) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HuntRow(title: hit.title, subtitle: hit.address, symbol: "mappin.and.ellipse")
+            HStack {
+                Button("На карте") {
+                    rememberAddresses([hit])
+                    showSearch = false
+                    tab = .map
+                    mapFocus = hit.point
+                    centerRequest += 1
+                }
+                Spacer()
+                Button("Отсюда") {
+                    rememberAddresses([hit])
+                    addressOrigin = hit
+                    searchText = ""
+                }.buttonStyle(.bordered)
+                Button("Сюда") {
+                    rememberAddresses([hit])
+                    addressDestination = hit
+                }.buttonStyle(.borderedProminent)
+            }.padding(.horizontal, 8)
+        }
+    }
+
+    private var addressRoutePlanner: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Маршрут А → Б").font(.headline)
+            HStack {
+                Label(addressOrigin?.address ?? "Моя GPS-позиция", systemImage: "a.circle")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if addressOrigin != nil {
+                    Button("GPS") { addressOrigin = nil }.buttonStyle(.bordered)
+                }
+            }
+            HStack {
+                Label(addressDestination?.address ?? "Выберите адрес назначения", systemImage: "b.circle")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button {
+                    let old = addressOrigin
+                    addressOrigin = addressDestination
+                    addressDestination = old
+                } label: { Image(systemName: "arrow.up.arrow.down") }
+                .disabled(addressOrigin == nil || addressDestination == nil)
+            }
+            Picker("Способ передвижения", selection: $travelMode) {
+                Text("Пешком").tag(OfflineRouteGraph.TravelMode.foot)
+                Text("Авто").tag(OfflineRouteGraph.TravelMode.car)
+            }.pickerStyle(.segmented)
+            Button {
+                guard let destination = addressDestination else { return }
+                if routeGuidance { model.stopRecordedRouteGuidance() }
+                routeGuidance = false
+                showSearch = false
+                if let origin = addressOrigin {
+                    mapFocus = origin.point
+                    centerRequest += 1
+                }
+                planRoute(to: destination.point, title: destination.address, origin: addressOrigin?.point)
+            } label: {
+                Label("Построить маршрут", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                    .frame(maxWidth: .infinity)
+            }.buttonStyle(.borderedProminent)
+            .disabled(addressDestination == nil || addressOrigin?.id == addressDestination?.id)
+            Text("Найдите адрес и нажмите «Отсюда» или «Сюда».")
+                .font(.caption).foregroundStyle(HuntReference.muted)
+        }.padding(12).background(HuntReference.card, in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var addressIndexControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(addressIndexReady ? "Офлайн-адреса установлены" : "Офлайн-адреса не загружены", systemImage: addressIndexReady ? "checkmark.circle" : "arrow.down.circle")
+                .font(.caption)
+            Button(addressIndexReady ? "Обновить базу Казахстана" : "Скачать базу Казахстана") {
+                guard !addressIndexDownloading else { return }
+                addressIndexDownloading = true
+                addressIndexStatus = "Загрузка и проверка адресной базы…"
+                Task {
+                    defer { addressIndexDownloading = false }
+                    do {
+                        try await addressIndex.downloadFromHosting()
+                        addressIndexReady = true
+                        addressIndexSummary = await addressIndex.installedSummary()
+                        addressIndexStatus = "Адресная база актуальна"
+                    } catch { addressIndexStatus = error.localizedDescription }
+                }
+            }.buttonStyle(.borderedProminent)
+            .disabled(addressIndexDownloading || !connectivity.connected)
+            if addressIndexDownloading { ProgressView() }
+            Button("Импорт базы адресов SQLite") { importingAddressIndex = true }
+                .disabled(addressIndexDownloading)
+                .font(.caption).buttonStyle(.bordered)
+            if !addressIndexSummary.isEmpty { Text(addressIndexSummary).font(.caption) }
+            if !addressIndexStatus.isEmpty { Text(addressIndexStatus).font(.caption) }
+            Text("Данные адресов: © OpenStreetMap contributors, ODbL").font(.caption2)
+        }
+    }
+
     private var mapSearchSheet: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
-                    HuntSearchField(text: $searchText, placeholder: "Название угодья или метки")
+                    addressRoutePlanner
+                    addressIndexControls
+                    HuntSearchField(text: $searchText, placeholder: "Город, улица, дом, место")
+                    Button { addressRequest = UUID() } label: {
+                        Label("Найти адрес", systemImage: "magnifyingglass")
+                            .frame(maxWidth: .infinity)
+                    }.buttonStyle(.borderedProminent)
+                    .disabled(searchText.trimmingCharacters(in: .whitespacesAndNewlines).count < 3 || (!connectivity.connected && !addressIndexReady) || addressLoading)
+                    if !connectivity.connected {
+                        Text(addressIndexReady ? "Офлайн-поиск по загруженной базе адресов." : "Загрузите базу для поиска новых адресов без интернета.")
+                            .font(.caption).foregroundStyle(HuntReference.muted)
+                    }
+                    if addressLoading { ProgressView("Поиск адресов…") }
+                    if !addressMessage.isEmpty {
+                        Text(addressMessage).font(.caption).foregroundStyle(HuntReference.muted)
+                    }
+                    if !addressResults.isEmpty {
+                        Text("Адреса и места · \(addressResults.count)").font(.subheadline.bold())
+                        ForEach(addressResults) { hit in addressRow(hit) }
+                    }
+                    let cached = cachedAddressMatches.filter { hit in !addressResults.contains(where: { $0.id == hit.id }) }
+                    if !cached.isEmpty {
+                        Text("Сохранённые адреса · \(cached.count)").font(.subheadline.bold())
+                        ForEach(cached) { hit in addressRow(hit) }
+                    }
                     let grounds = model.zones.filter { searchText.isEmpty || $0.name.localizedCaseInsensitiveContains(searchText) }
                     let marks = model.markers.filter { searchText.isEmpty || $0.title.localizedCaseInsensitiveContains(searchText) }
                     Text("Охотугодья · \(grounds.count)").font(.subheadline.bold()).foregroundStyle(HuntReference.muted)
@@ -1372,12 +1882,52 @@ struct MainView: View {
                             HuntRow(title: marker.title, subtitle: String(format: "%.4f, %.4f", marker.coordinate.latitude, marker.coordinate.longitude), symbol: "mappin.circle")
                         }.buttonStyle(.plain)
                     }
-                    if grounds.isEmpty && marks.isEmpty {
+                    if grounds.isEmpty && marks.isEmpty && cached.isEmpty && addressResults.isEmpty && !addressLoading {
                         ReferenceEmptyCard(title: "Ничего не найдено", detail: "Измените поисковый запрос", symbol: "magnifyingglass")
                     }
                 }.padding(16)
             }
             .background(HuntReference.background)
+            .task {
+                addressIndexReady = await addressIndex.isInstalled()
+                addressIndexSummary = await addressIndex.installedSummary()
+            }
+            .task(id: searchText) {
+                guard addressIndexReady, searchText.trimmingCharacters(in: .whitespacesAndNewlines).count >= 3 else { return }
+                do { try await Task.sleep(for: .milliseconds(400)) } catch { return }
+                guard !Task.isCancelled else { return }
+                addressRequest = UUID()
+            }
+            .task(id: addressRequest) {
+                if let id = addressRequest {
+                    await findAddresses(searchText.trimmingCharacters(in: .whitespacesAndNewlines), requestID: id)
+                }
+            }
+            .fileImporter(isPresented: $importingAddressIndex, allowedContentTypes: [.data], allowsMultipleSelection: false) { result in
+                switch result {
+                case .success(let urls):
+                    guard let url = urls.first else { return }
+                    Task {
+                        addressIndexStatus = "Установка базы…"
+                        do {
+                            try await addressIndex.install(url)
+                            addressIndexReady = true
+                            addressIndexStatus = "Адресная база установлена"
+                        } catch { addressIndexStatus = error.localizedDescription }
+                    }
+                case .failure(let error): addressIndexStatus = error.localizedDescription
+                }
+            }
+            .onChange(of: searchText) { _, _ in
+                addressRequest = nil
+                addressLoading = false
+                addressResults = []
+                addressMessage = ""
+            }
+            .onDisappear {
+                addressRequest = nil
+                addressLoading = false
+            }
             .navigationTitle("Поиск на карте")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Закрыть") { showSearch = false } } }

@@ -12,6 +12,7 @@ public struct TrackSample: Sendable {
     }
 }
 public struct TrackStatistics:Sendable {
+    public init() {}
     public var distance=0.0
     public var movingSeconds=0.0
     public var stoppedSeconds=0.0
