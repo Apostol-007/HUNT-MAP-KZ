@@ -25,7 +25,7 @@ jobs:
         run: python -m pip install osmium
       - name: Download Kazakhstan OSM extract
         run: |
-          curl --fail --location --retry 5 --retry-delay 3 --connect-timeout 30 --max-time 1200 https://download.geofabrik.de/asia/kazakhstan-latest.osm.pbf -o "$RUNNER_TEMP/kazakhstan.osm.pbf"
+          curl --fail --location --retry 5 --retry-all-errors --retry-connrefused --retry-delay 3 --connect-timeout 30 --max-time 1200 https://download.geofabrik.de/asia/kazakhstan-latest.osm.pbf -o "$RUNNER_TEMP/kazakhstan.osm.pbf"
       - name: Build address package
         run: python tools/build_address_index.py "$RUNNER_TEMP/kazakhstan.osm.pbf" "$RUNNER_TEMP/addresses/kazakhstan-addresses.sqlite"
       - name: Validate actual database and manifest

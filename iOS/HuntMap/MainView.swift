@@ -126,6 +126,9 @@ struct MainView: View {
     @AppStorage("hunt.navigation.voice") private var routeVoiceEnabled = true
     @State private var routeCumulative: [Double] = []
     @State private var routeRemainingMeters = 0.0
+    @State private var routeDeviationMeters = Double.infinity
+    @State private var offRouteSince: Date?
+    @State private var routeSegmentTimes: [Double] = []
     @State private var routeDurationSeconds: Double?
     @State private var announcedManeuver = -1
     @State private var announcedStage = 0
@@ -243,23 +246,34 @@ struct MainView: View {
                 planRoute(to: destination, title: routeTitle, markerID: navigationTargetID)
             }
             if let position = newPoint, routeGuidance, let destination = routeDestination {
-                if !navigationPath.isEmpty, routeRemainingMeters <= 50,
-                   (model.accuracy ?? 100) <= 50,
-                   GeoMath.meters(position, destination) <= max(20, model.accuracy ?? 20) {
+                let now = Date()
+                guard let fix = model.fieldFixTime, now.timeIntervalSince(fix) >= -5,
+                      now.timeIntervalSince(fix) < 15,
+                      let accuracy = model.accuracy, accuracy >= 0, accuracy <= 50,
+                      navigationPath.count >= 2 else {
+                    offRouteSince = nil
+                    return
+                }
+                refreshNextTurn(at: position)
+                if routeRemainingMeters <= 50, routeDeviationMeters <= max(20, accuracy),
+                   GeoMath.meters(position, destination) <= max(20, accuracy) {
                     navigationKind = "Вы достигли точки назначения"
                     routeGuidance = false
                     model.stopRecordedRouteGuidance()
                     model.speakRouteInstruction("Вы прибыли.")
                     return
                 }
-                refreshNextTurn(at: position)
-                if navigationPath.count >= 2, Date().timeIntervalSince(rerouteTime) > 45 {
-                    let distance = navigationPath.map { GeoMath.meters(position, $0) }.min() ?? 0
-                    if distance > 150 {
-                        rerouteTime = Date()
+                let threshold = max(travelMode == .car ? 65.0 : 35.0, accuracy * 2)
+                if routeDeviationMeters > threshold {
+                    if offRouteSince == nil { offRouteSince = now }
+                    if let since = offRouteSince, now.timeIntervalSince(since) >= 8,
+                       now.timeIntervalSince(rerouteTime) > 45 {
+                        rerouteTime = now
+                        offRouteSince = nil
+                        model.speakRouteInstruction("Перестраиваю маршрут.")
                         planRoute(to: destination, title: routeTitle, markerID: navigationTargetID)
                     }
-                }
+                } else { offRouteSince = nil }
             }
         }
         .onReceive(model.$recordedGuidanceResult) { result in
@@ -1035,7 +1049,7 @@ struct MainView: View {
                     guard routeRequestID == requestID, routeDestination == destination else { return }
                     navigationPath = result.path
                     valhallaManeuvers = result.maneuvers
-                    prepareRouteEstimate(path: result.path, duration: result.durationSeconds)
+                    prepareRouteEstimate(path: result.path, duration: result.durationSeconds, maneuvers: result.maneuvers)
                     refreshNextTurn(at: plannedOrigin ?? model.coordinate ?? current)
                     navigationKind = chosenMode == .foot ? "Valhalla · пешком" : "Valhalla · автомобиль"
                     routingError = nil
@@ -1096,7 +1110,7 @@ struct MainView: View {
         }
     }
 
-    private func prepareRouteEstimate(path: [GeoPoint], duration: Double?) {
+    private func prepareRouteEstimate(path: [GeoPoint], duration: Double?, maneuvers: [ValhallaManeuver] = []) {
         var cumulative = [0.0]
         for (a, b) in zip(path, path.dropFirst()) {
             cumulative.append(cumulative.last! + GeoMath.meters(a, b))
@@ -1104,6 +1118,27 @@ struct MainView: View {
         routeCumulative = cumulative
         routeRemainingMeters = cumulative.last ?? 0
         routeDurationSeconds = duration
+        routeDeviationMeters = .infinity
+        offRouteSince = nil
+        routeSegmentTimes = []
+        guard cumulative.count >= 2, let duration, duration.isFinite, duration > 0 else { return }
+        var times = Array(repeating: 0.0, count: cumulative.count - 1)
+        var covered = Array(repeating: false, count: times.count)
+        for step in maneuvers {
+            let start = step.beginIndex, end = step.endIndex
+            guard start >= 0, end > start, end < cumulative.count,
+                  let seconds = step.durationSeconds, seconds.isFinite, seconds >= 0 else { continue }
+            let distance = cumulative[end] - cumulative[start]
+            guard distance > 0 else { continue }
+            for i in start..<end {
+                times[i] = seconds * (cumulative[i+1] - cumulative[i]) / distance
+                covered[i] = true
+            }
+        }
+        let sum = times.reduce(0, +)
+        if covered.allSatisfy({ $0 }), sum > 0 {
+            routeSegmentTimes = times.map { $0 * duration / sum }
+        }
     }
 
     private var remainingTravelSeconds: Double? {
@@ -1111,6 +1146,17 @@ struct MainView: View {
             return recordedRouteRemaining / max(1, recordedAverageSpeed) * 3.6
         }
         guard let total = routeCumulative.last, total > 0 else { return nil }
+        if routeSegmentTimes.count == routeCumulative.count - 1 {
+            let progress = max(0, total - routeRemainingMeters)
+            var seconds = 0.0
+            for i in routeSegmentTimes.indices {
+                let start = routeCumulative[i], end = routeCumulative[i+1]
+                if end <= progress { continue }
+                let fraction = end > start ? min(1, (end - max(start, progress)) / (end - start)) : 0
+                seconds += routeSegmentTimes[i] * fraction
+            }
+            return seconds
+        }
         if let duration = routeDurationSeconds {
             return duration * min(1, max(0, routeRemainingMeters / total))
         }
@@ -1167,6 +1213,8 @@ struct MainView: View {
                 progress = routeCumulative[index - 1] + fraction * (routeCumulative[index] - routeCumulative[index - 1])
             }
         }
+        routeDeviationMeters = sqrt(best) * 111_320
+        if routeGuidance, routeDeviationMeters > max(100, (model.accuracy ?? 50) * 2) { return }
         routeRemainingMeters = max(0, total - progress)
         let valid = valhallaManeuvers.filter { routeCumulative.indices.contains($0.beginIndex) }
         guard let upcoming = valid.first(where: { routeCumulative[$0.beginIndex] >= progress - 5 && $0.beginIndex > 0 }) ?? valid.last else {
@@ -1204,6 +1252,9 @@ struct MainView: View {
         nextTurnText = ""
         routeCumulative = []
         routeDurationSeconds = nil
+        routeSegmentTimes = []
+        routeDeviationMeters = .infinity
+        offRouteSince = nil
         routeRemainingMeters = 0
         routeRequestID = nil
         navigationTargetID = nil

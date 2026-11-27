@@ -21,6 +21,8 @@ struct ValhallaManeuver {
     let instruction: String
     let beginIndex: Int
     let isDestination: Bool
+    let endIndex: Int
+    let durationSeconds: Double?
 
     static func shortInstruction(type: Int, exit: Int?) -> String {
         switch type {
@@ -150,7 +152,9 @@ actor ValhallaLocalEngine {
                     let instruction = ValhallaManeuver.shortInstruction(type: type, exit: entry["roundabout_exit_count"] as? Int)
                     let position = offset + localIndex
                     if !instruction.isEmpty && (0..<output.count).contains(position) {
-                        maneuvers.append(ValhallaManeuver(instruction: instruction, beginIndex: position, isDestination: (4...6).contains(type)))
+                        let end = offset + (entry["end_shape_index"] as? Int ?? localIndex)
+                        let time = entry["time"] as? Double
+                        maneuvers.append(ValhallaManeuver(instruction: instruction, beginIndex: position, isDestination: (4...6).contains(type), endIndex: end, durationSeconds: time))
                     }
                 }
             }
